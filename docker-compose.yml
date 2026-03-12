@@ -1,0 +1,113 @@
+services:
+  # ==========================================================
+  # SERVICIO: db (PostgreSQL)
+  # - Es el servicio persistente (daemon) del stack.
+  # - Guarda historial/resultados en el volumen "pgdata".
+  # - Inicializa tablas MVP usando db/schema.sql en el primer arranque del volumen.
+  # ==========================================================
+  db:
+    # Imagen oficial Postgres 18 estable (Alpine)
+    image: postgres:18.3-alpine3.23
+
+    environment:
+      # Variables de inicialización (se leen del archivo .env si existe)
+      POSTGRES_DB: ${POSTGRES_DB:-dastxh}
+      POSTGRES_USER: ${POSTGRES_USER:-dastxh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dastxh}
+
+    volumes:
+      # ------------------------------------------------------
+      # Volumen persistente (portable) para datos de Postgres.
+      # No depende de rutas C:\ del host.
+      # ------------------------------------------------------
+      - pgdata:/var/lib/postgresql
+
+      # ------------------------------------------------------
+      # Script SQL de inicialización (tablas MVP).
+      # Se ejecuta SOLO cuando el volumen está vacío.
+      # ------------------------------------------------------
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+
+    healthcheck:
+      # ------------------------------------------------------
+      # Healthcheck: indica "healthy" cuando Postgres está listo
+      # (para que el orquestador no intente conectar demasiado pronto).
+      # ------------------------------------------------------
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dastxh} -d ${POSTGRES_DB:-dastxh}"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+    networks:
+      # Conecta db a la red explícita del proyecto
+      - dastxh_net
+
+  # ==========================================================
+  # SERVICIO: orquestador (CLI + herramientas)
+  # - Contiene: Python3 (app), curl (capa1), hsecscan (capa2 via py2), dalfox (capa3).
+  # - Se mantiene "vivo" (idle) para que la CLI esté lista y ejecutes:
+  #     docker compose exec orquestador python3 main.py --url "<TARGET>"
+  # - Reportes/evidencias se guardan en /work (volumen workdata).
+  # ==========================================================
+  orquestador:
+    build:
+      # Carpeta donde está el Dockerfile y el código
+      context: ./orquestador
+
+    environment:
+      # ------------------------------------------------------
+      # Conexión interna a db:
+      # - host "db" es el nombre del servicio en docker-compose.
+      # - puerto 5432 es interno.
+      # ------------------------------------------------------
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dastxh}:${POSTGRES_PASSWORD:-dastxh}@db:5432/${POSTGRES_DB:-dastxh}
+
+      # Carpeta de trabajo dentro del contenedor (persistida en volumen)
+      WORKDIR: /work
+
+      # Timeout default para curl/dalfox (segundos)
+      DEFAULT_TIMEOUT_SECONDS: ${DEFAULT_TIMEOUT_SECONDS:-30}
+
+    depends_on:
+      # No inicia orquestador hasta que db esté healthy
+      db:
+        condition: service_healthy
+
+    volumes:
+      # ------------------------------------------------------
+      # Persistencia portable de reportes/evidencias:
+      # /work/reports/<timestamp>/...
+      # ------------------------------------------------------
+      - workdata:/work
+
+    networks:
+      # Misma red que db para comunicación por hostname "db"
+      - dastxh_net
+
+    # --------------------------------------------------------
+    # MODO "SERVICIO IDLE":
+    # Mantiene el contenedor vivo para usar "docker compose exec".
+    # Esto evita usar "docker compose run" cada vez.
+    # --------------------------------------------------------
+    command: ["sleep", "infinity"]
+
+    # Opcional: útil si quieres entrar con shell interactiva
+    tty: true
+    stdin_open: true
+
+# ==========================================================
+# Volúmenes Docker (persistentes y portables)
+# - pgdata: Postgres (historial/resultados)
+# - workdata: /work (reportes/evidencias/inputs)
+# ==========================================================
+volumes:
+  pgdata:
+  workdata:
+
+# ==========================================================
+# Network explícita (para claridad/documentación)
+# Compose crea una default automáticamente, pero aquí la declaramos.
+# ==========================================================
+networks:
+  dastxh_net:
+    driver: bridge

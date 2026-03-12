@@ -1,0 +1,8 @@
+# ==========================================================
+# requirements.txt (Python 3)
+# - Dependencias del orquestador (tu app CLI)
+# - psycopg: driver moderno para PostgreSQL
+#   *Usamos [binary] para evitar compilar dependencias en Windows/Docker Desktop*
+# ==========================================================
+
+psycopg[binary]==3.2.9

@@ -1,0 +1,14 @@
+# ==========================================================
+# .dockerignore
+# Evita copiar basura al contexto de build
+# ==========================================================
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.env
+.vscode/
+.idea/
+.DS_Store

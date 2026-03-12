@@ -1,0 +1,71 @@
+# =========================
+# DASTXH - .gitignore
+# =========================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+logs/
+*.out
+*.err
+
+# Variables de entorno sensibles
+.env
+.env.*
+!.env.example
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Pytest / coverage / caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Docker / runtime local
+docker-data/
+tmp/
+temp/
+
+# Reportes y evidencias generadas
+workdata/reports/
+workdata/*
+!workdata/.gitkeep
+
+# Archivos generados manualmente
+*.sqlite3
+*.db
+
+# PDF/HTML generados de reportes si quedan fuera de workdata
+reports/
+artifacts/
+
+# Jupyter
+.ipynb_checkpoints/
