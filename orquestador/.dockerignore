@@ -1,14 +1,51 @@
 # ==========================================================
 # .dockerignore
-# Evita copiar basura al contexto de build
+# Evita copiar archivos innecesarios al contexto de build
+# del contenedor del orquestador
 # ==========================================================
 
+# Python cache / compilados
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.log
+
+# Entornos virtuales locales
+.venv/
+venv/
+env/
+
+# Variables sensibles
 .env
+.env.*
+
+# Logs / temporales
+*.log
+*.tmp
+*.temp
+
+# IDE / editor
 .vscode/
 .idea/
+
+# Sistema operativo
 .DS_Store
+Thumbs.db
+
+# Pytest / coverage / caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Reportes del host
+# Estos no deben entrar al build del contenedor
+workdata/

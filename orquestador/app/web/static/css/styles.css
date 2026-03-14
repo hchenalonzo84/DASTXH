@@ -1,0 +1,391 @@
+/* ==========================================================
+   styles.css
+   - Estilos base de la GUI web de DASTXH
+   - Diseñado para:
+     * layout general
+     * navegación
+     * tarjetas
+     * formularios
+     * tablas
+     * detalle de ejecuciones
+   ========================================================== */
+
+/* ----------------------------------------------------------
+   Reset básico y modelo de caja
+   ---------------------------------------------------------- */
+* {
+    box-sizing: border-box;
+}
+
+/* ----------------------------------------------------------
+   Estilos globales del documento
+   ---------------------------------------------------------- */
+html {
+    font-size: 16px;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #0f172a;
+    color: #e5e7eb;
+    line-height: 1.5;
+}
+
+/* ----------------------------------------------------------
+   Enlaces
+   ---------------------------------------------------------- */
+a {
+    color: #93c5fd;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* ----------------------------------------------------------
+   Contenedor principal
+   ---------------------------------------------------------- */
+.container {
+    width: min(1100px, 92%);
+    margin: 0 auto;
+}
+
+/* ----------------------------------------------------------
+   Barra superior / navegación
+   ---------------------------------------------------------- */
+.topbar {
+    background: #111827;
+    border-bottom: 1px solid #1f2937;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.topbar .container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 0;
+}
+
+.topbar h1 {
+    margin: 0;
+    font-size: 1.35rem;
+    color: #f9fafb;
+}
+
+.topbar nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.topbar nav a {
+    color: #93c5fd;
+    font-weight: 600;
+}
+
+/* ----------------------------------------------------------
+   Área principal
+   ---------------------------------------------------------- */
+main.container {
+    padding: 2rem 0;
+}
+
+/* ----------------------------------------------------------
+   Tarjetas
+   ---------------------------------------------------------- */
+.card {
+    background: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 14px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.card h2,
+.card h3 {
+    margin-top: 0;
+    color: #f9fafb;
+}
+
+.card p {
+    margin-top: 0.5rem;
+}
+
+/* ----------------------------------------------------------
+   Listas
+   ---------------------------------------------------------- */
+.list {
+    padding-left: 1.25rem;
+}
+
+.list li {
+    margin-bottom: 0.45rem;
+}
+
+/* ----------------------------------------------------------
+   Formularios
+   ---------------------------------------------------------- */
+.scan-form {
+    margin-top: 1rem;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+    color: #f3f4f6;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 0.8rem 0.9rem;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    background: #0b1220;
+    color: #e5e7eb;
+    font-size: 0.95rem;
+}
+
+.form-group input::placeholder,
+.form-group textarea::placeholder {
+    color: #94a3b8;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #60a5fa;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
+}
+
+.form-actions {
+    margin-top: 1rem;
+}
+
+/* ----------------------------------------------------------
+   Botones
+   ---------------------------------------------------------- */
+button,
+.btn {
+    display: inline-block;
+    background: #2563eb;
+    color: #ffffff;
+    border: none;
+    border-radius: 10px;
+    padding: 0.8rem 1.1rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.1s ease;
+}
+
+button:hover,
+.btn:hover {
+    background: #1d4ed8;
+    text-decoration: none;
+}
+
+button:active,
+.btn:active {
+    transform: translateY(1px);
+}
+
+/* ----------------------------------------------------------
+   Tablas
+   ---------------------------------------------------------- */
+.table-wrapper {
+    width: 100%;
+    overflow-x: auto;
+    margin-top: 1rem;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 820px;
+    background: #0b1220;
+    border: 1px solid #1f2937;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.data-table thead {
+    background: #172033;
+}
+
+.data-table th,
+.data-table td {
+    padding: 0.85rem 0.9rem;
+    border-bottom: 1px solid #1f2937;
+    text-align: left;
+    vertical-align: top;
+}
+
+.data-table th {
+    color: #f9fafb;
+    font-size: 0.92rem;
+}
+
+.data-table td {
+    color: #dbe4f0;
+    font-size: 0.93rem;
+}
+
+.data-table tbody tr:hover {
+    background: #111b2e;
+}
+
+/* ----------------------------------------------------------
+   Celdas con texto largo
+   ---------------------------------------------------------- */
+.break-cell {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    max-width: 320px;
+}
+
+/* ----------------------------------------------------------
+   Badges / etiquetas de estado
+   ---------------------------------------------------------- */
+.badge {
+    display: inline-block;
+    padding: 0.25rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    border: 1px solid transparent;
+}
+
+.badge-finished {
+    background: rgba(34, 197, 94, 0.16);
+    color: #86efac;
+    border-color: rgba(34, 197, 94, 0.35);
+}
+
+.badge-failed {
+    background: rgba(239, 68, 68, 0.16);
+    color: #fca5a5;
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+.badge-running {
+    background: rgba(59, 130, 246, 0.16);
+    color: #93c5fd;
+    border-color: rgba(59, 130, 246, 0.35);
+}
+
+.badge-initiated {
+    background: rgba(245, 158, 11, 0.16);
+    color: #fcd34d;
+    border-color: rgba(245, 158, 11, 0.35);
+}
+
+/* ----------------------------------------------------------
+   Grid de detalle / métricas
+   ---------------------------------------------------------- */
+.detail-grid,
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.9rem;
+    margin-top: 1rem;
+}
+
+.detail-item,
+.stat-card {
+    background: #0b1220;
+    border: 1px solid #1f2937;
+    border-radius: 12px;
+    padding: 0.9rem;
+}
+
+.detail-item h3,
+.stat-card h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.95rem;
+    color: #f9fafb;
+}
+
+.detail-item p,
+.stat-card p {
+    margin: 0;
+    color: #dbe4f0;
+}
+
+/* ----------------------------------------------------------
+   Bloques de código / preformateados
+   ---------------------------------------------------------- */
+code {
+    background: #0b1220;
+    border: 1px solid #1f2937;
+    border-radius: 6px;
+    padding: 0.15rem 0.35rem;
+    color: #cbd5e1;
+}
+
+pre {
+    background: #0b1220;
+    border: 1px solid #1f2937;
+    border-radius: 12px;
+    padding: 1rem;
+    overflow-x: auto;
+    color: #dbe4f0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ----------------------------------------------------------
+   Mensajes informativos / alertas simples
+   ---------------------------------------------------------- */
+.notice {
+    border-left: 4px solid #60a5fa;
+    background: rgba(96, 165, 250, 0.08);
+    padding: 0.9rem 1rem;
+    border-radius: 10px;
+}
+
+.notice-warning {
+    border-left-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.08);
+}
+
+.notice-error {
+    border-left-color: #ef4444;
+    background: rgba(239, 68, 68, 0.08);
+}
+
+/* ----------------------------------------------------------
+   Responsive
+   ---------------------------------------------------------- */
+@media (max-width: 768px) {
+    .topbar .container {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .topbar nav {
+        gap: 0.75rem;
+    }
+
+    .card {
+        padding: 1rem;
+    }
+
+    .data-table {
+        min-width: 700px;
+    }
+}
