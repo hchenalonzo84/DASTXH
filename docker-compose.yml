@@ -1,113 +1,174 @@
+# ==========================================================
+# docker-compose.yml
+# DASTXH - Orquestación principal del prototipo
+#
+# Servicios:
+#   - db          : Base de datos PostgreSQL
+#   - orquestador : Backend principal (CLI + GUI web con FastAPI)
+#   - pgadmin     : Administración manual de PostgreSQL
+#
+# Persistencia:
+#   - pgdata       : volumen nombrado para PostgreSQL
+#   - pgadmin_data : volumen nombrado para pgAdmin
+#   - ./workdata   : bind mount en host para reportes/evidencias
+#
+# Red:
+#   - dastxh_net   : red bridge interna explícita del proyecto
+# ==========================================================
+
 services:
-  # ==========================================================
-  # SERVICIO: db (PostgreSQL)
-  # - Es el servicio persistente (daemon) del stack.
-  # - Guarda historial/resultados en el volumen "pgdata".
-  # - Inicializa tablas MVP usando db/schema.sql en el primer arranque del volumen.
-  # ==========================================================
+  # --------------------------------------------------------
+  # Servicio: db
+  # - Base de datos PostgreSQL del proyecto
+  # - Usa volumen nombrado para mantener la persistencia
+  # - Ejecuta schema.sql solo cuando la BD se inicializa
+  #   por primera vez
+  # --------------------------------------------------------
   db:
-    # Imagen oficial Postgres 18 estable (Alpine)
     image: postgres:18.3-alpine3.23
+    container_name: dastxh-db
+    restart: unless-stopped
 
+    # Variables de entorno de PostgreSQL
     environment:
-      # Variables de inicialización (se leen del archivo .env si existe)
-      POSTGRES_DB: ${POSTGRES_DB:-dastxh}
-      POSTGRES_USER: ${POSTGRES_USER:-dastxh}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dastxh}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
+    # Puerto expuesto al host para acceso externo opcional
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+    # Persistencia + script inicial del esquema
     volumes:
-      # ------------------------------------------------------
-      # Volumen persistente (portable) para datos de Postgres.
-      # No depende de rutas C:\ del host.
-      # ------------------------------------------------------
-      - pgdata:/var/lib/postgresql
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
 
-      # ------------------------------------------------------
-      # Script SQL de inicialización (tablas MVP).
-      # Se ejecuta SOLO cuando el volumen está vacío.
-      # ------------------------------------------------------
-      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-
+    # Verificación de salud para esperar a que PostgreSQL
+    # esté listo antes de que lo usen otros servicios
     healthcheck:
-      # ------------------------------------------------------
-      # Healthcheck: indica "healthy" cuando Postgres está listo
-      # (para que el orquestador no intente conectar demasiado pronto).
-      # ------------------------------------------------------
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dastxh} -d ${POSTGRES_DB:-dastxh}"]
-      interval: 3s
-      timeout: 3s
-      retries: 30
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
+    # Red interna explícita del proyecto
     networks:
-      # Conecta db a la red explícita del proyecto
       - dastxh_net
 
-  # ==========================================================
-  # SERVICIO: orquestador (CLI + herramientas)
-  # - Contiene: Python3 (app), curl (capa1), hsecscan (capa2 via py2), dalfox (capa3).
-  # - Se mantiene "vivo" (idle) para que la CLI esté lista y ejecutes:
-  #     docker compose exec orquestador python3 main.py --url "<TARGET>"
-  # - Reportes/evidencias se guardan en /work (volumen workdata).
-  # ==========================================================
+  # --------------------------------------------------------
+  # Servicio: orquestador
+  # - Contenedor principal de DASTXH
+  # - Aloja:
+  #     * CLI
+  #     * GUI web con FastAPI
+  #     * acceso a curl, hsecscan y dalfox
+  #
+  # Nota:
+  # - Arranca la GUI web por defecto
+  # - La CLI seguirá disponible con:
+  #   docker compose exec orquestador python3 main.py --url ...
+  # --------------------------------------------------------
   orquestador:
     build:
-      # Carpeta donde está el Dockerfile y el código
       context: ./orquestador
+      dockerfile: Dockerfile
 
-    environment:
-      # ------------------------------------------------------
-      # Conexión interna a db:
-      # - host "db" es el nombre del servicio en docker-compose.
-      # - puerto 5432 es interno.
-      # ------------------------------------------------------
-      DATABASE_URL: postgresql://${POSTGRES_USER:-dastxh}:${POSTGRES_PASSWORD:-dastxh}@db:5432/${POSTGRES_DB:-dastxh}
+    container_name: dastxh-orquestador
+    restart: unless-stopped
 
-      # Carpeta de trabajo dentro del contenedor (persistida en volumen)
-      WORKDIR: /work
-
-      # Timeout default para curl/dalfox (segundos)
-      DEFAULT_TIMEOUT_SECONDS: ${DEFAULT_TIMEOUT_SECONDS:-30}
-
+    # Espera a que la base de datos esté saludable
     depends_on:
-      # No inicia orquestador hasta que db esté healthy
       db:
         condition: service_healthy
 
-    volumes:
-      # ------------------------------------------------------
-      # Persistencia portable de reportes/evidencias:
-      # /work/reports/<timestamp>/...
-      # ------------------------------------------------------
-      - workdata:/work
+    # Variables de entorno internas del backend
+    environment:
+      # Conexión a PostgreSQL usando el nombre del servicio "db"
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
 
+      # Timeout por defecto para los análisis
+      DEFAULT_TIMEOUT_SECONDS: ${DEFAULT_TIMEOUT_SECONDS:-30}
+
+      # Directorio lógico de trabajo dentro del contenedor
+      WORKDIR: /work
+
+    # Puerto expuesto para la GUI web / API
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+
+    # Bind mount:
+    # La carpeta local ./workdata se verá como /work
+    # dentro del contenedor, para que los reportes
+    # queden visibles desde el host
+    volumes:
+      - ./workdata:/work
+
+    # Directorio de trabajo por defecto
+    working_dir: /app/app
+
+    # Comando por defecto: arranca FastAPI con Uvicorn
+    # --reload es útil en desarrollo
+    command:
+      [
+        "uvicorn",
+        "webapp:app",
+        "--host", "0.0.0.0",
+        "--port", "8000",
+        "--reload"
+      ]
+
+    # Red interna explícita del proyecto
     networks:
-      # Misma red que db para comunicación por hostname "db"
       - dastxh_net
 
-    # --------------------------------------------------------
-    # MODO "SERVICIO IDLE":
-    # Mantiene el contenedor vivo para usar "docker compose exec".
-    # Esto evita usar "docker compose run" cada vez.
-    # --------------------------------------------------------
-    command: ["sleep", "infinity"]
+  # --------------------------------------------------------
+  # Servicio: pgadmin
+  # - Interfaz web para administrar PostgreSQL
+  # - Permite consultar tablas, ejecutar SQL,
+  #   revisar registros y explorar la BD
+  # --------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:9.8
+    container_name: dastxh-pgadmin
+    restart: unless-stopped
 
-    # Opcional: útil si quieres entrar con shell interactiva
-    tty: true
-    stdin_open: true
+    # Espera a que la base de datos esté lista
+    depends_on:
+      db:
+        condition: service_healthy
 
-# ==========================================================
-# Volúmenes Docker (persistentes y portables)
-# - pgdata: Postgres (historial/resultados)
-# - workdata: /work (reportes/evidencias/inputs)
-# ==========================================================
+    # Credenciales iniciales de pgAdmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+
+    # Puerto web expuesto al host
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+
+    # Volumen para conservar configuración interna de pgAdmin
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+    # Red interna explícita del proyecto
+    networks:
+      - dastxh_net
+
+# ----------------------------------------------------------
+# Volúmenes nombrados
+# - pgdata: persistencia de PostgreSQL
+# - pgadmin_data: persistencia de pgAdmin
+# ----------------------------------------------------------
 volumes:
   pgdata:
-  workdata:
+  pgadmin_data:
 
-# ==========================================================
-# Network explícita (para claridad/documentación)
-# Compose crea una default automáticamente, pero aquí la declaramos.
-# ==========================================================
+# ----------------------------------------------------------
+# Redes explícitas del proyecto
+# - dastxh_net: red bridge interna para comunicación
+#   entre db, orquestador y pgadmin
+# ----------------------------------------------------------
 networks:
   dastxh_net:
     driver: bridge

@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="card">
+  <h2>Iniciar evaluación</h2>
+  <p>
+    Desde esta interfaz puedes ejecutar una evaluación DASTXH sobre una URL objetivo.
+    El flujo utilizará:
+  </p>
+
+  <ul>
+    <li>Capa 1: evaluación de cabeceras HTTP con curl custom</li>
+    <li>Capa 2: revisión complementaria con hsecscan</li>
+    <li>Capa 3: detección XSS con Dalfox</li>
+  </ul>
+
+  <form method="post" action="/scan" class="scan-form">
+    <div class="form-group">
+      <label for="url">URL objetivo</label>
+      <input
+        type="url"
+        id="url"
+        name="url"
+        placeholder="https://example.com"
+        required
+      >
+    </div>
+
+    <div class="form-group">
+      <label for="timeout">Timeout (segundos)</label>
+      <input
+        type="number"
+        id="timeout"
+        name="timeout"
+        min="1"
+        value="{{ default_timeout }}"
+        required
+      >
+    </div>
+
+    <div class="form-actions">
+      <button type="submit">Ejecutar evaluación</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Ejecuciones recientes</h2>
+
+  {% if recent_executions %}
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Target</th>
+            <th>Estado</th>
+            <th>Origen</th>
+            <th>Cumplimiento</th>
+            <th>XSS</th>
+            <th>Inicio</th>
+            <th>Detalle</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in recent_executions %}
+            <tr>
+              <td>{{ item.id }}</td>
+              <td class="break-cell">{{ item.target_url }}</td>
+              <td>{{ item.status }}</td>
+              <td>{{ item.request_source }}</td>
+              <td>
+                {% if item.cumplimiento_pct is not none %}
+                  {{ item.cumplimiento_pct }}%
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td>
+                {% if item.xss_findings_count is not none %}
+                  {{ item.xss_findings_count }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td>{{ item.started_at }}</td>
+              <td>
+                <a href="/executions/{{ item.id }}">Ver</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p>No hay ejecuciones recientes registradas todavía.</p>
+  {% endif %}
+</section>
+{% endblock %}

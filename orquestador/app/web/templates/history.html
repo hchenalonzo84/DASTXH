@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="card">
+  <h2>Historial de ejecuciones</h2>
+  <p>
+    Aquí puedes consultar las evaluaciones registradas en PostgreSQL,
+    incluyendo estado, origen, cumplimiento de cabeceras, hallazgos XSS
+    y acceso al detalle de cada ejecución.
+  </p>
+
+  {% if executions %}
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Target</th>
+            <th>Estado</th>
+            <th>Origen</th>
+            <th>Cumplimiento</th>
+            <th>XSS</th>
+            <th>Artifacts</th>
+            <th>Inicio</th>
+            <th>Detalle</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in executions %}
+            <tr>
+              <td>{{ item.id }}</td>
+
+              <td class="break-cell">
+                {{ item.target_url }}
+              </td>
+
+              <td>
+                <span class="badge badge-{{ item.status }}">
+                  {{ item.status }}
+                </span>
+              </td>
+
+              <td>{{ item.request_source }}</td>
+
+              <td>
+                {% if item.cumplimiento_pct is not none %}
+                  {{ item.cumplimiento_pct }}%
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+
+              <td>
+                {% if item.xss_findings_count is not none %}
+                  {{ item.xss_findings_count }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+
+              <td>
+                {% if item.artifacts_count is not none %}
+                  {{ item.artifacts_count }}
+                {% else %}
+                  0
+                {% endif %}
+              </td>
+
+              <td>{{ item.started_at }}</td>
+
+              <td>
+                <a href="/executions/{{ item.id }}">Ver detalle</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="notice">
+      No hay ejecuciones registradas todavía.
+    </div>
+  {% endif %}
+</section>
+{% endblock %}
