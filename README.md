@@ -49,3 +49,8 @@ El proyecto funciona con:
 docker compose build --no-cache
 docker compose up -d
 docker compose ps
+
+---
+
+## Levantar el stack
+docker compose exec orquestador python3 main.py --url 
