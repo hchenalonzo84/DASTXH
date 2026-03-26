@@ -2,298 +2,361 @@
 
 {% block content %}
 <section class="card">
-  <h2>Detalle de ejecución</h2>
+    <h2>Detalle de ejecución</h2>
 
-  <div class="detail-grid">
-    <div class="detail-item">
-      <h3>ID</h3>
-      <p>{{ detail.id }}</p>
-    </div>
+    {# -------------------------------------------------------
+       Este bloque deja metadatos simples para que app.js
+       pueda detectar si la ejecución sigue en curso y,
+       en el siguiente paso, hacer polling automático.
+    ------------------------------------------------------- #}
+    <div
+        id="execution-status-meta"
+        data-execution-id="{{ execution_id }}"
+        data-status="{{ detail.status }}"
+        hidden
+    ></div>
 
-    <div class="detail-item">
-      <h3>Estado</h3>
-      <p>
-        <span class="badge badge-{{ detail.status }}">
-          {{ detail.status }}
-        </span>
-      </p>
-    </div>
-
-    <div class="detail-item">
-      <h3>Origen</h3>
-      <p>{{ detail.request_source }}</p>
-    </div>
-
-    <div class="detail-item">
-      <h3>Target URL</h3>
-      <p class="break-cell">{{ detail.target_url }}</p>
-    </div>
-
-    <div class="detail-item">
-      <h3>Inicio</h3>
-      <p>{{ detail.started_at }}</p>
-    </div>
-
-    <div class="detail-item">
-      <h3>Fin</h3>
-      <p>
-        {% if detail.finished_at %}
-          {{ detail.finished_at }}
-        {% else %}
-          -
-        {% endif %}
-      </p>
-    </div>
-
-    <div class="detail-item">
-      <h3>URLs ingresadas</h3>
-      <p>{{ detail.urls_ingresadas }}</p>
-    </div>
-
-    <div class="detail-item">
-      <h3>URLs evaluadas</h3>
-      <p>{{ detail.urls_evaluadas }}</p>
-    </div>
-
-    <div class="detail-item">
-      <h3>Carpeta lógica</h3>
-      <p class="break-cell">
-        {% if detail.report_dir %}
-          {{ detail.report_dir }}
-        {% else %}
-          -
-        {% endif %}
-      </p>
-    </div>
-  </div>
-
-  {% if detail.error_message %}
-    <div class="notice notice-error" style="margin-top: 1rem;">
-      <strong>Error:</strong> {{ detail.error_message }}
-    </div>
-  {% endif %}
-</section>
-
-<section class="card">
-  <h2>Capa 1: Security Headers (curl custom)</h2>
-
-  <div class="stats-grid">
-    <div class="stat-card">
-      <h3>Headers evaluadas</h3>
-      <p>
-        {% if detail.headers_evaluadas is not none %}
-          {{ detail.headers_evaluadas }}
-        {% else %}
-          -
-        {% endif %}
-      </p>
-    </div>
-
-    <div class="stat-card">
-      <h3>Headers presentes</h3>
-      <p>
-        {% if detail.headers_presentes is not none %}
-          {{ detail.headers_presentes }}
-        {% else %}
-          -
-        {% endif %}
-      </p>
-    </div>
-
-    <div class="stat-card">
-      <h3>Cumplimiento</h3>
-      <p>
-        {% if detail.cumplimiento_pct is not none %}
-          {{ detail.cumplimiento_pct }}%
-        {% else %}
-          -
-        {% endif %}
-      </p>
-    </div>
-  </div>
-
-  <div class="detail-grid">
-    <div class="detail-item">
-      <h3>Headers presentes</h3>
-      {% if detail.present_json %}
-        <ul class="list">
-          {% for item in detail.present_json %}
-            <li>{{ item }}</li>
-          {% endfor %}
-        </ul>
-      {% else %}
-        <p>No hay datos.</p>
-      {% endif %}
-    </div>
-
-    <div class="detail-item">
-      <h3>Headers faltantes</h3>
-      {% if detail.missing_json %}
-        <ul class="list">
-          {% for item in detail.missing_json %}
-            <li>{{ item }}</li>
-          {% endfor %}
-        </ul>
-      {% else %}
-        <p>No hay datos.</p>
-      {% endif %}
-    </div>
-  </div>
-
-  <div class="detail-item" style="margin-top: 1rem;">
-    <h3>Cookies evaluadas</h3>
-
-    {% if detail.cookies_flags_json %}
-      <div class="table-wrapper">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Cookie</th>
-              <th>Secure</th>
-              <th>HttpOnly</th>
-              <th>SameSite</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for cookie in detail.cookies_flags_json %}
-              <tr>
-                <td class="break-cell">{{ cookie.cookie }}</td>
-                <td>{{ "Sí" if cookie.secure else "No" }}</td>
-                <td>{{ "Sí" if cookie.httponly else "No" }}</td>
-                <td>{{ "Sí" if cookie.samesite else "No" }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+    {# -------------------------------------------------------
+       Mensaje visual principal según el estado actual
+    ------------------------------------------------------- #}
+    {% if detail.status == "initiated" %}
+        <div class="notice notice-warning" style="margin-bottom: 1rem;">
+            <strong>Ejecución iniciada.</strong>
+            El escaneo fue aceptado y está pendiente de continuar su procesamiento.
+            Algunos resultados pueden no estar disponibles todavía.
+        </div>
+    {% elif detail.status == "running" %}
+        <div class="notice notice-warning" style="margin-bottom: 1rem;">
+            <strong>Escaneo en progreso.</strong>
+            Esta ejecución sigue corriendo en segundo plano. Puedes permanecer en esta vista
+            o actualizarla más tarde; el proceso no depende de que esta página siga abierta.
+        </div>
+    {% elif detail.status == "failed" %}
+        <div class="notice notice-error" style="margin-bottom: 1rem;">
+            <strong>Ejecución fallida.</strong>
+            Revisa el mensaje de error y los artifacts generados para identificar la causa.
+        </div>
     {% else %}
-      <p>No se detectaron cookies evaluables en la respuesta final.</p>
+        <div class="notice" style="margin-bottom: 1rem;">
+            <strong>Ejecución finalizada.</strong>
+            Ya puedes revisar el resultado consolidado de las tres capas de evaluación.
+        </div>
     {% endif %}
-  </div>
+
+    <div class="detail-grid">
+        <div class="detail-item">
+            <h3>ID</h3>
+            <p>{{ detail.id }}</p>
+        </div>
+
+        <div class="detail-item">
+            <h3>Estado</h3>
+            <p>
+                <span class="badge badge-{{ detail.status }}">
+                    {{ detail.status }}
+                </span>
+            </p>
+        </div>
+
+        <div class="detail-item">
+            <h3>Origen</h3>
+            <p>{{ detail.request_source }}</p>
+        </div>
+
+        <div class="detail-item">
+            <h3>Target URL</h3>
+            <p class="break-cell">{{ detail.target_url }}</p>
+        </div>
+
+        <div class="detail-item">
+            <h3>Inicio</h3>
+            <p>{{ detail.started_at }}</p>
+        </div>
+
+        <div class="detail-item">
+            <h3>Fin</h3>
+            <p>
+                {% if detail.finished_at %}
+                    {{ detail.finished_at }}
+                {% else %}
+                    -
+                {% endif %}
+            </p>
+        </div>
+
+        <div class="detail-item">
+            <h3>URLs ingresadas</h3>
+            <p>{{ detail.urls_ingresadas }}</p>
+        </div>
+
+        <div class="detail-item">
+            <h3>URLs evaluadas</h3>
+            <p>{{ detail.urls_evaluadas }}</p>
+        </div>
+
+        <div class="detail-item">
+            <h3>Carpeta lógica</h3>
+            <p class="break-cell">
+                {% if detail.report_dir %}
+                    {{ detail.report_dir }}
+                {% else %}
+                    -
+                {% endif %}
+            </p>
+        </div>
+    </div>
+
+    {% if detail.error_message %}
+        <div class="notice notice-error" style="margin-top: 1rem;">
+            <strong>Error:</strong> {{ detail.error_message }}
+        </div>
+    {% endif %}
 </section>
 
 <section class="card">
-  <h2>Capa 2: hsecscan</h2>
+    <h2>Capa 1: Security Headers (curl custom)</h2>
 
-  <div class="stats-grid">
-    <div class="stat-card">
-      <h3>Return code</h3>
-      <p>
-        {% if detail.hsecscan_rc is not none %}
-          {{ detail.hsecscan_rc }}
-        {% else %}
-          -
-        {% endif %}
-      </p>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>Headers evaluadas</h3>
+            <p>
+                {% if detail.headers_evaluadas is not none %}
+                    {{ detail.headers_evaluadas }}
+                {% else %}
+                    -
+                {% endif %}
+            </p>
+        </div>
+
+        <div class="stat-card">
+            <h3>Headers presentes</h3>
+            <p>
+                {% if detail.headers_presentes is not none %}
+                    {{ detail.headers_presentes }}
+                {% else %}
+                    -
+                {% endif %}
+            </p>
+        </div>
+
+        <div class="stat-card">
+            <h3>Cumplimiento</h3>
+            <p>
+                {% if detail.cumplimiento_pct is not none %}
+                    {{ detail.cumplimiento_pct }}%
+                {% else %}
+                    -
+                {% endif %}
+            </p>
+        </div>
     </div>
-  </div>
 
-  <h3>Salida raw</h3>
-  {% if detail.hsecscan_raw_output %}
-    <pre>{{ detail.hsecscan_raw_output }}</pre>
-  {% else %}
-    <p>No hay salida registrada para hsecscan.</p>
-  {% endif %}
+    {% if detail.headers_evaluadas is none and detail.status in ["initiated", "running"] %}
+        <div class="notice notice-warning" style="margin-top: 1rem;">
+            La capa 1 todavía no ha terminado o sus resultados aún no se han persistido.
+        </div>
+    {% else %}
+        <div class="detail-grid">
+            <div class="detail-item">
+                <h3>Headers presentes</h3>
+                {% if detail.present_json %}
+                    <ul class="list">
+                        {% for item in detail.present_json %}
+                            <li>{{ item }}</li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p>No hay headers presentes registrados.</p>
+                {% endif %}
+            </div>
+
+            <div class="detail-item">
+                <h3>Headers faltantes</h3>
+                {% if detail.missing_json %}
+                    <ul class="list">
+                        {% for item in detail.missing_json %}
+                            <li>{{ item }}</li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p>No hay headers faltantes registrados.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="detail-item" style="margin-top: 1rem;">
+            <h3>Cookies evaluadas</h3>
+
+            {% if detail.cookies_flags_json %}
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Cookie</th>
+                                <th>Secure</th>
+                                <th>HttpOnly</th>
+                                <th>SameSite</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for cookie in detail.cookies_flags_json %}
+                                <tr>
+                                    <td class="break-cell">{{ cookie.cookie }}</td>
+                                    <td>{{ "Sí" if cookie.secure else "No" }}</td>
+                                    <td>{{ "Sí" if cookie.httponly else "No" }}</td>
+                                    <td>{{ "Sí" if cookie.samesite else "No" }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p>No se detectaron cookies evaluables en la respuesta final.</p>
+            {% endif %}
+        </div>
+    {% endif %}
 </section>
 
 <section class="card">
-  <h2>Capa 3: Dalfox / XSS</h2>
+    <h2>Capa 2: hsecscan</h2>
 
-  <div class="stats-grid">
-    <div class="stat-card">
-      <h3>Return code</h3>
-      <p>
-        {% if detail.dalfox_rc is not none %}
-          {{ detail.dalfox_rc }}
-        {% else %}
-          -
-        {% endif %}
-      </p>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>Return code</h3>
+            <p>
+                {% if detail.hsecscan_rc is not none %}
+                    {{ detail.hsecscan_rc }}
+                {% else %}
+                    -
+                {% endif %}
+            </p>
+        </div>
     </div>
 
-    <div class="stat-card">
-      <h3>Findings</h3>
-      <p>
-        {% if detail.findings_count is not none %}
-          {{ detail.findings_count }}
+    {% if detail.hsecscan_rc is none and detail.status in ["initiated", "running"] %}
+        <div class="notice notice-warning" style="margin-top: 1rem;">
+            La capa 2 todavía no ha terminado o sus resultados aún no se han persistido.
+        </div>
+    {% else %}
+        <h3>Salida raw</h3>
+        {% if detail.hsecscan_raw_output %}
+            <pre>{{ detail.hsecscan_raw_output }}</pre>
         {% else %}
-          -
+            <p>No hay salida registrada para hsecscan.</p>
         {% endif %}
-      </p>
-    </div>
-  </div>
-
-  <h3>Resumen estructurado</h3>
-  {% if detail.summary_json %}
-    <pre>{{ detail.summary_json }}</pre>
-  {% else %}
-    <p>No hay resumen JSON registrado.</p>
-  {% endif %}
-
-  <h3>Salida raw</h3>
-  {% if detail.dalfox_raw_output %}
-    <pre>{{ detail.dalfox_raw_output }}</pre>
-  {% else %}
-    <p>No hay salida raw registrada para Dalfox.</p>
-  {% endif %}
+    {% endif %}
 </section>
 
 <section class="card">
-  <h2>Artifacts generados</h2>
+    <h2>Capa 3: Dalfox / XSS</h2>
 
-  {% if artifacts %}
-    <div class="table-wrapper">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Tipo</th>
-            <th>Archivo</th>
-            <th>Ruta relativa</th>
-            <th>MIME</th>
-            <th>Tamaño</th>
-            <th>Abrir</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for item in artifacts %}
-            <tr>
-              <td>{{ item.artifact_type }}</td>
-              <td>{{ item.file_name }}</td>
-              <td class="break-cell">{{ item.relative_path }}</td>
-              <td>
-                {% if item.mime_type %}
-                  {{ item.mime_type }}
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>Return code</h3>
+            <p>
+                {% if detail.dalfox_rc is not none %}
+                    {{ detail.dalfox_rc }}
                 {% else %}
-                  -
+                    -
                 {% endif %}
-              </td>
-              <td>
-                {% if item.size_bytes is not none %}
-                  {{ item.size_bytes }} bytes
+            </p>
+        </div>
+
+        <div class="stat-card">
+            <h3>Findings</h3>
+            <p>
+                {% if detail.findings_count is not none %}
+                    {{ detail.findings_count }}
                 {% else %}
-                  -
+                    -
                 {% endif %}
-              </td>
-              <td>
-                {% if run_id and item.file_name %}
-                  <a
-                    href="/api/reports/file/{{ run_id }}/{{ item.file_name }}"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Abrir
-                  </a>
-                {% else %}
-                  -
-                {% endif %}
-              </td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+            </p>
+        </div>
     </div>
-  {% else %}
-    <p>No hay artifacts registrados para esta ejecución.</p>
-  {% endif %}
+
+    {% if detail.dalfox_rc is none and detail.status in ["initiated", "running"] %}
+        <div class="notice notice-warning" style="margin-top: 1rem;">
+            La capa 3 todavía no ha terminado o sus resultados aún no se han persistido.
+        </div>
+    {% else %}
+        <h3>Resumen estructurado</h3>
+        {% if detail.summary_json %}
+            <pre>{{ detail.summary_json }}</pre>
+        {% else %}
+            <p>No hay resumen JSON registrado.</p>
+        {% endif %}
+
+        <h3>Salida raw</h3>
+        {% if detail.dalfox_raw_output %}
+            <pre>{{ detail.dalfox_raw_output }}</pre>
+        {% else %}
+            <p>No hay salida raw registrada para Dalfox.</p>
+        {% endif %}
+    {% endif %}
+</section>
+
+<section class="card">
+    <h2>Artifacts generados</h2>
+
+    {% if artifacts %}
+        <div class="table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Tipo</th>
+                        <th>Archivo</th>
+                        <th>Ruta relativa</th>
+                        <th>MIME</th>
+                        <th>Tamaño</th>
+                        <th>Abrir</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in artifacts %}
+                        <tr>
+                            <td>{{ item.artifact_type }}</td>
+                            <td>{{ item.file_name }}</td>
+                            <td class="break-cell">{{ item.relative_path }}</td>
+                            <td>
+                                {% if item.mime_type %}
+                                    {{ item.mime_type }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.size_bytes is not none %}
+                                    {{ item.size_bytes }} bytes
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if run_id and item.file_name %}
+                                    <a
+                                        href="/api/reports/file/{{ run_id }}/{{ item.file_name }}"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                    >
+                                        Abrir
+                                    </a>
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        {% if detail.status in ["initiated", "running"] %}
+            <div class="notice notice-warning">
+                La ejecución sigue en curso. Los artifacts aparecerán aquí conforme se generen y registren.
+            </div>
+        {% else %}
+            <p>No hay artifacts registrados para esta ejecución.</p>
+        {% endif %}
+    {% endif %}
 </section>
 {% endblock %}

@@ -17,12 +17,35 @@ Flujo principal:
   7) Registra artifacts
   8) Marca ejecución como finished o failed
   9) Devuelve un resumen estructurado del resultado
+
+
+- Servicio reutilizable para ejecutar una evaluación completa DASTXH.
+- Ahora queda dividido en dos formas de uso:
+
+  1) execute_scan(...)
+     -> ejecución síncrona
+     -> útil para CLI o para procesos internos que quieran esperar
+        hasta el final del escaneo.
+
+  2) start_scan_in_background(...)
+     -> crea la ejecución y lanza el pipeline en segundo plano
+     -> útil para GUI web y API, donde NO queremos que el escaneo
+        dependa del ciclo de vida de una sola petición HTTP.
+
+Objetivo de esta refactorización:
+- desacoplar el pipeline del POST web
+- permitir que el navegador cambie de vista sin interrumpir
+  la ejecución del escaneo
+- seguir reutilizando la misma lógica desde CLI, web y API
 """
 
 from __future__ import annotations
 
+import threading
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import db as db_layer
 from config import (
@@ -50,6 +73,31 @@ from tools.curl_custom import curl_fetch_headers, evaluate_headers_and_cookies
 from tools.dalfox_tool import read_summary, run_dalfox
 from tools.hsecscan_tool import run_hsecscan
 from utils import ensure_dir, safe_read_text, ts_folder, utc_now, write_json
+
+
+# ==========================================================
+# CONTEXTO INTERNO DE EJECUCIÓN
+# ==========================================================
+
+@dataclass
+class ScanContext:
+    """
+    Estructura interna que agrupa los datos mínimos necesarios
+    para ejecutar el pipeline sin depender directamente del request web.
+
+    Esto ayuda a:
+    - mantener el código más legible
+    - reutilizar el mismo pipeline en modo síncrono y en background
+    - evitar pasar demasiados parámetros sueltos entre funciones
+    """
+    execution_id: int
+    target_url: str
+    request_source: str
+    started_at: datetime
+    reports_root: Path
+    report_dir: Path
+    report_dir_logical: str
+    run_meta_path: Path
 
 
 # ==========================================================
@@ -103,89 +151,80 @@ def _register_file_artifact(
     )
 
 
-# ==========================================================
-# SERVICIO PRINCIPAL DE ESCANEO
-# ==========================================================
+def _append_artifact_name(run_meta: Dict[str, Any], file_name: str) -> None:
+    """
+    Agrega un nombre de artifact a run_meta["artifacts"] solo si
+    todavía no existe.
 
-def execute_scan(
+    Esto evita duplicados cuando el mismo archivo se registra más
+    de una vez durante el cierre del pipeline.
+    """
+    artifacts = run_meta.setdefault("artifacts", [])
+    if file_name and file_name not in artifacts:
+        artifacts.append(file_name)
+
+
+def _build_unique_run_id(reports_root: Path, started: datetime) -> str:
+    """
+    Genera un identificador de carpeta basado en timestamp.
+
+    Mantiene el formato tradicional YYYYMMDD_HHMMSS y solo agrega
+    un sufijo si ya existe una carpeta con ese nombre.
+
+    Esto evita choques si dos ejecuciones se inician en el mismo segundo.
+    """
+    base_run_id = ts_folder(started)
+    candidate = base_run_id
+    counter = 1
+
+    while (reports_root / candidate).exists():
+        counter += 1
+        candidate = f"{base_run_id}_{counter:02d}"
+
+    return candidate
+
+
+def _prepare_scan_context(
     dsn: str,
     workdir: Path,
     url: str,
-    timeout_s: int,
-    request_source: str = "cli",
-) -> Dict[str, Any]:
+    request_source: str,
+) -> Tuple[ScanContext, Dict[str, Any]]:
     """
-    Ejecuta una evaluación completa sobre una sola URL y devuelve
-    un resumen estructurado del resultado.
+    Prepara toda la estructura mínima de una nueva ejecución,
+    pero todavía NO ejecuta el pipeline.
 
-    Parámetros:
-    - dsn: cadena de conexión PostgreSQL
-    - workdir: directorio base de trabajo, normalmente /work
-    - url: URL objetivo
-    - timeout_s: timeout en segundos para las herramientas
-    - request_source: origen de la ejecución ('cli', 'web', 'api')
+    Aquí se hace:
+    - creación de carpetas base
+    - creación del directorio de reportes de la ejecución
+    - inserción del registro inicial en PostgreSQL
+    - generación del archivo run_meta.json inicial
 
-    Devuelve un diccionario con información útil para:
-    - CLI
-    - API
-    - GUI web
-
-    En éxito:
-      {
-        "ok": True,
-        "execution_id": ...,
-        "status": "finished",
-        "target_url": ...,
-        "report_dir": ...,
-        "report_md": ...,
-        "report_html": ...,
-        "compliance_pct": ...,
-        "hsecscan_rc": ...,
-        "dalfox_rc": ...,
-        "findings_count": ...
-      }
-
-    En error:
-      {
-        "ok": False,
-        "execution_id": ...,
-        "status": "failed",
-        "target_url": ...,
-        "report_dir": ...,
-        "error": ...
-      }
+    Esta separación es la clave para poder:
+    - correr el pipeline de forma síncrona
+    - o lanzarlo en segundo plano desde la GUI/API
     """
     started = utc_now()
 
     # ------------------------------------------------------
-    # Preparar directorios de salida
+    # Preparar directorios base
     # ------------------------------------------------------
+    ensure_dir(workdir)
+
     reports_root = workdir / "reports"
     ensure_dir(reports_root)
 
-    run_id = ts_folder(started)
+    # ------------------------------------------------------
+    # Crear carpeta física única para la ejecución
+    # ------------------------------------------------------
+    run_id = _build_unique_run_id(reports_root, started)
     report_dir = reports_root / run_id
     ensure_dir(report_dir)
 
     report_dir_logical = f"/work/reports/{run_id}"
 
     # ------------------------------------------------------
-    # Metadatos iniciales de ejecución
-    # ------------------------------------------------------
-    run_meta: Dict[str, Any] = {
-        "target_url": url,
-        "started_at": started.isoformat(),
-        "finished_at": None,
-        "status": "initiated",
-        "execution_id": None,
-        "request_source": request_source,
-        "errors": [],
-        "report_dir": report_dir_logical,
-        "artifacts": [],
-    }
-
-    # ------------------------------------------------------
-    # Insertar ejecución en la base de datos
+    # Insertar ejecución inicial en la base de datos
     # ------------------------------------------------------
     execution_id = db_layer.insert_execution(
         dsn=dsn,
@@ -196,14 +235,68 @@ def execute_scan(
         urls_ingresadas=1,
         urls_evaluadas=0,
     )
-    run_meta["execution_id"] = execution_id
 
-    run_meta_path = report_dir / RUN_META_JSON
-    write_json(run_meta_path, run_meta)
+    # ------------------------------------------------------
+    # Construir contexto reusable del pipeline
+    # ------------------------------------------------------
+    context = ScanContext(
+        execution_id=execution_id,
+        target_url=url,
+        request_source=request_source,
+        started_at=started,
+        reports_root=reports_root,
+        report_dir=report_dir,
+        report_dir_logical=report_dir_logical,
+        run_meta_path=report_dir / RUN_META_JSON,
+    )
+
+    # ------------------------------------------------------
+    # Crear metadatos iniciales de ejecución
+    # ------------------------------------------------------
+    run_meta: Dict[str, Any] = {
+        "target_url": url,
+        "started_at": started.isoformat(),
+        "finished_at": None,
+        "status": "initiated",
+        "execution_id": execution_id,
+        "request_source": request_source,
+        "errors": [],
+        "report_dir": report_dir_logical,
+        "artifacts": [],
+    }
+
+    write_json(context.run_meta_path, run_meta)
+
+    return context, run_meta
+
+
+def _run_scan_pipeline(
+    dsn: str,
+    context: ScanContext,
+    timeout_s: int,
+    run_meta: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Ejecuta el pipeline completo de evaluación usando un contexto ya preparado.
+
+    Esta función contiene la lógica real del escaneo.
+    Se usa tanto para:
+    - execute_scan(...)               -> modo síncrono
+    - start_scan_in_background(...)   -> modo asíncrono
+
+    De esta forma no duplicamos la lógica principal del pipeline.
+    """
+    execution_id = context.execution_id
+    url = context.target_url
+    request_source = context.request_source
+    report_dir = context.report_dir
+    report_dir_logical = context.report_dir_logical
+    reports_root = context.reports_root
+    run_meta_path = context.run_meta_path
 
     try:
         # --------------------------------------------------
-        # Marcar como running
+        # Marcar ejecución como running
         # --------------------------------------------------
         db_layer.update_execution_running(dsn, execution_id)
         run_meta["status"] = "running"
@@ -295,7 +388,7 @@ def execute_scan(
         report_html_path.write_text(report_html, encoding="utf-8", errors="replace")
 
         # --------------------------------------------------
-        # Registrar artifacts
+        # Registrar artifacts generados durante el pipeline
         # --------------------------------------------------
         artifact_specs = [
             (headers_json_path, ARTIFACT_TYPE_HEADERS_JSON, MIME_APPLICATION_JSON),
@@ -316,10 +409,10 @@ def execute_scan(
                 mime_type=mime_type,
             )
             if file_path.exists():
-                run_meta["artifacts"].append(file_path.name)
+                _append_artifact_name(run_meta, file_path.name)
 
         # --------------------------------------------------
-        # Cierre exitoso
+        # Cierre exitoso de la ejecución
         # --------------------------------------------------
         db_layer.update_execution_finished(
             dsn=dsn,
@@ -339,6 +432,7 @@ def execute_scan(
 
         write_json(run_meta_path, run_meta)
 
+        # También registramos el propio run_meta.json como artifact
         _register_file_artifact(
             dsn=dsn,
             execution_id=execution_id,
@@ -347,9 +441,9 @@ def execute_scan(
             artifact_type=ARTIFACT_TYPE_RUN_META_JSON,
             mime_type=MIME_APPLICATION_JSON,
         )
-        if RUN_META_JSON not in run_meta["artifacts"]:
-            run_meta["artifacts"].append(RUN_META_JSON)
-            write_json(run_meta_path, run_meta)
+
+        _append_artifact_name(run_meta, RUN_META_JSON)
+        write_json(run_meta_path, run_meta)
 
         return {
             "ok": True,
@@ -369,7 +463,7 @@ def execute_scan(
 
     except Exception as exc:
         # --------------------------------------------------
-        # Manejo de error controlado
+        # Manejo de error controlado del pipeline
         # --------------------------------------------------
         err = str(exc)
         finished = utc_now()
@@ -397,8 +491,11 @@ def execute_scan(
                 artifact_type=ARTIFACT_TYPE_RUN_META_JSON,
                 mime_type=MIME_APPLICATION_JSON,
             )
+
+            _append_artifact_name(run_meta, RUN_META_JSON)
+            write_json(run_meta_path, run_meta)
         except Exception:
-            # Evita encadenar errores durante el manejo de fallos
+            # Evita encadenar errores adicionales durante el manejo de fallos
             pass
 
         return {
@@ -411,3 +508,126 @@ def execute_scan(
             "error": err,
             "artifacts": run_meta.get("artifacts", []),
         }
+
+
+def _background_scan_worker(
+    dsn: str,
+    context: ScanContext,
+    timeout_s: int,
+    run_meta: Dict[str, Any],
+) -> None:
+    """
+    Worker interno que ejecuta el pipeline en segundo plano.
+
+    No devuelve nada porque su función es únicamente correr
+    el proceso y dejar trazabilidad en:
+    - PostgreSQL
+    - run_meta.json
+    - artifacts/reportes físicos
+
+    El resultado se consulta después desde la BD o desde
+    los endpoints de detalle/historial.
+    """
+    _run_scan_pipeline(
+        dsn=dsn,
+        context=context,
+        timeout_s=timeout_s,
+        run_meta=run_meta,
+    )
+
+
+# ==========================================================
+# SERVICIO PÚBLICO: MODO SÍNCRONO
+# ==========================================================
+
+def execute_scan(
+    dsn: str,
+    workdir: Path,
+    url: str,
+    timeout_s: int,
+    request_source: str = "cli",
+) -> Dict[str, Any]:
+    """
+    Ejecuta una evaluación completa de forma síncrona.
+
+    Este método conserva el comportamiento esperado por la CLI:
+    - crea la ejecución
+    - corre todo el pipeline
+    - espera a que termine
+    - devuelve el resultado final completo
+    """
+    context, run_meta = _prepare_scan_context(
+        dsn=dsn,
+        workdir=workdir,
+        url=url,
+        request_source=request_source,
+    )
+
+    return _run_scan_pipeline(
+        dsn=dsn,
+        context=context,
+        timeout_s=timeout_s,
+        run_meta=run_meta,
+    )
+
+
+# ==========================================================
+# SERVICIO PÚBLICO: MODO ASÍNCRONO / BACKGROUND
+# ==========================================================
+
+def start_scan_in_background(
+    dsn: str,
+    workdir: Path,
+    url: str,
+    timeout_s: int,
+    request_source: str = "web",
+) -> Dict[str, Any]:
+    """
+    Inicia un escaneo en segundo plano y devuelve inmediatamente
+    los datos mínimos de seguimiento.
+
+    Este método es el que necesitaremos usar desde:
+    - rutas API POST /api/scans
+    - GUI web
+    - cualquier flujo donde NO queramos bloquear la respuesta HTTP
+
+    Flujo:
+    1) prepara contexto y crea registro en DB
+    2) lanza un hilo en background
+    3) devuelve rápido execution_id y estado inicial
+
+    Nota:
+    - El hilo se marca como daemon=True para no bloquear apagados
+      del proceso del servidor.
+    - Para un futuro despliegue más robusto, esto podría migrarse
+      a una cola de trabajos o worker separado.
+    """
+    context, run_meta = _prepare_scan_context(
+        dsn=dsn,
+        workdir=workdir,
+        url=url,
+        request_source=request_source,
+    )
+
+    worker = threading.Thread(
+        target=_background_scan_worker,
+        kwargs={
+            "dsn": dsn,
+            "context": context,
+            "timeout_s": timeout_s,
+            "run_meta": run_meta,
+        },
+        name=f"dastxh-scan-{context.execution_id}",
+        daemon=True,
+    )
+    worker.start()
+
+    return {
+        "ok": True,
+        "accepted": True,
+        "execution_id": context.execution_id,
+        "status": "initiated",
+        "target_url": context.target_url,
+        "request_source": context.request_source,
+        "report_dir": context.report_dir_logical,
+    }

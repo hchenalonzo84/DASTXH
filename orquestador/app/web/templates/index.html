@@ -14,6 +14,13 @@
     <li>Capa 3: detección XSS con Dalfox</li>
   </ul>
 
+  <div class="notice" style="margin-top: 1rem; margin-bottom: 1rem;">
+    <strong>Nuevo flujo de ejecución.</strong>
+    Al iniciar una evaluación, el escaneo se ejecuta en segundo plano y la interfaz
+    te redirigirá al detalle de la ejecución. Esto evita que el proceso dependa
+    de permanecer en una sola vista mientras termina el análisis.
+  </div>
+
   <form method="post" action="/scan" class="scan-form">
     <div class="form-group">
       <label for="url">URL objetivo</label>
@@ -67,23 +74,40 @@
             <tr>
               <td>{{ item.id }}</td>
               <td class="break-cell">{{ item.target_url }}</td>
-              <td>{{ item.status }}</td>
+
+              <td>
+                <span class="badge badge-{{ item.status }}">
+                  {{ item.status }}
+                </span>
+              </td>
+
               <td>{{ item.request_source }}</td>
               <td>
                 {% if item.cumplimiento_pct is not none %}
                   {{ item.cumplimiento_pct }}%
                 {% else %}
-                  -
+                  {% if item.status in ["initiated", "running"] %}
+                    En proceso
+                  {% else %}
+                    -
+                  {% endif %}
                 {% endif %}
               </td>
+
               <td>
                 {% if item.xss_findings_count is not none %}
                   {{ item.xss_findings_count }}
                 {% else %}
-                  -
+                  {% if item.status in ["initiated", "running"] %}
+                    En proceso
+                  {% else %}
+                    -
+                  {% endif %}
                 {% endif %}
               </td>
+
               <td>{{ item.started_at }}</td>
+
               <td>
                 <a href="/executions/{{ item.id }}">Ver</a>
               </td>
@@ -93,7 +117,9 @@
       </table>
     </div>
   {% else %}
-    <p>No hay ejecuciones recientes registradas todavía.</p>
+    <div class="notice">
+      No hay ejecuciones recientes registradas todavía.
+    </div>
   {% endif %}
 </section>
 {% endblock %}
