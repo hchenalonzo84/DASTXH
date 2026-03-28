@@ -7,6 +7,7 @@ Objetivo de esta versión:
 - devolver un execution_id inmediatamente
 - consultar después el estado/resumen de la ejecución con GET
 - consultar el detalle completo cuando sea necesario
+- soportar scan_profile y enable_hsecscan
 
 Esto es clave para desacoplar:
 - la navegación de la GUI
@@ -45,19 +46,27 @@ class ScanCreateRequest(BaseModel):
     Ejemplo:
     {
       "url": "https://example.com",
-      "timeout": 30
+      "timeout": 30,
+      "scan_profile": "profundo",
+      "enable_hsecscan": true
     }
-
-    Notas:
-    - url es obligatoria
-    - timeout es opcional; si no llega, se usa el valor por defecto
-      del entorno
     """
     url: str = Field(..., description="URL objetivo a evaluar.")
     timeout: Optional[int] = Field(
         default=None,
         ge=1,
         description="Timeout opcional en segundos para el escaneo.",
+    )
+    scan_profile: Optional[str] = Field(
+        default="superficial",
+        description="Perfil de escaneo: superficial o profundo.",
+    )
+    enable_hsecscan: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Override opcional para hsecscan. "
+            "Si es null, el backend lo resuelve según el perfil."
+        ),
     )
 
 
@@ -72,6 +81,8 @@ class ScanCreateResponse(BaseModel):
     status: str
     target_url: str
     request_source: str
+    scan_profile: str
+    enable_hsecscan: bool
     report_dir: str
 
 
@@ -126,11 +137,6 @@ def validate_target_url(value: str) -> str:
     Validaciones mínimas:
     - no vacía
     - debe comenzar con http:// o https://
-
-    Nota:
-    dejamos la validación deliberadamente simple para no bloquear
-    casos legítimos de laboratorio que una validación más estricta
-    podría rechazar.
     """
     target_url = (value or "").strip()
 
@@ -146,12 +152,28 @@ def validate_target_url(value: str) -> str:
     return target_url
 
 
+def validate_scan_profile(value: Optional[str]) -> str:
+    """
+    Valida el perfil de escaneo recibido por API.
+
+    Solo se aceptan:
+    - superficial
+    - profundo
+    """
+    profile = (value or "superficial").strip().lower()
+
+    if profile not in {"superficial", "profundo"}:
+        raise HTTPException(
+            status_code=400,
+            detail="scan_profile debe ser 'superficial' o 'profundo'.",
+        )
+
+    return profile
+
+
 def wait_until_db_ready(timeout_s: int = 20) -> str:
     """
     Espera a que la base de datos esté disponible y devuelve el DSN.
-
-    Esto evita que el endpoint intente crear una ejecución cuando
-    PostgreSQL todavía no está listo.
     """
     dsn = get_dsn()
     wait_for_db(lambda: db_layer.ping_db(dsn), timeout_s=timeout_s)
@@ -166,9 +188,6 @@ def wait_until_db_ready(timeout_s: int = 20) -> str:
 def scans_health() -> Dict[str, Any]:
     """
     Endpoint simple de salud del módulo de escaneos.
-
-    Además de devolver "ok", intenta comprobar la conectividad
-    con PostgreSQL para tener una señal más útil desde fuera.
     """
     db_ok = False
 
@@ -195,24 +214,13 @@ def create_scan(payload: ScanCreateRequest) -> Dict[str, Any]:
     """
     Inicia un escaneo en segundo plano y devuelve inmediatamente
     el execution_id.
-
-    Este endpoint es la base del nuevo flujo correcto para la GUI:
-
-    1) la GUI hace POST /api/scans
-    2) recibe execution_id rápido
-    3) redirige o consulta luego GET /api/scans/{id}
-    4) el pipeline sigue corriendo en background
-
-    Con esto evitamos que el navegador dependa de esperar
-    el proceso completo del escaneo.
     """
     # ------------------------------------------------------
     # Validar entrada
     # ------------------------------------------------------
     target_url = validate_target_url(payload.url)
-
-    # Si no enviaron timeout, usamos el configurado por defecto
     timeout_s = payload.timeout if payload.timeout is not None else get_default_timeout()
+    scan_profile = validate_scan_profile(payload.scan_profile)
 
     # ------------------------------------------------------
     # Preparar entorno y BD
@@ -229,9 +237,10 @@ def create_scan(payload: ScanCreateRequest) -> Dict[str, Any]:
         url=target_url,
         timeout_s=timeout_s,
         request_source="api",
+        scan_profile=scan_profile,
+        enable_hsecscan=payload.enable_hsecscan,
     )
 
-    # Validación defensiva por si en el futuro cambia el servicio
     execution_id = result.get("execution_id")
     if execution_id is None:
         raise HTTPException(
@@ -250,11 +259,6 @@ def create_scan(payload: ScanCreateRequest) -> Dict[str, Any]:
 def get_scan_summary(execution_id: int) -> Dict[str, Any]:
     """
     Devuelve el resumen actual de una ejecución.
-
-    Esta vista compacta es útil para:
-    - polling ligero desde la GUI
-    - mostrar estado actual del escaneo
-    - saber si ya terminó o falló sin pedir todo el detalle
     """
     if execution_id <= 0:
         raise HTTPException(status_code=400, detail="execution_id inválido.")
@@ -283,18 +287,6 @@ def get_scan_summary(execution_id: int) -> Dict[str, Any]:
 def get_scan_detail(execution_id: int) -> Dict[str, Any]:
     """
     Devuelve el detalle completo de una ejecución.
-
-    Incluye:
-    - datos base de la ejecución
-    - resultados de headers
-    - resultados de hsecscan
-    - resultados de Dalfox
-    - artifacts asociados
-
-    Este endpoint será útil para:
-    - la pantalla de detalle de la GUI
-    - futuras integraciones
-    - pruebas manuales con Postman/Insomnia
     """
     if execution_id <= 0:
         raise HTTPException(status_code=400, detail="execution_id inválido.")

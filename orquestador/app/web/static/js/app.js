@@ -1,47 +1,32 @@
 /* ==========================================================
    app.js
-   - Script base de la GUI web de DASTXH
+   - Script principal de la GUI web de DASTXH
    - Esta versión agrega:
      * prevención de doble envío en el formulario
-     * subrayado simple del enlace activo en la barra superior
-     * polling automático en la vista de detalle de ejecución
-       cuando el estado sea "initiated" o "running"
-
-   Objetivo del polling:
-   - permitir que la página de detalle detecte cuándo el escaneo
-     terminó en segundo plano
-   - recargar automáticamente la vista al finalizar
-   - evitar que el usuario tenga que refrescar manualmente
-========================================================== */
+     * resaltado del enlace activo
+     * polling automático en detalle de ejecución
+     * soporte de pestañas Bootstrap
+     * persistencia de pestaña activa por hash
+   ========================================================== */
 
 document.addEventListener("DOMContentLoaded", () => {
     console.log("DASTXH web cargado correctamente");
 
-    // ------------------------------------------------------
-    // 1) Mejorar experiencia del formulario principal
-    // ------------------------------------------------------
     setupScanForm();
-
-    // ------------------------------------------------------
-    // 2) Resaltar enlace activo en la navegación superior
-    // ------------------------------------------------------
     highlightCurrentNavLink();
-
-    // ------------------------------------------------------
-    // 3) Activar seguimiento automático de ejecuciones
-    //    si estamos en la página de detalle
-    // ------------------------------------------------------
+    setupBootstrapTabs();
     setupExecutionPolling();
 });
 
 
 /* ==========================================================
    FORMULARIO PRINCIPAL
-========================================================== */
+   ========================================================== */
+
 function setupScanForm() {
-    /* Busca el formulario principal de escaneo y evita
-       que el usuario haga doble clic accidental sobre
-       el botón submit. */
+    /*
+      Evita doble envío accidental del formulario principal.
+    */
     const scanForm = document.querySelector(".scan-form");
 
     if (!scanForm) {
@@ -61,10 +46,12 @@ function setupScanForm() {
 
 /* ==========================================================
    NAVEGACIÓN SUPERIOR
-========================================================== */
+   ========================================================== */
+
 function highlightCurrentNavLink() {
-    /* Subraya el enlace activo de la barra superior para dar
-       una referencia visual simple al usuario. */
+    /*
+      Subraya el enlace activo del menú superior.
+    */
     const currentPath = window.location.pathname;
     const navLinks = document.querySelectorAll(".topbar nav a");
 
@@ -79,24 +66,72 @@ function highlightCurrentNavLink() {
 
 
 /* ==========================================================
-   POLLING DE EJECUCIÓN
-========================================================== */
-function setupExecutionPolling() {
-    /* Esta función solo actúa si existe el bloque oculto
-       #execution-status-meta, el cual agregamos en
-       execution_detail.html.
+   PESTAÑAS BOOTSTRAP
+   ========================================================== */
 
-       Ejemplo esperado:
-       <div
-           id="execution-status-meta"
-           data-execution-id="15"
-           data-status="running"
-           hidden
-       ></div>
+function setupBootstrapTabs() {
+    /*
+      Activa comportamiento adicional para las pestañas:
+      - si la URL tiene hash (#raw-pane, #artifacts-pane, etc.),
+        abre esa pestaña al cargar
+      - cuando el usuario cambia de pestaña, actualiza el hash
+        sin saltos bruscos
+    */
+    const tabButtons = document.querySelectorAll('[data-bs-toggle="tab"]');
+
+    if (!tabButtons.length || typeof bootstrap === "undefined") {
+        return;
+    }
+
+    // ------------------------------------------------------
+    // Al cargar: intentar abrir la pestaña indicada en hash
+    // ------------------------------------------------------
+    const currentHash = window.location.hash;
+    if (currentHash) {
+        const matchingButton = document.querySelector(
+            `[data-bs-target="${currentHash}"]`
+        );
+
+        if (matchingButton) {
+            const tab = new bootstrap.Tab(matchingButton);
+            tab.show();
+        }
+    }
+
+    // ------------------------------------------------------
+    // Al cambiar de pestaña: actualizar hash
+    // ------------------------------------------------------
+    tabButtons.forEach((button) => {
+        button.addEventListener("shown.bs.tab", (event) => {
+            const targetSelector = event.target.getAttribute("data-bs-target");
+            if (!targetSelector) {
+                return;
+            }
+
+            // Reemplaza el hash sin mover la página bruscamente
+            history.replaceState(null, "", targetSelector);
+        });
+    });
+}
+
+
+/* ==========================================================
+   POLLING DE EJECUCIÓN
+   ========================================================== */
+
+function setupExecutionPolling() {
+    /*
+      Solo aplica en la vista de detalle de ejecución.
+      Busca el bloque oculto:
+      #execution-status-meta
+
+      Si el estado es initiated o running:
+      - consulta /api/scans/{id}
+      - si cambia a finished o failed, recarga
+      - mantiene la pestaña actual usando el hash
     */
     const meta = document.getElementById("execution-status-meta");
 
-    // Si no existe ese bloque, no estamos en detalle de ejecución
     if (!meta) {
         return;
     }
@@ -104,35 +139,25 @@ function setupExecutionPolling() {
     const executionId = Number(meta.dataset.executionId || "");
     const initialStatus = String(meta.dataset.status || "").trim().toLowerCase();
 
-    // Validación defensiva básica
     if (!Number.isInteger(executionId) || executionId <= 0) {
         console.warn("Polling omitido: execution_id inválido.");
         return;
     }
 
-    // Solo activamos polling si la ejecución todavía podría cambiar
     const pendingStatuses = new Set(["initiated", "running"]);
-
     if (!pendingStatuses.has(initialStatus)) {
         return;
     }
 
     console.log(`Iniciando polling para ejecución ${executionId} con estado ${initialStatus}`);
 
-    // Intervalo de consulta en milisegundos
     const pollIntervalMs = 5000;
-
-    // Límite máximo de tiempo para no dejar polling infinito
-    // si la página queda abierta demasiado tiempo.
     const maxPollingMs = 10 * 60 * 1000; // 10 minutos
-
     const startTime = Date.now();
 
-    // Guardamos el último estado conocido para detectar cambios
     let lastKnownStatus = initialStatus;
-        const timerId = window.setInterval(async () => {
+    const timerId = window.setInterval(async () => {
         try {
-            // Si ya superó el tiempo máximo, detenemos el polling
             if (Date.now() - startTime > maxPollingMs) {
                 console.warn("Polling detenido por tiempo máximo alcanzado.");
                 window.clearInterval(timerId);
@@ -161,48 +186,27 @@ function setupExecutionPolling() {
             }
 
             const currentStatus = String(execution.status || "").trim().toLowerCase();
-
-            // Si no vino estado, no hacemos nada
             if (!currentStatus) {
                 return;
             }
 
-            // --------------------------------------------------
-            // Actualización visual mínima en la página actual
-            // antes de recargar por completo
-            // --------------------------------------------------
             updateVisibleExecutionStatus(currentStatus);
 
-            // --------------------------------------------------
-            // Si el estado cambió con respecto al que conocíamos,
-            // recargamos la página para traer todo el detalle nuevo
-            // (resultados, artifacts, mensajes, etc.)
-            // --------------------------------------------------
-            if (currentStatus !== lastKnownStatus) {
-                console.log(
-                    `La ejecución ${executionId} cambió de ${lastKnownStatus} a ${currentStatus}. Recargando vista.`
-                );
-                window.clearInterval(timerId);
-                window.location.reload();
-                return;
-            }
-
-            // --------------------------------------------------
-            // Incluso si no detectamos "cambio" localmente,
-            // si el backend ya reporta un estado final, recargamos.
-            // Esto cubre casos donde el DOM se abrió ya en estado
-            // "running" y sigue "running" varias consultas, hasta
-            // que finalmente termine.
-            // --------------------------------------------------
+            // Si terminó, recargar manteniendo hash/pestaña actual
             if (currentStatus === "finished" || currentStatus === "failed") {
                 console.log(`La ejecución ${executionId} terminó con estado ${currentStatus}. Recargando vista.`);
                 window.clearInterval(timerId);
-                window.location.reload();
+                reloadPreservingHash();
                 return;
             }
 
-            // Guardar el último estado conocido
-            lastKnownStatus = currentStatus;
+            // Si cambió a otro estado intermedio, actualizar referencia
+            if (currentStatus !== lastKnownStatus) {
+                console.log(
+                    `La ejecución ${executionId} cambió de ${lastKnownStatus} a ${currentStatus}.`
+                );
+                lastKnownStatus = currentStatus;
+            }
         } catch (error) {
             console.warn("Error durante polling de ejecución:", error);
         }
@@ -211,31 +215,25 @@ function setupExecutionPolling() {
 
 
 /* ==========================================================
-   ACTUALIZACIÓN VISUAL LIGERA DEL ESTADO
-========================================================== */
+   ACTUALIZACIÓN VISUAL LIGERA
+   ========================================================== */
+
 function updateVisibleExecutionStatus(status) {
-    /* Esta función hace una mejora visual mínima mientras el
-       polling está activo:
-
-       - actualiza el atributo data-status del bloque meta
-       - intenta actualizar el primer badge de estado visible
-
-       No sustituye la recarga final completa, pero ayuda a que
-       la interfaz no quede tan estática mientras se consulta.
+    /*
+      Mejora visual ligera mientras corre el polling:
+      - actualiza el data-status del bloque meta
+      - intenta actualizar el primer badge visible
     */
     const meta = document.getElementById("execution-status-meta");
-
     if (meta) {
         meta.dataset.status = status;
     }
 
     const badge = document.querySelector(".badge");
-
     if (!badge) {
         return;
     }
 
-    // Limpiamos clases anteriores conocidas
     badge.classList.remove(
         "badge-initiated",
         "badge-running",
@@ -243,7 +241,22 @@ function updateVisibleExecutionStatus(status) {
         "badge-failed"
     );
 
-    // Aplicamos la nueva clase y texto
     badge.classList.add(`badge-${status}`);
     badge.textContent = status;
+}
+
+
+/* ==========================================================
+   RECARGA CONSERVANDO HASH
+   ========================================================== */
+
+function reloadPreservingHash() {
+    /*
+      Recarga la página manteniendo la pestaña actual.
+      Si el usuario estaba en #raw-pane o #artifacts-pane,
+      regresará ahí mismo después del reload.
+    */
+    const hash = window.location.hash || "";
+    const baseUrl = window.location.pathname + window.location.search;
+    window.location.href = `${baseUrl}${hash}`;
 }

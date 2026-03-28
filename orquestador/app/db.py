@@ -1,20 +1,25 @@
 """
 db.py
 - Acceso a PostgreSQL usando psycopg (psycopg3).
-- Centraliza las operaciones de persistencia para:
-  * executions
-  * header_results
-  * hsecscan_results
-  * xss_results
-  * artifacts
-- También incluye consultas base para:
-  * historial
-  * detalle de ejecución
-  * lista de artifacts
+- Esta versión queda adaptada al esquema normalizado v4.
+
+Responsabilidades principales:
+- persistencia de executions
+- persistencia de resultados de headers (resumen + detalle)
+- persistencia de cookies evaluadas
+- persistencia de hsecscan
+- persistencia de resultados XSS (resumen + hallazgos)
+- persistencia de artifacts
+- consultas de historial y detalle
 
 Importante:
-- La idea es evitar SQL suelto en main.py, webapp.py o rutas API.
-- Así mantenemos la lógica de persistencia en un solo lugar.
+- Además del modelo normalizado, get_execution_detail()
+  sigue devolviendo algunos campos "compatibles" con la GUI actual:
+    * present_json
+    * missing_json
+    * cookies_flags_json
+- Así podemos evolucionar el backend sin romper de inmediato
+  los templates y reportes que ya existen.
 """
 
 from __future__ import annotations
@@ -37,24 +42,87 @@ def connect(dsn: str) -> Connection:
     """
     Crea y devuelve una conexión a PostgreSQL.
 
-    Usamos row_factory=dict_row para que las consultas SELECT
-    devuelvan diccionarios en lugar de tuplas, lo cual resulta
-    más cómodo para la GUI, la API y el backend en general.
+    row_factory=dict_row permite que los SELECT devuelvan
+    diccionarios en lugar de tuplas.
     """
     return psycopg.connect(dsn, row_factory=dict_row)
 
 
 def ping_db(dsn: str) -> None:
     """
-    Prueba rápida de conectividad a la base de datos.
-
-    Si esta función falla, el llamador puede reintentar
-    hasta que PostgreSQL esté disponible.
+    Verificación rápida de conectividad con PostgreSQL.
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT 1;")
         conn.commit()
+
+
+# ==========================================================
+# HELPERS PRIVADOS DE NORMALIZACIÓN
+# ==========================================================
+
+def _json_or_none(value: Any) -> Optional[str]:
+    """
+    Convierte un valor Python a texto JSON para insertarlo como json/jsonb.
+
+    Si value es None, devuelve None real para almacenar NULL.
+    """
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _build_header_details_if_missing(hdr_eval: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Si hdr_eval no trae header_details (por compatibilidad con
+    versiones anteriores), los reconstruye usando present/missing.
+    """
+    header_details = hdr_eval.get("header_details")
+    if isinstance(header_details, list):
+        return header_details
+
+    present = set(hdr_eval.get("present", []) or [])
+    missing = set(hdr_eval.get("missing", []) or [])
+
+    combined = list(present) + [h for h in missing if h not in present]
+
+    result: List[Dict[str, Any]] = []
+    for header_name in combined:
+        result.append(
+            {
+                "header_name": str(header_name),
+                "is_present": header_name in present,
+                "header_value": None,
+            }
+        )
+
+    return result
+
+
+def _normalize_cookie_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normaliza un registro de cookie para aceptar tanto la forma vieja
+    como la nueva.
+    """
+    cookie_raw = item.get("cookie_raw")
+    if cookie_raw is None:
+        cookie_raw = item.get("cookie", "")
+
+    cookie_name = item.get("cookie_name")
+
+    samesite_present = item.get("samesite_present")
+    if samesite_present is None:
+        samesite_present = bool(item.get("samesite"))
+
+    return {
+        "cookie_name": cookie_name,
+        "cookie_raw": str(cookie_raw or ""),
+        "secure": bool(item.get("secure")),
+        "httponly": bool(item.get("httponly")),
+        "samesite_present": bool(samesite_present),
+        "samesite_value": item.get("samesite_value"),
+    }
 
 
 # ==========================================================
@@ -67,20 +135,17 @@ def insert_execution(
     request_source: str = "cli",
     report_dir: Optional[str] = None,
     status: str = "initiated",
+    scan_profile: str = "superficial",
+    enable_hsecscan: bool = False,
     urls_ingresadas: int = 1,
     urls_evaluadas: int = 0,
 ) -> int:
     """
-    Inserta una nueva ejecución en la tabla executions
-    y devuelve el id generado.
+    Inserta una nueva ejecución y devuelve el id generado.
 
-    Parámetros:
-    - target_url: URL objetivo
-    - request_source: origen de la solicitud ('cli', 'web', 'api')
-    - report_dir: ruta lógica de reportes dentro de /work
-    - status: estado inicial ('initiated', 'running', 'finished', 'failed')
-    - urls_ingresadas: cantidad de URLs recibidas
-    - urls_evaluadas: cantidad de URLs efectivamente evaluadas
+    Nuevos campos importantes:
+    - scan_profile: 'superficial' o 'profundo'
+    - enable_hsecscan: indica si la capa 2 estuvo habilitada
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -91,11 +156,13 @@ def insert_execution(
                     started_at,
                     status,
                     request_source,
+                    scan_profile,
+                    enable_hsecscan,
                     urls_ingresadas,
                     urls_evaluadas,
                     report_dir
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id;
                 """,
                 (
@@ -103,6 +170,8 @@ def insert_execution(
                     utc_now(),
                     status,
                     request_source,
+                    scan_profile,
+                    enable_hsecscan,
                     urls_ingresadas,
                     urls_evaluadas,
                     report_dir,
@@ -127,14 +196,6 @@ def update_execution_status(
 ) -> None:
     """
     Actualiza el estado general de una ejecución.
-
-    Parámetros:
-    - execution_id: id de la ejecución
-    - status: nuevo estado
-    - error_message: mensaje de error opcional
-    - urls_evaluadas: cantidad de URLs evaluadas opcional
-    - finished: si es True, se asigna finished_at = ahora;
-                si es False, finished_at se deja igual
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -179,7 +240,7 @@ def update_execution_status(
 
 def update_execution_running(dsn: str, execution_id: int) -> None:
     """
-    Marca una ejecución como 'running'.
+    Marca una ejecución como running.
     """
     update_execution_status(
         dsn=dsn,
@@ -199,13 +260,7 @@ def update_execution_finished(
     urls_evaluadas: Optional[int] = None,
 ) -> None:
     """
-    Marca la ejecución como finalizada correctamente o fallida.
-
-    Si ok=True:
-    - status = 'finished'
-
-    Si ok=False:
-    - status = 'failed'
+    Marca la ejecución como finalizada o fallida.
     """
     new_status = "finished" if ok else "failed"
 
@@ -217,10 +272,8 @@ def update_execution_finished(
         urls_evaluadas=urls_evaluadas,
         finished=True,
     )
-
-
 # ==========================================================
-# RESULTADOS CAPA 1: HEADERS CUSTOM
+# RESULTADOS CAPA 1: HEADERS + COOKIES
 # ==========================================================
 
 def insert_header_results(
@@ -230,16 +283,20 @@ def insert_header_results(
     raw_headers_json: Dict[str, Any],
 ) -> None:
     """
-    Inserta los resultados de la Capa 1 (curl custom).
+    Inserta los resultados de la Capa 1 en forma normalizada:
 
-    hdr_eval debe contener al menos:
-    - headers_evaluadas
-    - headers_presentes
-    - cumplimiento_pct
-    - present
-    - missing
-    - cookies_flags
+    - header_results : resumen agregado
+    - header_checks  : una fila por cabecera evaluada
+    - cookie_checks  : una fila por cookie evaluada
+
+    raw_headers_json se mantiene como parámetro por compatibilidad
+    con el flujo actual, aunque ya no se guarda como columna propia.
     """
+    _ = raw_headers_json  # compatibilidad intencional
+
+    header_details = _build_header_details_if_missing(hdr_eval)
+    cookie_items = [_normalize_cookie_item(item) for item in (hdr_eval.get("cookies_flags", []) or [])]
+
     with connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -248,28 +305,66 @@ def insert_header_results(
                     execution_id,
                     headers_evaluadas,
                     headers_presentes,
-                    cumplimiento_pct,
-                    present_json,
-                    missing_json,
-                    raw_headers_json,
-                    cookies_flags_json
+                    cumplimiento_pct
                 )
-                VALUES (
-                    %s, %s, %s, %s,
-                    %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb
-                );
+                VALUES (%s, %s, %s, %s);
                 """,
                 (
                     execution_id,
-                    int(hdr_eval["headers_evaluadas"]),
-                    int(hdr_eval["headers_presentes"]),
-                    float(hdr_eval["cumplimiento_pct"]),
-                    json.dumps(hdr_eval.get("present", []), ensure_ascii=False),
-                    json.dumps(hdr_eval.get("missing", []), ensure_ascii=False),
-                    json.dumps(raw_headers_json, ensure_ascii=False),
-                    json.dumps(hdr_eval.get("cookies_flags", []), ensure_ascii=False),
+                    int(hdr_eval.get("headers_evaluadas", 0)),
+                    int(hdr_eval.get("headers_presentes", 0)),
+                    float(hdr_eval.get("cumplimiento_pct", 0)),
                 ),
             )
+
+            for item in header_details:
+                cur.execute(
+                    """
+                    INSERT INTO header_checks (
+                        execution_id,
+                        header_name,
+                        is_present,
+                        header_value
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (execution_id, header_name)
+                    DO UPDATE SET
+                        is_present = EXCLUDED.is_present,
+                        header_value = EXCLUDED.header_value;
+                    """,
+                    (
+                        execution_id,
+                        str(item.get("header_name", "")),
+                        bool(item.get("is_present")),
+                        item.get("header_value"),
+                    ),
+                )
+
+            for item in cookie_items:
+                cur.execute(
+                    """
+                    INSERT INTO cookie_checks (
+                        execution_id,
+                        cookie_name,
+                        cookie_raw,
+                        secure,
+                        httponly,
+                        samesite_present,
+                        samesite_value
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s);
+                    """,
+                    (
+                        execution_id,
+                        item.get("cookie_name"),
+                        item.get("cookie_raw"),
+                        item.get("secure"),
+                        item.get("httponly"),
+                        item.get("samesite_present"),
+                        item.get("samesite_value"),
+                    ),
+                )
+
         conn.commit()
 
 
@@ -317,13 +412,16 @@ def insert_xss_results(
     findings_count: int,
     summary_json: Any,
     raw_output: str,
+    xss_findings: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """
-    Inserta los resultados de la Capa 3 (Dalfox / XSS).
+    Inserta los resultados de la Capa 3 en forma normalizada:
 
-    Novedad respecto a la versión anterior:
-    - ahora también registramos tool_rc
+    - xss_results  : resumen agregado
+    - xss_findings : una fila por hallazgo detectado/interpretado
     """
+    finding_rows = xss_findings or []
+
     with connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -341,10 +439,49 @@ def insert_xss_results(
                     execution_id,
                     int(tool_rc),
                     int(findings_count),
-                    json.dumps(summary_json, ensure_ascii=False),
+                    _json_or_none(summary_json),
                     raw_output,
                 ),
             )
+
+            for item in finding_rows:
+                cur.execute(
+                    """
+                    INSERT INTO xss_findings (
+                        execution_id,
+                        finding_order,
+                        source_type,
+                        target_url,
+                        param_name,
+                        payload,
+                        evidence,
+                        severity,
+                        raw_finding_json
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    ON CONFLICT (execution_id, finding_order)
+                    DO UPDATE SET
+                        source_type = EXCLUDED.source_type,
+                        target_url = EXCLUDED.target_url,
+                        param_name = EXCLUDED.param_name,
+                        payload = EXCLUDED.payload,
+                        evidence = EXCLUDED.evidence,
+                        severity = EXCLUDED.severity,
+                        raw_finding_json = EXCLUDED.raw_finding_json;
+                    """,
+                    (
+                        execution_id,
+                        int(item.get("finding_order", 0)),
+                        item.get("source_type"),
+                        item.get("target_url"),
+                        item.get("param_name"),
+                        item.get("payload"),
+                        item.get("evidence"),
+                        item.get("severity"),
+                        _json_or_none(item.get("raw_finding_json")),
+                    ),
+                )
+
         conn.commit()
 
 
@@ -363,20 +500,6 @@ def register_artifact(
 ) -> None:
     """
     Registra un artifact generado por una ejecución.
-
-    Usamos UPSERT para que, si se vuelve a registrar el mismo
-    relative_path para la misma ejecución, se actualicen los metadatos
-    en lugar de fallar.
-
-    Ejemplos de artifact_type:
-    - report_md
-    - report_html
-    - report_pdf
-    - headers_json
-    - hsecscan_txt
-    - dalfox_json
-    - dalfox_txt
-    - run_meta_json
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -412,8 +535,7 @@ def register_artifact(
 
 def list_artifacts(dsn: str, execution_id: int) -> List[Dict[str, Any]]:
     """
-    Devuelve la lista de artifacts de una ejecución,
-    ordenados por created_at y luego por id.
+    Devuelve la lista de artifacts de una ejecución.
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -438,8 +560,6 @@ def list_artifacts(dsn: str, execution_id: int) -> List[Dict[str, Any]]:
         conn.commit()
 
     return [dict(r) for r in rows]
-
-
 # ==========================================================
 # CONSULTAS DE HISTORIAL Y DETALLE
 # ==========================================================
@@ -451,11 +571,6 @@ def list_execution_summaries(
 ) -> List[Dict[str, Any]]:
     """
     Lista ejecuciones desde la vista vw_execution_summary.
-
-    Esta función será útil para:
-    - historial en GUI web
-    - endpoints API
-    - consultas manuales internas
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -468,6 +583,8 @@ def list_execution_summaries(
                     finished_at,
                     status,
                     request_source,
+                    scan_profile,
+                    enable_hsecscan,
                     urls_ingresadas,
                     urls_evaluadas,
                     report_dir,
@@ -508,6 +625,8 @@ def get_execution_summary(
                     finished_at,
                     status,
                     request_source,
+                    scan_profile,
+                    enable_hsecscan,
                     urls_ingresadas,
                     urls_evaluadas,
                     report_dir,
@@ -536,15 +655,11 @@ def get_execution_detail(
     """
     Devuelve detalle enriquecido de una ejecución.
 
-    Incluye:
-    - datos base de executions
-    - resultados de headers
-    - resultados de hsecscan
-    - resultados de xss
-    - artifacts asociados
-
-    Este detalle es muy útil para una futura página:
-    /executions/{id}
+    Además del modelo normalizado, devuelve algunos campos de
+    compatibilidad para la GUI actual:
+    - present_json
+    - missing_json
+    - cookies_flags_json
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -558,6 +673,8 @@ def get_execution_detail(
                     e.status,
                     e.error_message,
                     e.request_source,
+                    e.scan_profile,
+                    e.enable_hsecscan,
                     e.urls_ingresadas,
                     e.urls_evaluadas,
                     e.report_dir,
@@ -565,10 +682,6 @@ def get_execution_detail(
                     hr.headers_evaluadas,
                     hr.headers_presentes,
                     hr.cumplimiento_pct,
-                    hr.present_json,
-                    hr.missing_json,
-                    hr.raw_headers_json,
-                    hr.cookies_flags_json,
 
                     hs.tool_rc AS hsecscan_rc,
                     hs.raw_output AS hsecscan_raw_output,
@@ -589,11 +702,127 @@ def get_execution_detail(
                 (execution_id,),
             )
             row = cur.fetchone()
+
+            if not row:
+                conn.commit()
+                return None
+
+            detail = dict(row)
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    execution_id,
+                    header_name,
+                    is_present,
+                    header_value,
+                    created_at
+                FROM header_checks
+                WHERE execution_id = %s
+                ORDER BY id ASC;
+                """,
+                (execution_id,),
+            )
+            header_rows = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    execution_id,
+                    cookie_name,
+                    cookie_raw,
+                    secure,
+                    httponly,
+                    samesite_present,
+                    samesite_value,
+                    created_at
+                FROM cookie_checks
+                WHERE execution_id = %s
+                ORDER BY id ASC;
+                """,
+                (execution_id,),
+            )
+            cookie_rows_raw = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    execution_id,
+                    finding_order,
+                    source_type,
+                    target_url,
+                    param_name,
+                    payload,
+                    evidence,
+                    severity,
+                    raw_finding_json,
+                    created_at
+                FROM xss_findings
+                WHERE execution_id = %s
+                ORDER BY finding_order ASC, id ASC;
+                """,
+                (execution_id,),
+            )
+            xss_findings_rows = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    execution_id,
+                    artifact_type,
+                    file_name,
+                    relative_path,
+                    mime_type,
+                    size_bytes,
+                    created_at
+                FROM artifacts
+                WHERE execution_id = %s
+                ORDER BY created_at ASC, id ASC;
+                """,
+                (execution_id,),
+            )
+            artifact_rows = [dict(r) for r in cur.fetchall()]
+
         conn.commit()
 
-    if not row:
-        return None
+    present_headers = [r["header_name"] for r in header_rows if r.get("is_present")]
+    missing_headers = [r["header_name"] for r in header_rows if not r.get("is_present")]
 
-    detail = dict(row)
-    detail["artifacts"] = list_artifacts(dsn, execution_id)
+    cookies_flags_json: List[Dict[str, Any]] = []
+    for row in cookie_rows_raw:
+        cookies_flags_json.append(
+            {
+                "cookie": row.get("cookie_raw"),
+                "secure": row.get("secure"),
+                "httponly": row.get("httponly"),
+                "samesite": row.get("samesite_present"),
+                "cookie_name": row.get("cookie_name"),
+                "cookie_raw": row.get("cookie_raw"),
+                "samesite_present": row.get("samesite_present"),
+                "samesite_value": row.get("samesite_value"),
+            }
+        )
+
+    raw_headers_derived = {
+        "headers": {
+            str(r["header_name"]).lower(): r.get("header_value")
+            for r in header_rows
+            if r.get("is_present")
+        }
+    }
+
+    detail["present_json"] = present_headers
+    detail["missing_json"] = missing_headers
+    detail["raw_headers_json"] = raw_headers_derived
+    detail["cookies_flags_json"] = cookies_flags_json
+
+    detail["header_checks"] = header_rows
+    detail["cookie_checks"] = cookie_rows_raw
+    detail["xss_findings"] = xss_findings_rows
+    detail["artifacts"] = artifact_rows
+
     return detail

@@ -5,8 +5,8 @@
   <h2>Historial de ejecuciones</h2>
   <p>
     Aquí puedes consultar las evaluaciones registradas en PostgreSQL,
-    incluyendo estado, origen, cumplimiento de cabeceras, hallazgos XSS
-    y acceso al detalle de cada ejecución.
+    incluyendo estado, origen, perfil de escaneo, uso de hsecscan,
+    cumplimiento de cabeceras, hallazgos XSS y acceso al detalle.
   </p>
 
   <div class="notice" style="margin-top: 1rem; margin-bottom: 1rem;">
@@ -25,6 +25,8 @@
             <th>Target</th>
             <th>Estado</th>
             <th>Origen</th>
+            <th>Perfil</th>
+            <th>hsecscan</th>
             <th>Cumplimiento</th>
             <th>XSS</th>
             <th>Artifacts</th>
@@ -48,6 +50,8 @@
               </td>
 
               <td>{{ item.request_source }}</td>
+              <td>{{ item.scan_profile or "-" }}</td>
+              <td>{{ "Sí" if item.enable_hsecscan else "No" }}</td>
 
               <td>
                 {% if item.cumplimiento_pct is not none %}
@@ -72,6 +76,7 @@
                   {% endif %}
                 {% endif %}
               </td>
+
               <td>
                 {% if item.artifacts_count is not none %}
                   {{ item.artifacts_count }}

@@ -2,361 +2,607 @@
 
 {% block content %}
 <section class="card">
-    <h2>Detalle de ejecución</h2>
+  <h2 class="mb-3">Detalle de ejecución</h2>
 
-    {# -------------------------------------------------------
-       Este bloque deja metadatos simples para que app.js
-       pueda detectar si la ejecución sigue en curso y,
-       en el siguiente paso, hacer polling automático.
-    ------------------------------------------------------- #}
+  {# -------------------------------------------------------
+     Meta invisible para polling automático desde app.js
+     ------------------------------------------------------- #}
+  <div
+    id="execution-status-meta"
+    data-execution-id="{{ execution_id }}"
+    data-status="{{ detail.status }}"
+    hidden
+  ></div>
+
+  {# -------------------------------------------------------
+     Mensaje principal según estado
+     ------------------------------------------------------- #}
+  {% if detail.status == "initiated" %}
+    <div class="alert alert-warning border-0 mb-4" role="alert">
+      <strong>Ejecución iniciada.</strong>
+      El escaneo fue aceptado y está pendiente de continuar su procesamiento.
+      Algunos resultados todavía pueden no estar disponibles.
+    </div>
+  {% elif detail.status == "running" %}
+    <div class="alert alert-warning border-0 mb-4" role="alert">
+      <strong>Escaneo en progreso.</strong>
+      La evaluación sigue corriendo en segundo plano. Puedes cambiar de vista
+      y volver más tarde; el proceso no depende de mantener esta página abierta.
+    </div>
+  {% elif detail.status == "failed" %}
+    <div class="alert alert-danger border-0 mb-4" role="alert">
+      <strong>Ejecución fallida.</strong>
+      Revisa la pestaña <strong>Raw</strong> y los <strong>Artifacts</strong>
+      para identificar la causa del problema.
+    </div>
+  {% else %}
+    <div class="alert alert-primary border-0 mb-4" role="alert">
+      <strong>Ejecución finalizada.</strong>
+      Ya puedes revisar el resultado consolidado en la vista <strong>Pretty</strong>.
+    </div>
+  {% endif %}
+
+  <!-- =====================================================
+       Resumen superior
+       ===================================================== -->
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="detail-item h-100">
+        <h3>ID</h3>
+        <p>{{ detail.id }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="detail-item h-100">
+        <h3>Estado</h3>
+        <p>
+          <span class="badge badge-{{ detail.status }}">
+            {{ detail.status }}
+          </span>
+        </p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="detail-item h-100">
+        <h3>Origen</h3>
+        <p>{{ detail.request_source }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="detail-item h-100">
+        <h3>Perfil</h3>
+        <p>{{ detail.scan_profile or "-" }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="detail-item h-100">
+        <h3>hsecscan habilitado</h3>
+        <p>{{ "Sí" if detail.enable_hsecscan else "No" }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="detail-item h-100">
+        <h3>Target URL</h3>
+        <p class="break-cell">{{ detail.target_url }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="detail-item h-100">
+        <h3>Inicio</h3>
+        <p>{{ detail.started_at }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="detail-item h-100">
+        <h3>Fin</h3>
+        <p>
+          {% if detail.finished_at %}
+            {{ detail.finished_at }}
+          {% else %}
+            -
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="detail-item h-100">
+        <h3>URLs ingresadas</h3>
+        <p>{{ detail.urls_ingresadas }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="detail-item h-100">
+        <h3>URLs evaluadas</h3>
+        <p>{{ detail.urls_evaluadas }}</p>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <div class="detail-item">
+        <h3>Carpeta lógica</h3>
+        <p class="break-cell">
+          {% if detail.report_dir %}
+            {{ detail.report_dir }}
+          {% else %}
+            -
+          {% endif %}
+        </p>
+      </div>
+    </div>
+  </div>
+
+  {% if detail.error_message %}
+    <div class="alert alert-danger border-0 mb-4" role="alert">
+      <strong>Error:</strong> {{ detail.error_message }}
+    </div>
+  {% endif %}
+
+  <!-- =====================================================
+       Tabs principales:
+       Pretty | Raw | Artifacts
+       ===================================================== -->
+  <ul class="nav nav-tabs custom-tabs mb-3" id="executionDetailTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link active"
+        id="pretty-tab"
+        data-bs-toggle="tab"
+        data-bs-target="#pretty-pane"
+        type="button"
+        role="tab"
+        aria-controls="pretty-pane"
+        aria-selected="true"
+      >
+        Pretty
+      </button>
+    </li>
+
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        id="raw-tab"
+        data-bs-toggle="tab"
+        data-bs-target="#raw-pane"
+        type="button"
+        role="tab"
+        aria-controls="raw-pane"
+        aria-selected="false"
+      >
+        Raw
+      </button>
+    </li>
+
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        id="artifacts-tab"
+        data-bs-toggle="tab"
+        data-bs-target="#artifacts-pane"
+        type="button"
+        role="tab"
+        aria-controls="artifacts-pane"
+        aria-selected="false"
+      >
+        Artifacts
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content" id="executionDetailTabsContent">
+    <!-- ===================================================
+         TAB: PRETTY
+         =================================================== -->
     <div
-        id="execution-status-meta"
-        data-execution-id="{{ execution_id }}"
-        data-status="{{ detail.status }}"
-        hidden
-    ></div>
+      class="tab-pane fade show active"
+      id="pretty-pane"
+      role="tabpanel"
+      aria-labelledby="pretty-tab"
+      tabindex="0"
+    >
+      <section class="card mb-3">
+        <h2 class="mb-3">Resumen general</h2>
 
-    {# -------------------------------------------------------
-       Mensaje visual principal según el estado actual
-    ------------------------------------------------------- #}
-    {% if detail.status == "initiated" %}
-        <div class="notice notice-warning" style="margin-bottom: 1rem;">
-            <strong>Ejecución iniciada.</strong>
-            El escaneo fue aceptado y está pendiente de continuar su procesamiento.
-            Algunos resultados pueden no estar disponibles todavía.
-        </div>
-    {% elif detail.status == "running" %}
-        <div class="notice notice-warning" style="margin-bottom: 1rem;">
-            <strong>Escaneo en progreso.</strong>
-            Esta ejecución sigue corriendo en segundo plano. Puedes permanecer en esta vista
-            o actualizarla más tarde; el proceso no depende de que esta página siga abierta.
-        </div>
-    {% elif detail.status == "failed" %}
-        <div class="notice notice-error" style="margin-bottom: 1rem;">
-            <strong>Ejecución fallida.</strong>
-            Revisa el mensaje de error y los artifacts generados para identificar la causa.
-        </div>
-    {% else %}
-        <div class="notice" style="margin-bottom: 1rem;">
-            <strong>Ejecución finalizada.</strong>
-            Ya puedes revisar el resultado consolidado de las tres capas de evaluación.
-        </div>
-    {% endif %}
-
-    <div class="detail-grid">
-        <div class="detail-item">
-            <h3>ID</h3>
-            <p>{{ detail.id }}</p>
-        </div>
-
-        <div class="detail-item">
-            <h3>Estado</h3>
-            <p>
-                <span class="badge badge-{{ detail.status }}">
-                    {{ detail.status }}
-                </span>
-            </p>
-        </div>
-
-        <div class="detail-item">
-            <h3>Origen</h3>
-            <p>{{ detail.request_source }}</p>
-        </div>
-
-        <div class="detail-item">
-            <h3>Target URL</h3>
-            <p class="break-cell">{{ detail.target_url }}</p>
-        </div>
-
-        <div class="detail-item">
-            <h3>Inicio</h3>
-            <p>{{ detail.started_at }}</p>
-        </div>
-
-        <div class="detail-item">
-            <h3>Fin</h3>
-            <p>
-                {% if detail.finished_at %}
-                    {{ detail.finished_at }}
-                {% else %}
-                    -
-                {% endif %}
-            </p>
-        </div>
-
-        <div class="detail-item">
-            <h3>URLs ingresadas</h3>
-            <p>{{ detail.urls_ingresadas }}</p>
-        </div>
-
-        <div class="detail-item">
-            <h3>URLs evaluadas</h3>
-            <p>{{ detail.urls_evaluadas }}</p>
-        </div>
-
-        <div class="detail-item">
-            <h3>Carpeta lógica</h3>
-            <p class="break-cell">
-                {% if detail.report_dir %}
-                    {{ detail.report_dir }}
-                {% else %}
-                    -
-                {% endif %}
-            </p>
-        </div>
-    </div>
-
-    {% if detail.error_message %}
-        <div class="notice notice-error" style="margin-top: 1rem;">
-            <strong>Error:</strong> {{ detail.error_message }}
-        </div>
-    {% endif %}
-</section>
-
-<section class="card">
-    <h2>Capa 1: Security Headers (curl custom)</h2>
-
-    <div class="stats-grid">
-        <div class="stat-card">
-            <h3>Headers evaluadas</h3>
-            <p>
-                {% if detail.headers_evaluadas is not none %}
-                    {{ detail.headers_evaluadas }}
-                {% else %}
-                    -
-                {% endif %}
-            </p>
-        </div>
-
-        <div class="stat-card">
-            <h3>Headers presentes</h3>
-            <p>
-                {% if detail.headers_presentes is not none %}
-                    {{ detail.headers_presentes }}
-                {% else %}
-                    -
-                {% endif %}
-            </p>
-        </div>
-
-        <div class="stat-card">
-            <h3>Cumplimiento</h3>
-            <p>
+        <div class="row g-3">
+          <div class="col-12 col-md-6 col-xl-3">
+            <div class="stat-card h-100">
+              <h3>Cumplimiento</h3>
+              <p>
                 {% if detail.cumplimiento_pct is not none %}
-                    {{ detail.cumplimiento_pct }}%
+                  {{ detail.cumplimiento_pct }}%
                 {% else %}
-                    -
+                  -
                 {% endif %}
-            </p>
-        </div>
-    </div>
-
-    {% if detail.headers_evaluadas is none and detail.status in ["initiated", "running"] %}
-        <div class="notice notice-warning" style="margin-top: 1rem;">
-            La capa 1 todavía no ha terminado o sus resultados aún no se han persistido.
-        </div>
-    {% else %}
-        <div class="detail-grid">
-            <div class="detail-item">
-                <h3>Headers presentes</h3>
-                {% if detail.present_json %}
-                    <ul class="list">
-                        {% for item in detail.present_json %}
-                            <li>{{ item }}</li>
-                        {% endfor %}
-                    </ul>
-                {% else %}
-                    <p>No hay headers presentes registrados.</p>
-                {% endif %}
+              </p>
             </div>
+          </div>
 
-            <div class="detail-item">
-                <h3>Headers faltantes</h3>
-                {% if detail.missing_json %}
-                    <ul class="list">
-                        {% for item in detail.missing_json %}
-                            <li>{{ item }}</li>
-                        {% endfor %}
-                    </ul>
+          <div class="col-12 col-md-6 col-xl-3">
+            <div class="stat-card h-100">
+              <h3>Headers presentes</h3>
+              <p>
+                {% if detail.headers_presentes is not none %}
+                  {{ detail.headers_presentes }}
                 {% else %}
-                    <p>No hay headers faltantes registrados.</p>
+                  -
                 {% endif %}
+              </p>
             </div>
-        </div>
+          </div>
 
-        <div class="detail-item" style="margin-top: 1rem;">
-            <h3>Cookies evaluadas</h3>
-
-            {% if detail.cookies_flags_json %}
-                <div class="table-wrapper">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Cookie</th>
-                                <th>Secure</th>
-                                <th>HttpOnly</th>
-                                <th>SameSite</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for cookie in detail.cookies_flags_json %}
-                                <tr>
-                                    <td class="break-cell">{{ cookie.cookie }}</td>
-                                    <td>{{ "Sí" if cookie.secure else "No" }}</td>
-                                    <td>{{ "Sí" if cookie.httponly else "No" }}</td>
-                                    <td>{{ "Sí" if cookie.samesite else "No" }}</td>
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            {% else %}
-                <p>No se detectaron cookies evaluables en la respuesta final.</p>
-            {% endif %}
-        </div>
-    {% endif %}
-</section>
-
-<section class="card">
-    <h2>Capa 2: hsecscan</h2>
-
-    <div class="stats-grid">
-        <div class="stat-card">
-            <h3>Return code</h3>
-            <p>
-                {% if detail.hsecscan_rc is not none %}
-                    {{ detail.hsecscan_rc }}
-                {% else %}
-                    -
-                {% endif %}
-            </p>
-        </div>
-    </div>
-
-    {% if detail.hsecscan_rc is none and detail.status in ["initiated", "running"] %}
-        <div class="notice notice-warning" style="margin-top: 1rem;">
-            La capa 2 todavía no ha terminado o sus resultados aún no se han persistido.
-        </div>
-    {% else %}
-        <h3>Salida raw</h3>
-        {% if detail.hsecscan_raw_output %}
-            <pre>{{ detail.hsecscan_raw_output }}</pre>
-        {% else %}
-            <p>No hay salida registrada para hsecscan.</p>
-        {% endif %}
-    {% endif %}
-</section>
-
-<section class="card">
-    <h2>Capa 3: Dalfox / XSS</h2>
-
-    <div class="stats-grid">
-        <div class="stat-card">
-            <h3>Return code</h3>
-            <p>
-                {% if detail.dalfox_rc is not none %}
-                    {{ detail.dalfox_rc }}
-                {% else %}
-                    -
-                {% endif %}
-            </p>
-        </div>
-
-        <div class="stat-card">
-            <h3>Findings</h3>
-            <p>
+          <div class="col-12 col-md-6 col-xl-3">
+            <div class="stat-card h-100">
+              <h3>Hallazgos XSS</h3>
+              <p>
                 {% if detail.findings_count is not none %}
-                    {{ detail.findings_count }}
+                  {{ detail.findings_count }}
                 {% else %}
-                    -
+                  -
                 {% endif %}
-            </p>
+              </p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6 col-xl-3">
+            <div class="stat-card h-100">
+              <h3>Artifacts</h3>
+              <p>{{ artifacts|length if artifacts else 0 }}</p>
+            </div>
+          </div>
         </div>
-    </div>
+      </section>
 
-    {% if detail.dalfox_rc is none and detail.status in ["initiated", "running"] %}
-        <div class="notice notice-warning" style="margin-top: 1rem;">
-            La capa 3 todavía no ha terminado o sus resultados aún no se han persistido.
+      <section class="card mb-3">
+        <h2 class="mb-3">Capa 1: Security Headers</h2>
+
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-lg-6">
+            <div class="detail-item h-100">
+              <h3>Headers faltantes</h3>
+              {% if detail.missing_json %}
+                <ul class="list mb-0">
+                  {% for item in detail.missing_json %}
+                    <li>{{ item }}</li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <p class="mb-0">No hay headers faltantes registrados.</p>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="col-12 col-lg-6">
+            <div class="detail-item h-100">
+              <h3>Headers presentes</h3>
+              {% if detail.present_json %}
+                <ul class="list mb-0">
+                  {% for item in detail.present_json %}
+                    <li>{{ item }}</li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <p class="mb-0">No hay headers presentes registrados.</p>
+              {% endif %}
+            </div>
+          </div>
         </div>
-    {% else %}
-        <h3>Resumen estructurado</h3>
-        {% if detail.summary_json %}
-            <pre>{{ detail.summary_json }}</pre>
-        {% else %}
-            <p>No hay resumen JSON registrado.</p>
-        {% endif %}
 
-        <h3>Salida raw</h3>
-        {% if detail.dalfox_raw_output %}
-            <pre>{{ detail.dalfox_raw_output }}</pre>
-        {% else %}
-            <p>No hay salida raw registrada para Dalfox.</p>
-        {% endif %}
-    {% endif %}
-</section>
+        <div class="detail-item">
+          <h3>Cookies evaluadas</h3>
 
-<section class="card">
-    <h2>Artifacts generados</h2>
-
-    {% if artifacts %}
-        <div class="table-wrapper">
-            <table class="data-table">
+          {% if detail.cookies_flags_json %}
+            <div class="table-responsive">
+              <table class="table table-dark table-hover align-middle mb-0">
                 <thead>
-                    <tr>
-                        <th>Tipo</th>
-                        <th>Archivo</th>
-                        <th>Ruta relativa</th>
-                        <th>MIME</th>
-                        <th>Tamaño</th>
-                        <th>Abrir</th>
-                    </tr>
+                  <tr>
+                    <th>Cookie</th>
+                    <th>Secure</th>
+                    <th>HttpOnly</th>
+                    <th>SameSite</th>
+                    <th>Valor SameSite</th>
+                  </tr>
                 </thead>
                 <tbody>
-                    {% for item in artifacts %}
-                        <tr>
-                            <td>{{ item.artifact_type }}</td>
-                            <td>{{ item.file_name }}</td>
-                            <td class="break-cell">{{ item.relative_path }}</td>
-                            <td>
-                                {% if item.mime_type %}
-                                    {{ item.mime_type }}
-                                {% else %}
-                                    -
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if item.size_bytes is not none %}
-                                    {{ item.size_bytes }} bytes
-                                {% else %}
-                                    -
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if run_id and item.file_name %}
-                                    <a
-                                        href="/api/reports/file/{{ run_id }}/{{ item.file_name }}"
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                    >
-                                        Abrir
-                                    </a>
-                                {% else %}
-                                    -
-                                {% endif %}
-                            </td>
-                        </tr>
-                    {% endfor %}
+                  {% for cookie in detail.cookies_flags_json %}
+                    <tr>
+                      <td class="break-cell">
+                        {% if cookie.cookie_name %}
+                          {{ cookie.cookie_name }}
+                        {% else %}
+                          {{ cookie.cookie_raw or cookie.cookie }}
+                        {% endif %}
+                      </td>
+                      <td>{{ "Sí" if cookie.secure else "No" }}</td>
+                      <td>{{ "Sí" if cookie.httponly else "No" }}</td>
+                      <td>
+                        {% if cookie.samesite_present is defined %}
+                          {{ "Sí" if cookie.samesite_present else "No" }}
+                        {% else %}
+                          {{ "Sí" if cookie.samesite else "No" }}
+                        {% endif %}
+                      </td>
+                      <td>
+                        {% if cookie.samesite_value %}
+                          {{ cookie.samesite_value }}
+                        {% else %}
+                          -
+                        {% endif %}
+                      </td>
+                    </tr>
+                  {% endfor %}
                 </tbody>
-            </table>
-        </div>
-    {% else %}
-        {% if detail.status in ["initiated", "running"] %}
-            <div class="notice notice-warning">
-                La ejecución sigue en curso. Los artifacts aparecerán aquí conforme se generen y registren.
+              </table>
             </div>
+          {% else %}
+            <p class="mb-0">No se detectaron cookies evaluables en la respuesta final.</p>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="card mb-3">
+        <h2 class="mb-3">Capa 2: hsecscan</h2>
+
+        <div class="row g-3">
+          <div class="col-12 col-md-4">
+            <div class="stat-card h-100">
+              <h3>Habilitado</h3>
+              <p>{{ "Sí" if detail.enable_hsecscan else "No" }}</p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-4">
+            <div class="stat-card h-100">
+              <h3>Return code</h3>
+              <p>
+                {% if detail.hsecscan_rc is not none %}
+                  {{ detail.hsecscan_rc }}
+                {% else %}
+                  -
+                {% endif %}
+              </p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-4">
+            <div class="stat-card h-100">
+              <h3>Perfil asociado</h3>
+              <p>{{ detail.scan_profile or "-" }}</p>
+            </div>
+          </div>
+
+          <div class="col-12">
+            <div class="detail-item h-100">
+              <h3>Interpretación rápida</h3>
+
+              {% if not detail.enable_hsecscan %}
+                <p class="mb-0">
+                  La segunda capa fue omitida para esta ejecución porque
+                  <strong>enable_hsecscan</strong> quedó en <strong>False</strong>.
+                </p>
+              {% elif detail.hsecscan_rc is none and detail.status in ["initiated", "running"] %}
+                <p class="mb-0">
+                  La segunda capa todavía no termina o no ha persistido sus resultados.
+                </p>
+              {% elif detail.hsecscan_rc == 0 %}
+                <p class="mb-0">
+                  hsecscan completó la ejecución. En la pestaña <strong>Raw</strong>
+                  puedes consultar la evidencia técnica completa y los detalles del análisis.
+                </p>
+              {% elif detail.hsecscan_rc is none %}
+                <p class="mb-0">
+                  hsecscan estaba habilitado, pero todavía no hay salida persistida para esta ejecución.
+                </p>
+              {% else %}
+                <p class="mb-0">
+                  hsecscan devolvió un código diferente de cero. Revisa la pestaña
+                  <strong>Raw</strong> para verificar la salida exacta.
+                </p>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card mb-3">
+        <h2 class="mb-3">Capa 3: Dalfox / XSS</h2>
+
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-md-4">
+            <div class="stat-card h-100">
+              <h3>Return code</h3>
+              <p>
+                {% if detail.dalfox_rc is not none %}
+                  {{ detail.dalfox_rc }}
+                {% else %}
+                  -
+                {% endif %}
+              </p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-4">
+            <div class="stat-card h-100">
+              <h3>Findings</h3>
+              <p>
+                {% if detail.findings_count is not none %}
+                  {{ detail.findings_count }}
+                {% else %}
+                  -
+                {% endif %}
+              </p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-4">
+            <div class="stat-card h-100">
+              <h3>Hallazgos estructurados</h3>
+              <p>{{ detail.xss_findings|length if detail.xss_findings else 0 }}</p>
+            </div>
+          </div>
+        </div>
+
+        {% if detail.dalfox_rc is none and detail.status in ["initiated", "running"] %}
+          <div class="alert alert-warning border-0 mb-0" role="alert">
+            La tercera capa todavía no ha terminado o sus resultados aún no se han persistido.
+          </div>
+        {% elif detail.xss_findings %}
+          <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Parámetro</th>
+                  <th>Payload</th>
+                  <th>Evidencia</th>
+                  <th>Severidad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for finding in detail.xss_findings %}
+                  <tr>
+                    <td>{{ finding.finding_order }}</td>
+                    <td>{{ finding.param_name or "-" }}</td>
+                    <td class="break-cell">{{ finding.payload or "-" }}</td>
+                    <td class="break-cell">{{ finding.evidence or "-" }}</td>
+                    <td>{{ finding.severity or "-" }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
         {% else %}
-            <p>No hay artifacts registrados para esta ejecución.</p>
+          <div class="detail-item">
+            <h3>Interpretación rápida</h3>
+            <p class="mb-0">
+              No hay hallazgos estructurados confirmados para mostrar en formato resumido.
+              Si deseas revisar la evidencia técnica completa, consulta la pestaña <strong>Raw</strong>.
+            </p>
+          </div>
         {% endif %}
-    {% endif %}
+      </section>
+    </div>
+
+    <!-- ===================================================
+         TAB: RAW
+         =================================================== -->
+    <div
+      class="tab-pane fade"
+      id="raw-pane"
+      role="tabpanel"
+      aria-labelledby="raw-tab"
+      tabindex="0"
+    >
+      <section class="card mb-3">
+        <h2 class="mb-3">Capa 2: hsecscan (raw)</h2>
+
+        {% if not detail.enable_hsecscan %}
+          <p class="mb-0">
+            No hay salida registrada porque esta capa fue omitida para esta ejecución.
+          </p>
+        {% elif detail.hsecscan_raw_output %}
+          <pre>{{ detail.hsecscan_raw_output }}</pre>
+        {% else %}
+          <p class="mb-0">No hay salida registrada para hsecscan.</p>
+        {% endif %}
+      </section>
+
+      <section class="card mb-3">
+        <h2 class="mb-3">Capa 3: Dalfox (raw)</h2>
+
+        <h3>Resumen estructurado</h3>
+        {% if detail.summary_json %}
+          <pre>{{ detail.summary_json }}</pre>
+        {% else %}
+          <p>No hay resumen JSON registrado.</p>
+        {% endif %}
+
+        <h3 class="mt-4">Salida raw</h3>
+        {% if detail.dalfox_raw_output %}
+          <pre>{{ detail.dalfox_raw_output }}</pre>
+        {% else %}
+          <p>No hay salida raw registrada para Dalfox.</p>
+        {% endif %}
+      </section>
+    </div>
+
+    <!-- ===================================================
+         TAB: ARTIFACTS
+         =================================================== -->
+    <div
+      class="tab-pane fade"
+      id="artifacts-pane"
+      role="tabpanel"
+      aria-labelledby="artifacts-tab"
+      tabindex="0"
+    >
+      <section class="card mb-0">
+        <h2 class="mb-3">Artifacts generados</h2>
+
+        {% if artifacts %}
+          <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Archivo</th>
+                  <th>Ruta relativa</th>
+                  <th>MIME</th>
+                  <th>Tamaño</th>
+                  <th>Abrir</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in artifacts %}
+                  <tr>
+                    <td>{{ item.artifact_type }}</td>
+                    <td>{{ item.file_name }}</td>
+                    <td class="break-cell">{{ item.relative_path }}</td>
+                    <td>{{ item.mime_type if item.mime_type else "-" }}</td>
+                    <td>
+                      {% if item.size_bytes is not none %}
+                        {{ item.size_bytes }} bytes
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if run_id and item.file_name %}
+                        <a
+                          class="btn btn-sm btn-primary"
+                          href="/api/reports/file/{{ run_id }}/{{ item.file_name }}"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Abrir
+                        </a>
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          {% if detail.status in ["initiated", "running"] %}
+            <div class="alert alert-warning border-0 mb-0" role="alert">
+              La ejecución sigue en curso. Los artifacts aparecerán aquí conforme se generen y registren.
+            </div>
+          {% else %}
+            <p class="mb-0">No hay artifacts registrados para esta ejecución.</p>
+          {% endif %}
+        {% endif %}
+      </section>
+    </div>
+  </div>
 </section>
 {% endblock %}

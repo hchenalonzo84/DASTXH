@@ -13,9 +13,9 @@ Responsabilidades de este archivo:
   5) Mostrar un resumen en consola
   6) Devolver código de salida adecuado
 
-Esto ayuda a:
-- evitar duplicación de lógica
-- reutilizar el mismo flujo desde CLI, GUI web y API
+Esta versión además agrega:
+- soporte para scan_profile
+- soporte para override explícito de enable_hsecscan
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import db as db_layer
 from services.scanner_service import execute_scan
@@ -40,22 +40,24 @@ def print_scan_summary(result: Dict[str, Any]) -> None:
     devuelto por execute_scan().
     """
     print("\n=== DASTXH Summary ===")
-    print(f"Execution ID: {result.get('execution_id')}")
-    print(f"Target:       {result.get('target_url')}")
-    print(f"Status:       {result.get('status')}")
-    print(f"Source:       {result.get('request_source')}")
+    print(f"Execution ID:     {result.get('execution_id')}")
+    print(f"Target:           {result.get('target_url')}")
+    print(f"Status:           {result.get('status')}")
+    print(f"Source:           {result.get('request_source')}")
+    print(f"Scan profile:     {result.get('scan_profile')}")
+    print(f"hsecscan enabled: {result.get('enable_hsecscan')}")
 
     if result.get("ok"):
-        print(f"Compliance:   {result.get('compliance_pct')}%")
-        print(f"hsecscan rc:  {result.get('hsecscan_rc')}")
-        print(f"dalfox rc:    {result.get('dalfox_rc')}")
-        print(f"XSS findings: {result.get('findings_count')}")
-        print(f"Report dir:   {result.get('report_dir')}")
-        print(f"MD report:    {result.get('report_md')}")
-        print(f"HTML report:  {result.get('report_html')}")
+        print(f"Compliance:       {result.get('compliance_pct')}%")
+        print(f"hsecscan rc:      {result.get('hsecscan_rc')}")
+        print(f"dalfox rc:        {result.get('dalfox_rc')}")
+        print(f"XSS findings:     {result.get('findings_count')}")
+        print(f"Report dir:       {result.get('report_dir')}")
+        print(f"MD report:        {result.get('report_md')}")
+        print(f"HTML report:      {result.get('report_html')}")
     else:
-        print(f"Error:        {result.get('error')}")
-        print(f"Report dir:   {result.get('report_dir')}")
+        print(f"Error:            {result.get('error')}")
+        print(f"Report dir:       {result.get('report_dir')}")
 
 
 def run_multiple_urls(
@@ -63,6 +65,8 @@ def run_multiple_urls(
     workdir: Path,
     urls: List[str],
     timeout_s: int,
+    scan_profile: str,
+    enable_hsecscan: Optional[bool],
 ) -> int:
     """
     Ejecuta múltiples URLs de forma secuencial usando el servicio
@@ -81,6 +85,8 @@ def run_multiple_urls(
             url=url,
             timeout_s=timeout_s,
             request_source="cli",
+            scan_profile=scan_profile,
+            enable_hsecscan=enable_hsecscan,
         )
 
         print_scan_summary(result)
@@ -103,16 +109,50 @@ def main() -> int:
     - --url       : una sola URL
     - --url-file  : archivo con múltiples URLs
     - --timeout   : timeout en segundos
+    - --scan-profile : superficial o profundo
+    - --enable-hsecscan / --disable-hsecscan : override opcional
     """
     parser = argparse.ArgumentParser(description="DASTXH Orquestador (CLI)")
+
     parser.add_argument("--url", help="URL objetivo (una sola).", default=None)
     parser.add_argument("--url-file", help="Archivo con URLs (opcional).", default=None)
+
     parser.add_argument(
         "--timeout",
         type=int,
         default=int(os.getenv("DEFAULT_TIMEOUT_SECONDS", "30")),
         help="Timeout en segundos para herramientas HTTP/DAST.",
     )
+
+    parser.add_argument(
+        "--scan-profile",
+        choices=["superficial", "profundo"],
+        default="superficial",
+        help="Perfil de escaneo a utilizar.",
+    )
+
+    # ------------------------------------------------------
+    # Grupo mutuamente excluyente para override manual
+    # de enable_hsecscan
+    # ------------------------------------------------------
+    hsecscan_group = parser.add_mutually_exclusive_group()
+    hsecscan_group.add_argument(
+        "--enable-hsecscan",
+        dest="enable_hsecscan",
+        action="store_true",
+        help="Fuerza la ejecución de hsecscan aunque el perfil no lo active por defecto.",
+    )
+    hsecscan_group.add_argument(
+        "--disable-hsecscan",
+        dest="enable_hsecscan",
+        action="store_false",
+        help="Desactiva hsecscan aunque el perfil normalmente lo activaría.",
+    )
+
+    # Si el usuario no manda ningún override, quedará en None
+    # y el servicio resolverá el valor según el perfil.
+    parser.set_defaults(enable_hsecscan=None)
+
     args = parser.parse_args()
 
     # ------------------------------------------------------
@@ -144,6 +184,8 @@ def main() -> int:
             url=args.url.strip(),
             timeout_s=args.timeout,
             request_source="cli",
+            scan_profile=args.scan_profile,
+            enable_hsecscan=args.enable_hsecscan,
         )
 
         print_scan_summary(result)
@@ -163,6 +205,8 @@ def main() -> int:
             workdir=workdir,
             urls=urls,
             timeout_s=args.timeout,
+            scan_profile=args.scan_profile,
+            enable_hsecscan=args.enable_hsecscan,
         )
 
     # ------------------------------------------------------

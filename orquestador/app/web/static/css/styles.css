@@ -1,24 +1,59 @@
 /* ==========================================================
    styles.css
    - Estilos base de la GUI web de DASTXH
-   - Diseñado para:
+   - Esta versión está adaptada para convivir con Bootstrap
+     sin perder el tema oscuro propio del proyecto.
+   - Se prioriza:
      * layout general
      * navegación
      * tarjetas
      * formularios
      * tablas
+     * tabs Pretty / Raw / Artifacts
      * detalle de ejecuciones
    ========================================================== */
 
 /* ----------------------------------------------------------
-   Reset básico y modelo de caja
+   Reset básico y variables visuales
    ---------------------------------------------------------- */
+:root {
+    --bg-main: #0f172a;
+    --bg-panel: #111827;
+    --bg-panel-soft: #0b1220;
+    --bg-panel-alt: #172033;
+    --border-main: #1f2937;
+    --border-soft: #334155;
+    --text-main: #e5e7eb;
+    --text-soft: #dbe4f0;
+    --text-muted: #94a3b8;
+    --text-strong: #f9fafb;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-soft: rgba(37, 99, 235, 0.15);
+    --success-bg: rgba(34, 197, 94, 0.16);
+    --success-border: rgba(34, 197, 94, 0.35);
+    --success-text: #86efac;
+    --danger-bg: rgba(239, 68, 68, 0.16);
+    --danger-border: rgba(239, 68, 68, 0.35);
+    --danger-text: #fca5a5;
+    --warning-bg: rgba(245, 158, 11, 0.16);
+    --warning-border: rgba(245, 158, 11, 0.35);
+    --warning-text: #fcd34d;
+    --info-bg: rgba(96, 165, 250, 0.10);
+    --info-border: rgba(96, 165, 250, 0.28);
+    --info-text: #dbeafe;
+    --shadow-soft: 0 6px 18px rgba(0, 0, 0, 0.18);
+    --radius-lg: 14px;
+    --radius-md: 12px;
+    --radius-sm: 10px;
+}
+
 * {
     box-sizing: border-box;
 }
 
 /* ----------------------------------------------------------
-   Estilos globales del documento
+   Documento global
    ---------------------------------------------------------- */
 html {
     font-size: 16px;
@@ -27,9 +62,13 @@ html {
 body {
     margin: 0;
     font-family: Arial, sans-serif;
-    background: #0f172a;
-    color: #e5e7eb;
+    background: var(--bg-main);
+    color: var(--text-main);
     line-height: 1.5;
+}
+
+main.container {
+    padding: 2rem 0;
 }
 
 /* ----------------------------------------------------------
@@ -56,11 +95,11 @@ a:hover {
    Barra superior / navegación
    ---------------------------------------------------------- */
 .topbar {
-    background: #111827;
-    border-bottom: 1px solid #1f2937;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border-main);
     position: sticky;
     top: 0;
-    z-index: 10;
+    z-index: 1030;
 }
 
 .topbar .container {
@@ -74,7 +113,7 @@ a:hover {
 .topbar h1 {
     margin: 0;
     font-size: 1.35rem;
-    color: #f9fafb;
+    color: var(--text-strong);
 }
 
 .topbar nav {
@@ -89,36 +128,55 @@ a:hover {
 }
 
 /* ----------------------------------------------------------
-   Área principal
-   ---------------------------------------------------------- */
-main.container {
-    padding: 2rem 0;
-}
-
-/* ----------------------------------------------------------
-   Tarjetas
+   Tarjetas base
    ---------------------------------------------------------- */
 .card {
-    background: #111827;
-    border: 1px solid #1f2937;
-    border-radius: 14px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-lg);
     padding: 1.25rem;
     margin-bottom: 1rem;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+    box-shadow: var(--shadow-soft);
 }
 
 .card h2,
 .card h3 {
     margin-top: 0;
-    color: #f9fafb;
+    color: var(--text-strong);
 }
 
 .card p {
     margin-top: 0.5rem;
+    color: var(--text-soft);
 }
 
 /* ----------------------------------------------------------
-   Listas
+   Bloques reutilizables de detalle y stats
+   ---------------------------------------------------------- */
+.detail-item,
+.stat-card {
+    background: var(--bg-panel-soft);
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    height: 100%;
+}
+
+.detail-item h3,
+.stat-card h3 {
+    margin: 0 0 0.55rem 0;
+    font-size: 0.95rem;
+    color: var(--text-strong);
+}
+
+.detail-item p,
+.stat-card p {
+    margin: 0;
+    color: var(--text-soft);
+}
+
+/* ----------------------------------------------------------
+   Listas y celdas largas
    ---------------------------------------------------------- */
 .list {
     padding-left: 1.25rem;
@@ -128,6 +186,11 @@ main.container {
     margin-bottom: 0.45rem;
 }
 
+.break-cell {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    max-width: 320px;
+}
 /* ----------------------------------------------------------
    Formularios
    ---------------------------------------------------------- */
@@ -144,7 +207,7 @@ main.container {
 .form-group label {
     font-weight: 700;
     margin-bottom: 0.4rem;
-    color: #f3f4f6;
+    color: var(--text-strong);
 }
 
 .form-group input,
@@ -152,16 +215,16 @@ main.container {
 .form-group textarea {
     width: 100%;
     padding: 0.8rem 0.9rem;
-    border: 1px solid #334155;
-    border-radius: 10px;
-    background: #0b1220;
-    color: #e5e7eb;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+    background: var(--bg-panel-soft);
+    color: var(--text-main);
     font-size: 0.95rem;
 }
 
 .form-group input::placeholder,
 .form-group textarea::placeholder {
-    color: #94a3b8;
+    color: var(--text-muted);
 }
 
 .form-group input:focus,
@@ -181,21 +244,20 @@ main.container {
    ---------------------------------------------------------- */
 button,
 .btn {
-    display: inline-block;
-    background: #2563eb;
-    color: #ffffff;
-    border: none;
-    border-radius: 10px;
-    padding: 0.8rem 1.1rem;
-    font-size: 0.95rem;
+    border-radius: var(--radius-sm);
     font-weight: 700;
-    cursor: pointer;
-    transition: background 0.2s ease, transform 0.1s ease;
 }
 
-button:hover,
-.btn:hover {
-    background: #1d4ed8;
+button:not(.nav-link),
+.btn-primary {
+    background: var(--accent);
+    color: #ffffff;
+    border: none;
+}
+
+button:not(.nav-link):hover,
+.btn-primary:hover {
+    background: var(--accent-hover);
     text-decoration: none;
 }
 
@@ -205,65 +267,11 @@ button:active,
 }
 
 /* ----------------------------------------------------------
-   Tablas
-   ---------------------------------------------------------- */
-.table-wrapper {
-    width: 100%;
-    overflow-x: auto;
-    margin-top: 1rem;
-}
-
-.data-table {
-    width: 100%;
-    border-collapse: collapse;
-    min-width: 820px;
-    background: #0b1220;
-    border: 1px solid #1f2937;
-    border-radius: 12px;
-    overflow: hidden;
-}
-
-.data-table thead {
-    background: #172033;
-}
-
-.data-table th,
-.data-table td {
-    padding: 0.85rem 0.9rem;
-    border-bottom: 1px solid #1f2937;
-    text-align: left;
-    vertical-align: top;
-}
-
-.data-table th {
-    color: #f9fafb;
-    font-size: 0.92rem;
-}
-
-.data-table td {
-    color: #dbe4f0;
-    font-size: 0.93rem;
-}
-
-.data-table tbody tr:hover {
-    background: #111b2e;
-}
-
-/* ----------------------------------------------------------
-   Celdas con texto largo
-   ---------------------------------------------------------- */
-.break-cell {
-    word-break: break-word;
-    overflow-wrap: anywhere;
-    max-width: 320px;
-}
-
-/* ----------------------------------------------------------
-   Badges / etiquetas de estado
+   Badges de estado
    ---------------------------------------------------------- */
 .badge {
     display: inline-block;
-    padding: 0.25rem 0.55rem;
+    padding: 0.32rem 0.62rem;
     border-radius: 999px;
     font-size: 0.82rem;
     font-weight: 700;
@@ -271,15 +279,15 @@ button:active,
 }
 
 .badge-finished {
-    background: rgba(34, 197, 94, 0.16);
-    color: #86efac;
-    border-color: rgba(34, 197, 94, 0.35);
+    background: var(--success-bg);
+    color: var(--success-text);
+    border-color: var(--success-border);
 }
 
 .badge-failed {
-    background: rgba(239, 68, 68, 0.16);
-    color: #fca5a5;
-    border-color: rgba(239, 68, 68, 0.35);
+    background: var(--danger-bg);
+    color: var(--danger-text);
+    border-color: var(--danger-border);
 }
 
 .badge-running {
@@ -289,73 +297,20 @@ button:active,
 }
 
 .badge-initiated {
-    background: rgba(245, 158, 11, 0.16);
-    color: #fcd34d;
-    border-color: rgba(245, 158, 11, 0.35);
+    background: var(--warning-bg);
+    color: var(--warning-text);
+    border-color: var(--warning-border);
 }
 
 /* ----------------------------------------------------------
-   Grid de detalle / métricas
-   ---------------------------------------------------------- */
-.detail-grid,
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 0.9rem;
-    margin-top: 1rem;
-}
-
-.detail-item,
-.stat-card {
-    background: #0b1220;
-    border: 1px solid #1f2937;
-    border-radius: 12px;
-    padding: 0.9rem;
-}
-
-.detail-item h3,
-.stat-card h3 {
-    margin: 0 0 0.5rem 0;
-    font-size: 0.95rem;
-    color: #f9fafb;
-}
-
-.detail-item p,
-.stat-card p {
-    margin: 0;
-    color: #dbe4f0;
-}
-
-/* ----------------------------------------------------------
-   Bloques de código / preformateados
-   ---------------------------------------------------------- */
-code {
-    background: #0b1220;
-    border: 1px solid #1f2937;
-    border-radius: 6px;
-    padding: 0.15rem 0.35rem;
-    color: #cbd5e1;
-}
-
-pre {
-    background: #0b1220;
-    border: 1px solid #1f2937;
-    border-radius: 12px;
-    padding: 1rem;
-    overflow-x: auto;
-    color: #dbe4f0;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
-/* ----------------------------------------------------------
-   Mensajes informativos / alertas simples
+   Notices heredados
    ---------------------------------------------------------- */
 .notice {
     border-left: 4px solid #60a5fa;
     background: rgba(96, 165, 250, 0.08);
     padding: 0.9rem 1rem;
-    border-radius: 10px;
+    border-radius: var(--radius-sm);
+    color: var(--text-soft);
 }
 
 .notice-warning {
@@ -369,8 +324,199 @@ pre {
 }
 
 /* ----------------------------------------------------------
+   Alerts de Bootstrap adaptadas al tema
+   ---------------------------------------------------------- */
+.alert {
+    border-radius: var(--radius-md);
+    color: var(--text-soft);
+    box-shadow: none;
+}
+
+.alert-primary {
+    background: var(--info-bg);
+    border: 1px solid var(--info-border);
+    color: var(--info-text);
+}
+
+.alert-warning {
+    background: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+    color: var(--warning-text);
+}
+
+.alert-danger {
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-border);
+    color: var(--danger-text);
+}
+
+/* ----------------------------------------------------------
+   Tabs Bootstrap personalizadas
+   ---------------------------------------------------------- */
+.custom-tabs {
+    border-bottom: 1px solid var(--border-main);
+    gap: 0.35rem;
+}
+
+.custom-tabs .nav-link {
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-top-left-radius: var(--radius-sm);
+    border-top-right-radius: var(--radius-sm);
+    font-weight: 700;
+    padding: 0.7rem 1rem;
+}
+
+.custom-tabs .nav-link:hover {
+    color: var(--text-strong);
+    background: rgba(255, 255, 255, 0.03);
+    border-color: transparent;
+    text-decoration: none;
+}
+
+.custom-tabs .nav-link.active {
+    color: var(--text-strong);
+    background: var(--bg-panel-soft);
+    border-color: var(--border-main) var(--border-main) var(--bg-panel-soft);
+}
+
+.tab-content > .tab-pane {
+    padding-top: 0.25rem;
+}
+/* ----------------------------------------------------------
+   Tablas propias y de Bootstrap
+   ---------------------------------------------------------- */
+.table-wrapper,
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    margin-top: 1rem;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 820px;
+    background: var(--bg-panel-soft);
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.data-table thead {
+    background: var(--bg-panel-alt);
+}
+
+.data-table th,
+.data-table td {
+    padding: 0.85rem 0.9rem;
+    border-bottom: 1px solid var(--border-main);
+    text-align: left;
+    vertical-align: top;
+}
+
+.data-table th {
+    color: var(--text-strong);
+    font-size: 0.92rem;
+}
+
+.data-table td {
+    color: var(--text-soft);
+    font-size: 0.93rem;
+}
+
+.data-table tbody tr:hover {
+    background: #111b2e;
+}
+
+/* Bootstrap tables en oscuro */
+.table {
+    --bs-table-bg: var(--bg-panel-soft);
+    --bs-table-color: var(--text-soft);
+    --bs-table-border-color: var(--border-main);
+    --bs-table-striped-bg: rgba(255, 255, 255, 0.02);
+    --bs-table-striped-color: var(--text-soft);
+    --bs-table-active-bg: rgba(255, 255, 255, 0.05);
+    --bs-table-active-color: var(--text-soft);
+    --bs-table-hover-bg: #111b2e;
+    --bs-table-hover-color: var(--text-strong);
+    margin-bottom: 0;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.table thead th {
+    background: var(--bg-panel-alt);
+    color: var(--text-strong);
+    border-bottom: 1px solid var(--border-main);
+}
+
+.table td,
+.table th {
+    vertical-align: top;
+}
+
+/* ----------------------------------------------------------
+   Código y bloques preformateados
+   ---------------------------------------------------------- */
+code {
+    background: var(--bg-panel-soft);
+    border: 1px solid var(--border-main);
+    border-radius: 6px;
+    padding: 0.15rem 0.35rem;
+    color: #cbd5e1;
+}
+
+pre {
+    background: var(--bg-panel-soft);
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    overflow-x: auto;
+    color: var(--text-soft);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-bottom: 0;
+}
+
+/* ----------------------------------------------------------
+   Ajustes visuales Bootstrap generales
+   ---------------------------------------------------------- */
+.nav-link:focus,
+.btn:focus,
+button:focus,
+.form-control:focus,
+.form-select:focus {
+    box-shadow: 0 0 0 0.2rem rgba(96, 165, 250, 0.18) !important;
+}
+
+.form-control,
+.form-select {
+    background: var(--bg-panel-soft);
+    color: var(--text-main);
+    border-color: var(--border-soft);
+}
+
+.form-control::placeholder {
+    color: var(--text-muted);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-muted);
+}
+
+/* ----------------------------------------------------------
    Responsive
    ---------------------------------------------------------- */
+@media (max-width: 992px) {
+    .break-cell {
+        max-width: 100%;
+    }
+}
+
 @media (max-width: 768px) {
     .topbar .container {
         flex-direction: column;
@@ -388,4 +534,144 @@ pre {
     .data-table {
         min-width: 700px;
     }
+
+    .custom-tabs .nav-link {
+        padding: 0.6rem 0.8rem;
+        font-size: 0.95rem;
+    }
+}
+/* ==========================================================
+   FIX FUERTE DE TEXTO OSCURO
+   - Este bloque debe ir al FINAL del archivo.
+   - Usa selectores más específicos para ganarle a Bootstrap.
+   ========================================================== */
+
+/* Texto general dentro del contenido principal */
+main.container,
+main.container p,
+main.container li,
+main.container ul,
+main.container ol,
+main.container span,
+main.container div,
+main.container label,
+main.container small,
+main.container strong,
+main.container td,
+main.container th {
+    color: #e5e7eb !important;
+}
+
+/* Títulos */
+main.container h1,
+main.container h2,
+main.container h3,
+main.container h4,
+main.container h5,
+main.container h6 {
+    color: #f9fafb !important;
+}
+
+/* Card y todo su contenido textual */
+main.container .card,
+main.container .card p,
+main.container .card li,
+main.container .card ul,
+main.container .card ol,
+main.container .card span,
+main.container .card div,
+main.container .card label,
+main.container .card small,
+main.container .card strong {
+    color: #e5e7eb !important;
+}
+
+/* Notices propias */
+main.container .notice,
+main.container .notice p,
+main.container .notice li,
+main.container .notice span,
+main.container .notice div,
+main.container .notice strong {
+    color: #e5e7eb !important;
+}
+
+/* Alerts de Bootstrap */
+main.container .alert,
+main.container .alert p,
+main.container .alert li,
+main.container .alert span,
+main.container .alert div,
+main.container .alert strong {
+    color: #e5e7eb !important;
+}
+
+/* Bloques de detalle y stats */
+main.container .detail-item,
+main.container .detail-item p,
+main.container .detail-item li,
+main.container .detail-item span,
+main.container .detail-item div,
+main.container .detail-item strong,
+main.container .stat-card,
+main.container .stat-card p,
+main.container .stat-card li,
+main.container .stat-card span,
+main.container .stat-card div,
+main.container .stat-card strong {
+    color: #e5e7eb !important;
+}
+
+/* Tabs */
+main.container .tab-content,
+main.container .tab-content p,
+main.container .tab-content li,
+main.container .tab-content span,
+main.container .tab-content div,
+main.container .tab-content strong {
+    color: #e5e7eb !important;
+}
+
+/* Tablas Bootstrap */
+main.container .table,
+main.container .table td,
+main.container .table th,
+main.container .table tr,
+main.container .table thead,
+main.container .table tbody {
+    color: #e5e7eb !important;
+}
+
+/* Formularios */
+main.container input,
+main.container select,
+main.container textarea {
+    color: #e5e7eb !important;
+}
+
+main.container input::placeholder,
+main.container textarea::placeholder {
+    color: #94a3b8 !important;
+}
+
+/* Mantener colores especiales en badges y botones */
+main.container .badge-finished {
+    color: #86efac !important;
+}
+
+main.container .badge-failed {
+    color: #fca5a5 !important;
+}
+
+main.container .badge-running {
+    color: #93c5fd !important;
+}
+
+main.container .badge-initiated {
+    color: #fcd34d !important;
+}
+
+main.container .btn,
+main.container button {
+    color: #ffffff !important;
 }

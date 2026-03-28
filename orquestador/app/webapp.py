@@ -1,24 +1,18 @@
 """
 webapp.py
 - Aplicación web principal de DASTXH usando FastAPI.
-- Esta versión ya se conecta con:
-  * la base de datos
-  * el servicio de escaneo reutilizable
-  * el historial real de ejecuciones
-  * el detalle real por ejecución
+- Esta versión queda ajustada para trabajar mejor con el nuevo flujo:
+  * la GUI web ya no ejecuta el escaneo de forma síncrona
+  * el escaneo se lanza en segundo plano
+  * la petición POST responde rápido y redirige al detalle
+  * el detalle puede consultarse aunque la ejecución siga en curso
 
-Objetivos de esta etapa:
-- exponer una GUI web inicial
-- permitir iniciar escaneos desde la web
-- consultar historial desde PostgreSQL
-- ver detalle por ejecución
-- seguir reutilizando la misma lógica que usa la CLI
-
-Importante:
-- Se intenta mantener compatibilidad básica con los templates
-  iniciales que ya fueron creados.
-- Más adelante podremos mejorar los templates para mostrar
-  más información visual.
+Esta versión además agrega:
+- selección de scan_profile desde la GUI
+- modo de hsecscan:
+    * auto    -> lo resuelve el backend según perfil
+    * enable  -> fuerza True
+    * disable -> fuerza False
 """
 
 from __future__ import annotations
@@ -36,7 +30,7 @@ from fastapi.templating import Jinja2Templates
 from api.routes_history import router as history_router
 from api.routes_reports import router as reports_router
 from api.routes_scans import router as scans_router
-from services.scanner_service import execute_scan
+from services.scanner_service import start_scan_in_background
 from utils import ensure_dir, wait_for_db
 
 
@@ -48,7 +42,6 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "web" / "templates"
 STATIC_DIR = BASE_DIR / "web" / "static"
 
-# Directorio lógico de trabajo dentro del contenedor
 WORKDIR = Path(os.getenv("WORKDIR", "/work"))
 REPORTS_DIR = WORKDIR / "reports"
 
@@ -62,12 +55,16 @@ app = FastAPI(
     version="0.2.0",
     description="GUI web inicial para DASTXH",
 )
-# Middleware para agregar cabeceras de seguridad a todas las respuestas
+
+
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
+    """
+    Middleware simple para agregar cabeceras de seguridad
+    a las respuestas generadas por la GUI web/API.
+    """
     response = await call_next(request)
 
-    # Cabeceras seguras y conservadoras
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -77,13 +74,10 @@ async def add_security_headers(request: Request, call_next):
 
     return response
 
-# Archivos estáticos (CSS, JS, etc.)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# Motor de templates Jinja2
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-# Routers auxiliares de la API
 app.include_router(scans_router)
 app.include_router(history_router)
 app.include_router(reports_router)
@@ -96,7 +90,6 @@ app.include_router(reports_router)
 def get_dsn() -> str:
     """
     Obtiene la cadena de conexión desde DATABASE_URL.
-    Lanza excepción si no existe.
     """
     dsn = os.getenv("DATABASE_URL")
     if not dsn:
@@ -106,7 +99,7 @@ def get_dsn() -> str:
 
 def get_default_timeout() -> int:
     """
-    Obtiene el timeout por defecto para escaneos web.
+    Obtiene el timeout por defecto configurado para el backend.
     """
     return int(os.getenv("DEFAULT_TIMEOUT_SECONDS", "30"))
 
@@ -121,29 +114,89 @@ def ensure_work_paths() -> None:
 
 def get_report_folder_name(report_dir: Optional[str]) -> str:
     """
-    Extrae el nombre de la carpeta final desde una ruta lógica
-    como /work/reports/20260313_101010
-
-    Si no se puede determinar, devuelve cadena vacía.
+    Extrae el nombre final de carpeta desde una ruta lógica.
     """
     if not report_dir:
         return ""
     return Path(report_dir).name
 
 
+def validate_target_url(value: str) -> str:
+    """
+    Validación mínima de la URL ingresada desde la GUI.
+    """
+    target_url = (value or "").strip()
+
+    if not target_url:
+        raise HTTPException(status_code=400, detail="La URL no puede estar vacía.")
+
+    if not (target_url.startswith("http://") or target_url.startswith("https://")):
+        raise HTTPException(
+            status_code=400,
+            detail="La URL debe iniciar con http:// o https://",
+        )
+
+    return target_url
+
+
+def validate_scan_profile(value: str) -> str:
+    """
+    Valida el perfil elegido desde la GUI.
+    """
+    scan_profile = (value or "").strip().lower()
+
+    if scan_profile not in {"superficial", "profundo"}:
+        raise HTTPException(
+            status_code=400,
+            detail="scan_profile debe ser 'superficial' o 'profundo'.",
+        )
+
+    return scan_profile
+
+
+def parse_hsecscan_mode(value: str) -> Optional[bool]:
+    """
+    Convierte el modo del formulario a un valor compatible
+    con scanner_service.
+
+    Mapeo:
+    - auto    -> None
+    - enable  -> True
+    - disable -> False
+    """
+    mode = (value or "auto").strip().lower()
+
+    if mode == "auto":
+        return None
+    if mode == "enable":
+        return True
+    if mode == "disable":
+        return False
+
+    raise HTTPException(
+        status_code=400,
+        detail="hsecscan_mode debe ser 'auto', 'enable' o 'disable'.",
+    )
+
+
+def wait_until_db_ready(timeout_s: int = 20) -> str:
+    """
+    Espera a que la base de datos esté disponible y devuelve el DSN.
+    """
+    dsn = get_dsn()
+    wait_for_db(lambda: db_layer.ping_db(dsn), timeout_s=timeout_s)
+    return dsn
+
+
 def load_recent_executions(limit: int = 10) -> List[Dict[str, Any]]:
     """
     Carga ejecuciones recientes desde la vista de resumen.
-    Si falla la BD, devuelve lista vacía.
     """
     try:
-        dsn = get_dsn()
-        wait_for_db(lambda: db_layer.ping_db(dsn), timeout_s=10)
+        dsn = wait_until_db_ready(timeout_s=10)
         return db_layer.list_execution_summaries(dsn=dsn, limit=limit, offset=0)
     except Exception:
         return []
-
-
 # ==========================================================
 # RUTAS WEB
 # ==========================================================
@@ -152,9 +205,10 @@ def load_recent_executions(limit: int = 10) -> List[Dict[str, Any]]:
 def home(request: Request):
     """
     Página principal.
+
     Muestra:
-    - formulario básico para iniciar escaneo
-    - ejecuciones recientes
+    - formulario para iniciar una evaluación
+    - últimas ejecuciones registradas
     """
     recent_executions = load_recent_executions(limit=10)
 
@@ -164,6 +218,8 @@ def home(request: Request):
             "request": request,
             "title": "DASTXH - Inicio",
             "default_timeout": get_default_timeout(),
+            "default_scan_profile": "superficial",
+            "default_hsecscan_mode": "auto",
             "recent_executions": recent_executions,
         },
     )
@@ -171,33 +227,43 @@ def home(request: Request):
 
 @app.post("/scan")
 def start_scan(
-    request: Request,
     url: str = Form(...),
-    timeout: int = Form(default=get_default_timeout()),
+    timeout: Optional[int] = Form(default=None),
+    scan_profile: str = Form(default="superficial"),
+    hsecscan_mode: str = Form(default="auto"),
 ):
     """
     Inicia un escaneo desde la GUI web.
 
-    En esta versión inicial:
-    - la ejecución se hace de forma síncrona
-    - cuando termina, redirige al detalle de la ejecución
-
-    Más adelante se puede convertir a ejecución en segundo plano.
+    Ahora acepta:
+    - scan_profile
+    - hsecscan_mode (auto/enable/disable)
     """
-    target_url = (url or "").strip()
-    if not target_url:
-        raise HTTPException(status_code=400, detail="La URL no puede estar vacía.")
+    # ------------------------------------------------------
+    # Validar entrada desde formulario
+    # ------------------------------------------------------
+    target_url = validate_target_url(url)
+    timeout_s = timeout if timeout is not None else get_default_timeout()
+    validated_scan_profile = validate_scan_profile(scan_profile)
+    enable_hsecscan = parse_hsecscan_mode(hsecscan_mode)
 
-    dsn = get_dsn()
+    # ------------------------------------------------------
+    # Preparar entorno y esperar base de datos
+    # ------------------------------------------------------
     ensure_work_paths()
-    wait_for_db(lambda: db_layer.ping_db(dsn), timeout_s=20)
+    dsn = wait_until_db_ready(timeout_s=20)
 
-    result = execute_scan(
+    # ------------------------------------------------------
+    # Lanzar escaneo en background
+    # ------------------------------------------------------
+    result = start_scan_in_background(
         dsn=dsn,
         workdir=WORKDIR,
         url=target_url,
-        timeout_s=timeout,
+        timeout_s=timeout_s,
         request_source="web",
+        scan_profile=validated_scan_profile,
+        enable_hsecscan=enable_hsecscan,
     )
 
     execution_id = result.get("execution_id")
@@ -214,14 +280,9 @@ def start_scan(
 def history_page(request: Request):
     """
     Página de historial de ejecuciones.
-
-    Para mantener compatibilidad básica con el template actual:
-    - se envía 'runs' como lista de ids
-    - también se envía 'executions' con el detalle completo
     """
-    dsn = get_dsn()
+    dsn = wait_until_db_ready(timeout_s=20)
     ensure_work_paths()
-    wait_for_db(lambda: db_layer.ping_db(dsn), timeout_s=20)
 
     executions = db_layer.list_execution_summaries(dsn=dsn, limit=100, offset=0)
     runs = [str(item["id"]) for item in executions]
@@ -241,19 +302,9 @@ def history_page(request: Request):
 def execution_detail(request: Request, execution_id: int):
     """
     Página de detalle de una ejecución.
-
-    Carga:
-    - resumen y detalle desde la base de datos
-    - lista de artifacts
-    - nombre de carpeta real del reporte
-
-    Para mantener compatibilidad con el template actual:
-    - se envía run_id como el nombre de la carpeta física
-    - se envía files como lista simple de nombres
     """
-    dsn = get_dsn()
+    dsn = wait_until_db_ready(timeout_s=20)
     ensure_work_paths()
-    wait_for_db(lambda: db_layer.ping_db(dsn), timeout_s=20)
 
     detail = db_layer.get_execution_detail(dsn=dsn, execution_id=execution_id)
     if not detail:

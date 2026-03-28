@@ -4,20 +4,19 @@ report.py
 - En esta etapa genera:
   * report.md
   * report.html
-- Más adelante, report.html podrá servir como base para generar report.pdf.
 
-El objetivo es centralizar la presentación de resultados:
-- Capa 1: Security Headers (curl custom)
-- Capa 2: Hardening & Cookies (hsecscan)
-- Capa 3: XSS Findings (Dalfox)
-- Conclusión y recomendaciones
+Objetivo:
+- centralizar la presentación de resultados
+- seguir siendo compatible con la estructura actual del proyecto
+- adaptarse a la nueva forma normalizada de cookies
+- reflejar scan_profile y enable_hsecscan
 """
 
 from __future__ import annotations
 
 from html import escape
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 # ==========================================================
@@ -64,29 +63,75 @@ def _html_list(items: List[str], empty_label: str = "(none)") -> str:
     return f"<ul>\n{rows}\n</ul>"
 
 
+def _normalize_cookie_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normaliza un registro de cookie para soportar tanto la forma vieja
+    como la nueva.
+    """
+    cookie_raw = item.get("cookie_raw")
+    if cookie_raw is None:
+        cookie_raw = item.get("cookie", "")
+
+    cookie_name = item.get("cookie_name")
+    if cookie_name is not None:
+        cookie_name = str(cookie_name).strip() or None
+
+    samesite_present = item.get("samesite_present")
+    if samesite_present is None:
+        samesite_present = bool(item.get("samesite"))
+
+    samesite_value = item.get("samesite_value")
+
+    return {
+        "cookie_name": cookie_name,
+        "cookie_raw": str(cookie_raw or ""),
+        "secure": bool(item.get("secure")),
+        "httponly": bool(item.get("httponly")),
+        "samesite_present": bool(samesite_present),
+        "samesite_value": samesite_value,
+    }
+
+
+def _cookie_label(cookie_item: Dict[str, Any]) -> str:
+    """
+    Devuelve una etiqueta legible para identificar una cookie
+    en el reporte.
+    """
+    cookie_name = cookie_item.get("cookie_name")
+    cookie_raw = cookie_item.get("cookie_raw", "")
+
+    if cookie_name:
+        return str(cookie_name)
+
+    if cookie_raw:
+        return str(cookie_raw)
+
+    return "(cookie sin identificar)"
+
+
 def _cookie_flags_md(cookies_flags: List[Dict[str, Any]]) -> str:
     """
     Genera una sección Markdown resumida para las cookies evaluadas.
-
-    Cada cookie se muestra con sus flags:
-    - Secure
-    - HttpOnly
-    - SameSite
     """
     if not cookies_flags:
         return "- No se detectaron cookies Set-Cookie en la respuesta final."
 
     lines: List[str] = []
-    for item in cookies_flags:
-        cookie_value = str(item.get("cookie", ""))
+
+    for raw_item in cookies_flags:
+        item = _normalize_cookie_item(raw_item)
+
+        cookie_label = _cookie_label(item)
         secure = "Yes" if item.get("secure") else "No"
         httponly = "Yes" if item.get("httponly") else "No"
-        samesite = "Yes" if item.get("samesite") else "No"
+        samesite_present = "Yes" if item.get("samesite_present") else "No"
+        samesite_value = item.get("samesite_value") or "-"
 
-        lines.append(f"- Cookie: `{cookie_value}`")
+        lines.append(f"- Cookie: `{cookie_label}`")
         lines.append(f"  - Secure: **{secure}**")
         lines.append(f"  - HttpOnly: **{httponly}**")
-        lines.append(f"  - SameSite: **{samesite}**")
+        lines.append(f"  - SameSite present: **{samesite_present}**")
+        lines.append(f"  - SameSite value: **{samesite_value}**")
 
     return "\n".join(lines)
 
@@ -99,19 +144,24 @@ def _cookie_flags_html(cookies_flags: List[Dict[str, Any]]) -> str:
         return "<p>No se detectaron cookies <code>Set-Cookie</code> en la respuesta final.</p>"
 
     blocks: List[str] = []
-    for item in cookies_flags:
-        cookie_value = escape(str(item.get("cookie", "")))
+
+    for raw_item in cookies_flags:
+        item = _normalize_cookie_item(raw_item)
+
+        cookie_label = escape(_cookie_label(item))
         secure = "Yes" if item.get("secure") else "No"
         httponly = "Yes" if item.get("httponly") else "No"
-        samesite = "Yes" if item.get("samesite") else "No"
+        samesite_present = "Yes" if item.get("samesite_present") else "No"
+        samesite_value = escape(str(item.get("samesite_value") or "-"))
 
         block = f"""
         <div class="cookie-card">
-          <p><strong>Cookie:</strong> <code>{cookie_value}</code></p>
+          <p><strong>Cookie:</strong> <code>{cookie_label}</code></p>
           <ul>
             <li><strong>Secure:</strong> {secure}</li>
             <li><strong>HttpOnly:</strong> {httponly}</li>
-            <li><strong>SameSite:</strong> {samesite}</li>
+            <li><strong>SameSite present:</strong> {samesite_present}</li>
+            <li><strong>SameSite value:</strong> {samesite_value}</li>
           </ul>
         </div>
         """
@@ -128,7 +178,7 @@ def _build_recommendations(hdr_eval: Dict[str, Any]) -> List[str]:
     recommendations: List[str] = []
 
     missing = _to_list(hdr_eval.get("missing"))
-    cookies_flags = _to_list(hdr_eval.get("cookies_flags"))
+    cookies_flags = [_normalize_cookie_item(item) for item in _to_list(hdr_eval.get("cookies_flags"))]
 
     if missing:
         recommendations.append(
@@ -145,7 +195,7 @@ def _build_recommendations(hdr_eval: Dict[str, Any]) -> List[str]:
             "Aplicar HttpOnly a cookies sensibles para reducir el riesgo de acceso desde scripts del navegador."
         )
 
-    if any(not c.get("samesite") for c in cookies_flags):
+    if any(not c.get("samesite_present") for c in cookies_flags):
         recommendations.append(
             "Definir SameSite en cookies sensibles para reducir exposición ante ciertos escenarios de ataque."
         )
@@ -162,6 +212,80 @@ def _build_recommendations(hdr_eval: Dict[str, Any]) -> List[str]:
     return recommendations
 
 
+def _dalfox_profile_note(scan_profile: str) -> str:
+    """
+    Devuelve una descripción breve del perfil aplicado a Dalfox.
+    """
+    if scan_profile == "profundo":
+        return (
+            "Perfil profundo: agrega mining de parámetros y análisis DOM más profundo "
+            "para ampliar la superficie evaluada."
+        )
+
+    return (
+        "Perfil superficial: usa una ejecución base menos agresiva, útil como revisión "
+        "rápida inicial sobre la URL objetivo."
+    )
+
+
+def _build_hsecscan_section_md(
+    scan_profile: str,
+    enable_hsecscan: bool,
+    hsecscan_filename: Optional[str],
+) -> str:
+    """
+    Construye la sección Markdown de la Capa 2 según si estuvo activa o no.
+    """
+    if enable_hsecscan and hsecscan_filename:
+        return f"""## B) Hardening & Cookies (hsecscan, segunda capa)
+
+Salida raw: `{hsecscan_filename}`
+
+> Esta capa complementa la revisión de endurecimiento y exposición visible en cabeceras/cookies.
+"""
+
+    return f"""## B) Hardening & Cookies (hsecscan, segunda capa)
+
+> Esta capa fue omitida para esta ejecución.
+> Perfil aplicado: `{scan_profile}`.
+> enable_hsecscan: `False`.
+"""
+
+
+def _build_hsecscan_section_html(
+    scan_profile: str,
+    enable_hsecscan: bool,
+    hsecscan_filename: Optional[str],
+) -> str:
+    """
+    Construye la sección HTML de la Capa 2 según si estuvo activa o no.
+    """
+    if enable_hsecscan and hsecscan_filename:
+        safe_hsecscan_filename = escape(str(hsecscan_filename))
+        return f"""
+        <section class="card">
+          <h2>B) Hardening & Cookies (hsecscan, segunda capa)</h2>
+          <p>Salida raw: <code>{safe_hsecscan_filename}</code></p>
+          <p class="muted">
+            Esta capa complementa la revisión de endurecimiento y exposición visible
+            en cabeceras/cookies.
+          </p>
+        </section>
+        """.strip()
+
+    safe_profile = escape(str(scan_profile))
+    return f"""
+    <section class="card">
+      <h2>B) Hardening & Cookies (hsecscan, segunda capa)</h2>
+      <p>Esta capa fue omitida para esta ejecución.</p>
+      <p class="muted">
+        Perfil aplicado: <code>{safe_profile}</code>.<br>
+        enable_hsecscan: <code>False</code>.
+      </p>
+    </section>
+    """.strip()
+
+
 # ==========================================================
 # REPORTE MARKDOWN
 # ==========================================================
@@ -170,20 +294,14 @@ def build_report_md(
     target_url: str,
     report_dir: Path,
     hdr_eval: Dict[str, Any],
-    hsecscan_filename: str,
-    dalfox_json_filename: str,
+    scan_profile: str = "superficial",
+    enable_hsecscan: bool = False,
+    hsecscan_filename: Optional[str] = None,
+    dalfox_json_filename: str = "dalfox.json",
     dalfox_txt_filename: str = "dalfox.txt",
 ) -> str:
     """
     Construye el contenido del reporte principal en formato Markdown.
-
-    Parámetros:
-    - target_url: URL evaluada
-    - report_dir: carpeta física donde quedaron los artifacts
-    - hdr_eval: resumen de evaluación de la capa 1
-    - hsecscan_filename: nombre del archivo raw de hsecscan
-    - dalfox_json_filename: nombre del archivo JSON de Dalfox
-    - dalfox_txt_filename: nombre del archivo raw de Dalfox
     """
     headers_evaluadas = hdr_eval.get("headers_evaluadas", 0)
     headers_presentes = hdr_eval.get("headers_presentes", 0)
@@ -200,10 +318,37 @@ def build_report_md(
     recommendations = _build_recommendations(hdr_eval)
     recommendations_md = _md_bullets(recommendations)
 
+    hsecscan_section_md = _build_hsecscan_section_md(
+        scan_profile=scan_profile,
+        enable_hsecscan=enable_hsecscan,
+        hsecscan_filename=hsecscan_filename,
+    )
+
+    expected_artifacts = [
+        "- `report.md`",
+        "- `report.html`",
+        "- `headers.json`",
+    ]
+
+    if enable_hsecscan and hsecscan_filename:
+        expected_artifacts.append(f"- `{hsecscan_filename}`")
+
+    expected_artifacts.extend(
+        [
+            f"- `{dalfox_json_filename}`",
+            f"- `{dalfox_txt_filename}`",
+            "- `run_meta.json`",
+        ]
+    )
+
+    expected_artifacts_md = "\n".join(expected_artifacts)
+
     return f"""# DASTXH Report
 
 **Target:** {target_url}  
-**Report folder:** `{report_dir}`
+**Report folder:** `{report_dir}`  
+**Scan profile:** `{scan_profile}`  
+**hsecscan enabled:** `{enable_hsecscan}`
 
 ---
 
@@ -226,12 +371,7 @@ def build_report_md(
 
 ---
 
-## B) Hardening & Cookies (hsecscan, segunda capa)
-
-Salida raw: `{hsecscan_filename}`
-
-> Esta capa complementa la revisión de endurecimiento y exposición visible en cabeceras/cookies.
-
+{hsecscan_section_md}
 ---
 
 ## C) XSS Findings (Dalfox)
@@ -239,7 +379,7 @@ Salida raw: `{hsecscan_filename}`
 Salida JSON: `{dalfox_json_filename}`  
 Salida raw: `{dalfox_txt_filename}`
 
-> Revisar la salida estructurada y la evidencia raw para validar hallazgos en entornos autorizados.
+> {_dalfox_profile_note(scan_profile)}
 
 ---
 
@@ -251,15 +391,9 @@ Salida raw: `{dalfox_txt_filename}`
 
 ## E) Artifacts generados esperados
 
-- `report.md`
-- `report.html`
-- `headers.json`
-- `{hsecscan_filename}`
-- `{dalfox_json_filename}`
-- `{dalfox_txt_filename}`
-- `run_meta.json`
+{expected_artifacts_md}
 """
-    
+
 
 # ==========================================================
 # REPORTE HTML
@@ -269,16 +403,14 @@ def build_report_html(
     target_url: str,
     report_dir: Path,
     hdr_eval: Dict[str, Any],
-    hsecscan_filename: str,
-    dalfox_json_filename: str,
+    scan_profile: str = "superficial",
+    enable_hsecscan: bool = False,
+    hsecscan_filename: Optional[str] = None,
+    dalfox_json_filename: str = "dalfox.json",
     dalfox_txt_filename: str = "dalfox.txt",
 ) -> str:
     """
     Construye el contenido del reporte en HTML.
-
-    Este HTML está pensado para:
-    - abrirse directamente desde la GUI web
-    - servir como base futura para exportación a PDF
     """
     headers_evaluadas = hdr_eval.get("headers_evaluadas", 0)
     headers_presentes = hdr_eval.get("headers_presentes", 0)
@@ -295,11 +427,39 @@ def build_report_html(
     cookies_html = _cookie_flags_html(cookies_flags)
     recommendations_html = _html_list(recommendations, empty_label="No recommendations.")
 
+    hsecscan_section_html = _build_hsecscan_section_html(
+        scan_profile=scan_profile,
+        enable_hsecscan=enable_hsecscan,
+        hsecscan_filename=hsecscan_filename,
+    )
+
+    expected_artifacts_html_parts = [
+        "<li><code>report.md</code></li>",
+        "<li><code>report.html</code></li>",
+        "<li><code>headers.json</code></li>",
+    ]
+
+    if enable_hsecscan and hsecscan_filename:
+        expected_artifacts_html_parts.append(
+            f"<li><code>{escape(str(hsecscan_filename))}</code></li>"
+        )
+
+    expected_artifacts_html_parts.extend(
+        [
+            f"<li><code>{escape(str(dalfox_json_filename))}</code></li>",
+            f"<li><code>{escape(str(dalfox_txt_filename))}</code></li>",
+            "<li><code>run_meta.json</code></li>",
+        ]
+    )
+
+    expected_artifacts_html = "\n".join(expected_artifacts_html_parts)
+
     safe_target_url = escape(str(target_url))
     safe_report_dir = escape(str(report_dir))
-    safe_hsecscan_filename = escape(str(hsecscan_filename))
+    safe_scan_profile = escape(str(scan_profile))
     safe_dalfox_json_filename = escape(str(dalfox_json_filename))
     safe_dalfox_txt_filename = escape(str(dalfox_txt_filename))
+    safe_dalfox_note = escape(_dalfox_profile_note(scan_profile))
 
     return f"""<!DOCTYPE html>
 <html lang="es">
@@ -377,6 +537,8 @@ def build_report_html(
       <h1>DASTXH Report</h1>
       <p><strong>Target:</strong> {safe_target_url}</p>
       <p><strong>Report folder:</strong> <code>{safe_report_dir}</code></p>
+      <p><strong>Scan profile:</strong> <code>{safe_scan_profile}</code></p>
+      <p><strong>hsecscan enabled:</strong> <code>{enable_hsecscan}</code></p>
     </section>
 
     <section class="card">
@@ -409,23 +571,13 @@ def build_report_html(
       <p class="muted">Evidencia principal: <code>headers.json</code></p>
     </section>
 
-    <section class="card">
-      <h2>B) Hardening & Cookies (hsecscan, segunda capa)</h2>
-      <p>Salida raw: <code>{safe_hsecscan_filename}</code></p>
-      <p class="muted">
-        Esta capa complementa la revisión de endurecimiento y exposición visible
-        en cabeceras/cookies.
-      </p>
-    </section>
+    {hsecscan_section_html}
 
     <section class="card">
       <h2>C) XSS Findings (Dalfox)</h2>
       <p>Salida JSON: <code>{safe_dalfox_json_filename}</code></p>
       <p>Salida raw: <code>{safe_dalfox_txt_filename}</code></p>
-      <p class="muted">
-        Revisar la salida estructurada y la evidencia raw para validar hallazgos
-        en entornos autorizados.
-      </p>
+      <p class="muted">{safe_dalfox_note}</p>
     </section>
 
     <section class="card">
@@ -436,16 +588,9 @@ def build_report_html(
     <section class="card">
       <h2>E) Artifacts generados esperados</h2>
       <ul>
-        <li><code>report.md</code></li>
-        <li><code>report.html</code></li>
-        <li><code>headers.json</code></li>
-        <li><code>{safe_hsecscan_filename}</code></li>
-        <li><code>{safe_dalfox_json_filename}</code></li>
-        <li><code>{safe_dalfox_txt_filename}</code></li>
-        <li><code>run_meta.json</code></li>
+        {expected_artifacts_html}
       </ul>
     </section>
   </div>
 </body>
-</html>
-"""
+</html>"""
