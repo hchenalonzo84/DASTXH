@@ -171,4 +171,5 @@ volumes:
 # ----------------------------------------------------------
 networks:
   dastxh_net:
+    name: dastxh_net
     driver: bridge

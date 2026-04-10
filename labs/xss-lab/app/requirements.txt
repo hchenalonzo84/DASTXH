@@ -1,0 +1,6 @@
+# ==========================================================
+# requirements.txt
+# Laboratorio XSS mínimo para pruebas controladas con DASTXH
+# ==========================================================
+
+Flask==3.1.1

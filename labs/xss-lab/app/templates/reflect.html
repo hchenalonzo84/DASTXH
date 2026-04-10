@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>XSS Lab - {{ mode }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2rem;
+      background: #f5f5f5;
+      color: #222;
+    }
+
+    .card {
+      max-width: 900px;
+      margin: 0 auto 1rem auto;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 1.2rem;
+    }
+
+    code {
+      background: #eee;
+      padding: 0.15rem 0.35rem;
+      border-radius: 4px;
+    }
+
+    .unsafe-box {
+      margin-top: 1rem;
+      padding: 1rem;
+      border: 1px dashed #c00;
+      background: #fff4f4;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Resultado del laboratorio XSS</h1>
+    <p><strong>Modo:</strong> {{ mode }}</p>
+    <p><strong>Parámetro recibido:</strong> <code>{{ q }}</code></p>
+    <p>
+      La siguiente sección renderiza el contenido recibido de manera insegura.
+      Esto es intencional para el laboratorio.
+    </p>
+
+    <div class="unsafe-box">
+      {{ q|safe }}
+    </div>
+  </div>
+
+  <div class="card">
+    <a href="/">Volver al inicio</a>
+  </div>
+</body>
+</html>
