@@ -2,57 +2,49 @@
 # docker-compose.yml
 # DASTXH - Orquestación principal del prototipo
 #
-# Servicios:
-#   - db          : Base de datos PostgreSQL
-#   - orquestador : Backend principal (CLI + GUI web con FastAPI)
-#   - pgadmin     : Administración manual de PostgreSQL
+# Servicios actuales:
+#   - db            : Base de datos principal de DASTXH
+#   - orquestador   : Backend principal (GUI web + API)
+#   - pgadmin       : Administración manual de PostgreSQL
+#   - xss-lab-db    : Base de datos propia del laboratorio XSS
+#   - xss-lab       : Laboratorio XSS controlado
 #
-# Persistencia:
-#   - pgdata       : volumen nombrado para PostgreSQL
-#   - pgadmin_data : volumen nombrado para pgAdmin
-#   - ./workdata   : bind mount en host para reportes/evidencias
-#
-# Red:
-#   - dastxh_net   : red bridge interna explícita del proyecto
+# Nota importante:
+# - La BD de DASTXH y la BD del laboratorio XSS son distintas.
+# - DASTXH guarda evidencia e historial.
+# - xss-lab guarda contenido funcional del laboratorio para
+#   simular XSS persistente.
 # ==========================================================
 
 services:
   # --------------------------------------------------------
   # Servicio: db
-  # - Base de datos PostgreSQL del proyecto
-  # - Usa volumen nombrado para mantener la persistencia
-  # - Ejecuta schema.sql solo cuando la BD se inicializa
-  #   por primera vez
+  # - Base de datos PostgreSQL principal de DASTXH
+  # - Aquí se guardan ejecuciones, evidencia y artifacts
   # --------------------------------------------------------
   db:
     image: postgres:18.3-alpine3.23
     container_name: dastxh-db
     restart: unless-stopped
 
-    # Variables de entorno de PostgreSQL
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
-    # Puerto expuesto al host para acceso externo opcional
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
 
-    # Persistencia + script inicial del esquema
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
 
-    # Verificación de salud para esperar a que PostgreSQL
-    # esté listo antes de que lo usen otros servicios
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 20
 
-    # Red interna explícita del proyecto
     networks:
       - dastxh_net
 
@@ -60,14 +52,13 @@ services:
   # Servicio: orquestador
   # - Contenedor principal de DASTXH
   # - Aloja:
-  #     * CLI
   #     * GUI web con FastAPI
+  #     * API REST
   #     * acceso a curl, hsecscan y dalfox
   #
   # Nota:
   # - Arranca la GUI web por defecto
-  # - La CLI seguirá disponible con:
-  #   docker compose exec orquestador python3 main.py --url ...
+  # - El usuario final trabajará principalmente desde la GUI
   # --------------------------------------------------------
   orquestador:
     build:
@@ -77,38 +68,28 @@ services:
     container_name: dastxh-orquestador
     restart: unless-stopped
 
-    # Espera a que la base de datos esté saludable
     depends_on:
       db:
         condition: service_healthy
 
-    # Variables de entorno internas del backend
     environment:
-      # Conexión a PostgreSQL usando el nombre del servicio "db"
+      # Conexión a PostgreSQL principal usando el nombre del servicio "db"
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
 
-      # Timeout por defecto para los análisis
+      # Timeout por defecto para análisis
       DEFAULT_TIMEOUT_SECONDS: ${DEFAULT_TIMEOUT_SECONDS:-30}
 
       # Directorio lógico de trabajo dentro del contenedor
       WORKDIR: /work
 
-    # Puerto expuesto para la GUI web / API
     ports:
       - "${WEB_PORT:-8000}:8000"
 
-    # Bind mount:
-    # La carpeta local ./workdata se verá como /work
-    # dentro del contenedor, para que los reportes
-    # queden visibles desde el host
     volumes:
       - ./workdata:/work
 
-    # Directorio de trabajo por defecto
     working_dir: /app/app
 
-    # Comando por defecto: arranca FastAPI con Uvicorn
-    # --reload es útil en desarrollo
     command:
       [
         "uvicorn",
@@ -118,58 +99,122 @@ services:
         "--reload"
       ]
 
-    # Red interna explícita del proyecto
     networks:
       - dastxh_net
 
   # --------------------------------------------------------
   # Servicio: pgadmin
-  # - Interfaz web para administrar PostgreSQL
-  # - Permite consultar tablas, ejecutar SQL,
-  #   revisar registros y explorar la BD
+  # - Interfaz web para administrar la BD principal de DASTXH
   # --------------------------------------------------------
   pgadmin:
     image: dpage/pgadmin4:9.8
     container_name: dastxh-pgadmin
     restart: unless-stopped
 
-    # Espera a que la base de datos esté lista
     depends_on:
       db:
         condition: service_healthy
 
-    # Credenciales iniciales de pgAdmin
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
 
-    # Puerto web expuesto al host
     ports:
       - "${PGADMIN_PORT:-5050}:80"
 
-    # Volumen para conservar configuración interna de pgAdmin
     volumes:
       - pgadmin_data:/var/lib/pgadmin
 
-    # Red interna explícita del proyecto
     networks:
       - dastxh_net
 
+  # --------------------------------------------------------
+  # Servicio: xss-lab-db
+  # - Base de datos propia del laboratorio XSS
+  # - NO se mezcla con la base de datos de DASTXH
+  # - Se usa para simular contenido persistente y XSS almacenado
+  # --------------------------------------------------------
+  xss-lab-db:
+    image: postgres:18.3-alpine3.23
+    container_name: dastxh-xss-lab-db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: xsslab
+      POSTGRES_USER: xsslab
+      POSTGRES_PASSWORD: xsslab
+
+    # Puerto opcional para inspección externa/manual
+    ports:
+      - "5541:5432"
+
+    volumes:
+      - xss_lab_pgdata:/var/lib/postgresql/data
+      - ./labs/xss-lab/db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xsslab -d xsslab"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+    networks:
+      - dastxh_net
+  # --------------------------------------------------------
+  # Servicio: xss-lab
+  # - Laboratorio XSS controlado para pruebas con DASTXH
+  # - Tiene su propia BD para simular XSS persistente
+  # - Se expone al host en el puerto 5001
+  # - Dentro de la red Docker responde como http://xss-lab:5000
+  # --------------------------------------------------------
+  xss-lab:
+    build:
+      context: ./labs/xss-lab
+      dockerfile: Dockerfile
+
+    container_name: dastxh-xss-lab
+    restart: unless-stopped
+
+    depends_on:
+      xss-lab-db:
+        condition: service_healthy
+
+    environment:
+      # Conexión a la BD propia del laboratorio
+      LAB_DATABASE_URL: postgresql://xsslab:xsslab@xss-lab-db:5432/xsslab
+
+    ports:
+      - "5001:5000"
+
+    networks:
+      - dastxh_net
+
+
 # ----------------------------------------------------------
 # Volúmenes nombrados
-# - pgdata: persistencia de PostgreSQL
-# - pgadmin_data: persistencia de pgAdmin
+# - pgdata          : persistencia de PostgreSQL principal
+# - pgadmin_data    : persistencia de pgAdmin
+# - xss_lab_pgdata  : persistencia de la BD del laboratorio XSS
 # ----------------------------------------------------------
 volumes:
   pgdata:
   pgadmin_data:
+  xss_lab_pgdata:
+
 
 # ----------------------------------------------------------
-# Redes explícitas del proyecto
-# - dastxh_net: red bridge interna para comunicación
-#   entre db, orquestador y pgadmin
+# Red explícita del proyecto
+# - dastxh_net: red bridge compartida entre:
+#   * db
+#   * orquestador
+#   * pgadmin
+#   * laboratorios integrados
+#
+# Importante:
+# - Se fija el nombre real de la red para mantener
+#   estabilidad y facilitar futuras ampliaciones del stack.
 # ----------------------------------------------------------
 networks:
   dastxh_net:
     name: dastxh_net
-    driver: bridge
+    driver: bridge 

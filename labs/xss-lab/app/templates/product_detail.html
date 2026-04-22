@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="card">
+  <div class="grid">
+    <div>
+      <div class="product-thumb">{{ product.name[:1] }}</div>
+    </div>
+
+    <div>
+      <h1>{{ product.name }}</h1>
+      <div class="price">Q {{ "%.2f"|format(product.price) }}</div>
+      <p class="muted">{{ product.short_description }}</p>
+
+      <div class="card" style="padding: 1rem; margin-top: 1rem;">
+        {{ product.description_html|safe }}
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Reseñas del producto</h2>
+
+  {% if reviews %}
+    {% for review in reviews %}
+      <article class="review">
+        <strong>{{ review.author_name }}</strong>
+        <span class="muted"> | Calificación: {{ review.rating }}/5</span>
+
+        <div class="unsafe-box">
+          {{ review.comment_html|safe }}
+        </div>
+      </article>
+    {% endfor %}
+  {% else %}
+    <p class="muted">Todavía no hay reseñas para este producto.</p>
+  {% endif %}
+</section>
+
+<section class="warning">
+  <strong>Interpretación del laboratorio.</strong>
+  <br>
+  Las reseñas se renderizan sin escape para simular un caso de XSS persistente.
+</section>
+
+{% if error_message %}
+<section class="error">
+  <strong>Error.</strong> {{ error_message }}
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Agregar reseña</h2>
+
+  <form method="post" action="/products/{{ product.slug }}/reviews">
+    <label for="author_name">Nombre</label>
+    <input
+      type="text"
+      id="author_name"
+      name="author_name"
+      value="{{ form_author }}"
+      placeholder="Tu nombre"
+      required
+    >
+
+    <label for="rating">Calificación (1 a 5)</label>
+    <input
+      type="number"
+      id="rating"
+      name="rating"
+      value="{{ form_rating }}"
+      min="1"
+      max="5"
+      required
+    >
+
+    <label for="comment_html">Comentario</label>
+    <textarea
+      id="comment_html"
+      name="comment_html"
+      placeholder="Escribe tu reseña"
+      required
+    >{{ form_comment }}</textarea>
+
+    <button type="submit">Guardar reseña</button>
+  </form>
+</section>
+{% endblock %}

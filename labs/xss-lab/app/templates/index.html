@@ -1,83 +1,44 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>XSS Lab</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 2rem;
-      background: #f5f5f5;
-      color: #222;
-    }
+{% extends "base.html" %}
 
-    .card {
-      max-width: 900px;
-      margin: 0 auto 1rem auto;
-      background: #fff;
-      border: 1px solid #ddd;
-      border-radius: 10px;
-      padding: 1.2rem;
-    }
+{% block content %}
+<section class="hero">
+  <h1>Tienda demo con superficie XSS controlada</h1>
+  <p>
+    Este laboratorio simula una pequeña tienda online con catálogo, búsqueda y reseñas.
+    Está diseñado para pruebas locales, autorizadas y reproducibles con DASTXH.
+  </p>
 
-    input[type="text"] {
-      width: 100%;
-      padding: 0.7rem;
-      margin-top: 0.4rem;
-      margin-bottom: 0.8rem;
-    }
-
-    button {
-      padding: 0.7rem 1rem;
-      cursor: pointer;
-    }
-
-    code {
-      background: #eee;
-      padding: 0.15rem 0.35rem;
-      border-radius: 4px;
-    }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>Laboratorio XSS mínimo</h1>
-    <p>
-      Este laboratorio existe únicamente para pruebas locales,
-      controladas y autorizadas con DASTXH.
-    </p>
-    <p>
-      Está diseñado para ofrecer endpoints simples con parámetros GET,
-      de modo que herramientas como Dalfox tengan una superficie
-      más clara para evaluar.
-    </p>
+  <div class="notice">
+    <strong>Qué puedes probar aquí.</strong>
+    <br>
+    - XSS reflejado en la búsqueda <code>/search?q=...</code>
+    <br>
+    - XSS persistente en reseñas guardadas en la BD propia del laboratorio
   </div>
 
-  <div class="card">
-    <h2>Prueba 1: reflexión directa</h2>
-    <form method="get" action="/reflect">
-      <label for="q1">Valor para q</label>
-      <input type="text" id="q1" name="q" placeholder="texto de prueba">
-      <button type="submit">Enviar a /reflect</button>
-    </form>
-  </div>
+  <form method="get" action="/search">
+    <label for="q">Buscar productos</label>
+    <input type="text" id="q" name="q" placeholder="ej. phone, laptop, audio">
+    <button type="submit">Buscar</button>
+  </form>
+</section>
 
-  <div class="card">
-    <h2>Prueba 2: búsqueda</h2>
-    <form method="get" action="/search">
-      <label for="q2">Buscar</label>
-      <input type="text" id="q2" name="q" placeholder="buscar algo">
-      <button type="submit">Enviar a /search</button>
-    </form>
-  </div>
+<section class="card">
+  <h2>Productos destacados</h2>
 
-  <div class="card">
-    <h2>Ejemplos de URLs útiles para DASTXH</h2>
-    <ul>
-      <li><code>/reflect?q=test</code></li>
-      <li><code>/search?q=security</code></li>
-    </ul>
+  <div class="grid">
+    {% for product in products %}
+      <article class="product-card">
+        <div class="product-thumb">{{ product.name[:1] }}</div>
+        <h3>{{ product.name }}</h3>
+        <div class="price">Q {{ "%.2f"|format(product.price) }}</div>
+        <p class="muted">{{ product.short_description }}</p>
+
+        <div class="actions">
+          <a class="btn" href="/products/{{ product.slug }}">Ver producto</a>
+        </div>
+      </article>
+    {% endfor %}
   </div>
-</body>
-</html>
+</section>
+{% endblock %}

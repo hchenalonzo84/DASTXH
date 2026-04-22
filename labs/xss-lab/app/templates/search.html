@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="card">
+  <h1>Resultados de búsqueda</h1>
+    
+  <form method="get" action="/search">
+    <label for="q">Buscar productos</label>
+    <input type="text" id="q" name="q" value="{{ q }}" placeholder="buscar producto">
+    <button type="submit">Buscar</button>
+  </form>
+</section>
+
+<section class="warning">
+  <strong>Interpretación del laboratorio.</strong>
+  <br>
+  El valor de <code>q</code> se muestra abajo de forma insegura para simular
+  un caso de XSS reflejado.
+</section>
+
+<section class="card">
+  <h2>Consulta recibida</h2>
+  <div class="unsafe-box">
+    {{ q|safe }}
+  </div>
+</section>
+
+<section class="card">
+  <h2>Productos encontrados</h2>
+
+  {% if results %}
+    <div class="grid">
+      {% for product in results %}
+        <article class="product-card">
+          <div class="product-thumb">{{ product.name[:1] }}</div>
+          <h3>{{ product.name }}</h3>
+          <div class="price">Q {{ "%.2f"|format(product.price) }}</div>
+          <p class="muted">{{ product.short_description }}</p>
+          <div class="actions">
+            <a class="btn" href="/products/{{ product.slug }}">Ver producto</a>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="muted">No se encontraron productos para esta búsqueda.</p>
+  {% endif %}
+</section>
+{% endblock %}

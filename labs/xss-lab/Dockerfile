@@ -1,6 +1,6 @@
 # ==========================================================
 # Dockerfile
-# Laboratorio XSS mínimo para pruebas controladas con DASTXH
+# Laboratorio XSS tipo tienda online para pruebas con DASTXH
 # ==========================================================
 
 FROM python:3.11-slim-bullseye
@@ -11,13 +11,13 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 # ----------------------------------------------------------
-# Copiar dependencias primero para instalar Flask
+# Instalar dependencias Python del laboratorio
 # ----------------------------------------------------------
 COPY app/requirements.txt /app/requirements.txt
 RUN python -m pip install --no-cache-dir -r /app/requirements.txt
 
 # ----------------------------------------------------------
-# Copiar el código de la aplicación
+# Copiar aplicación
 # ----------------------------------------------------------
 COPY app/ /app/
 
@@ -27,6 +27,6 @@ COPY app/ /app/
 EXPOSE 5000
 
 # ----------------------------------------------------------
-# Comando de inicio
+# Arranque del laboratorio
 # ----------------------------------------------------------
 CMD ["python", "app.py"]
