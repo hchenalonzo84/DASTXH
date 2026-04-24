@@ -2,16 +2,11 @@
 routes_scans.py
 - Endpoints API para iniciar y consultar escaneos DASTXH.
 
-Objetivo de esta versión:
-- permitir iniciar un escaneo vía POST sin bloquear la respuesta HTTP
-- devolver un execution_id inmediatamente
-- consultar después el estado/resumen de la ejecución con GET
-- consultar el detalle completo cuando sea necesario
-- soportar scan_profile y enable_hsecscan
-
-Esto es clave para desacoplar:
-- la navegación de la GUI
-- del tiempo real que dura el pipeline del escaneo
+Esta versión:
+- permite iniciar un escaneo vía POST sin bloquear la respuesta HTTP
+- devuelve un execution_id inmediatamente
+- permite elegir solo el perfil de análisis
+- resuelve internamente el uso de hsecscan según el perfil
 """
 
 from __future__ import annotations
@@ -42,14 +37,6 @@ router = APIRouter(prefix="/api/scans", tags=["scans"])
 class ScanCreateRequest(BaseModel):
     """
     Modelo del cuerpo JSON esperado para iniciar un escaneo.
-
-    Ejemplo:
-    {
-      "url": "https://example.com",
-      "timeout": 30,
-      "scan_profile": "profundo",
-      "enable_hsecscan": true
-    }
     """
     url: str = Field(..., description="URL objetivo a evaluar.")
     timeout: Optional[int] = Field(
@@ -57,16 +44,9 @@ class ScanCreateRequest(BaseModel):
         ge=1,
         description="Timeout opcional en segundos para el escaneo.",
     )
-    scan_profile: Optional[str] = Field(
+    scan_profile: str = Field(
         default="superficial",
-        description="Perfil de escaneo: superficial o profundo.",
-    )
-    enable_hsecscan: Optional[bool] = Field(
-        default=None,
-        description=(
-            "Override opcional para hsecscan. "
-            "Si es null, el backend lo resuelve según el perfil."
-        ),
+        description="Perfil de análisis: superficial o profundo.",
     )
 
 
@@ -82,7 +62,6 @@ class ScanCreateResponse(BaseModel):
     target_url: str
     request_source: str
     scan_profile: str
-    enable_hsecscan: bool
     report_dir: str
 
 
@@ -92,10 +71,7 @@ class ScanCreateResponse(BaseModel):
 
 def get_dsn() -> str:
     """
-    Obtiene la cadena de conexión a PostgreSQL desde la variable
-    de entorno DATABASE_URL.
-
-    Lanza excepción si no está configurada.
+    Obtiene la cadena de conexión a PostgreSQL desde DATABASE_URL.
     """
     dsn = os.getenv("DATABASE_URL")
     if not dsn:
@@ -106,8 +82,6 @@ def get_dsn() -> str:
 def get_default_timeout() -> int:
     """
     Lee el timeout por defecto desde el entorno.
-
-    Si no existe, usa 30 segundos.
     """
     return int(os.getenv("DEFAULT_TIMEOUT_SECONDS", "30"))
 
@@ -122,8 +96,6 @@ def get_workdir() -> Path:
 def ensure_work_paths() -> None:
     """
     Garantiza que exista la estructura base de trabajo.
-
-    De momento solo necesitamos asegurar /work y /work/reports.
     """
     workdir = get_workdir()
     ensure_dir(workdir)
@@ -133,10 +105,6 @@ def ensure_work_paths() -> None:
 def validate_target_url(value: str) -> str:
     """
     Limpia y valida la URL objetivo.
-
-    Validaciones mínimas:
-    - no vacía
-    - debe comenzar con http:// o https://
     """
     target_url = (value or "").strip()
 
@@ -152,20 +120,16 @@ def validate_target_url(value: str) -> str:
     return target_url
 
 
-def validate_scan_profile(value: Optional[str]) -> str:
+def validate_scan_profile(value: str) -> str:
     """
-    Valida el perfil de escaneo recibido por API.
-
-    Solo se aceptan:
-    - superficial
-    - profundo
+    Valida el perfil de análisis.
     """
-    profile = (value or "superficial").strip().lower()
+    profile = (value or "").strip().lower()
 
-    if profile not in {"superficial", "profundo"}:
+    if profile not in ("superficial", "profundo"):
         raise HTTPException(
             status_code=400,
-            detail="scan_profile debe ser 'superficial' o 'profundo'.",
+            detail="El perfil de análisis debe ser superficial o profundo.",
         )
 
     return profile
@@ -215,30 +179,21 @@ def create_scan(payload: ScanCreateRequest) -> Dict[str, Any]:
     Inicia un escaneo en segundo plano y devuelve inmediatamente
     el execution_id.
     """
-    # ------------------------------------------------------
-    # Validar entrada
-    # ------------------------------------------------------
     target_url = validate_target_url(payload.url)
+    resolved_scan_profile = validate_scan_profile(payload.scan_profile)
     timeout_s = payload.timeout if payload.timeout is not None else get_default_timeout()
-    scan_profile = validate_scan_profile(payload.scan_profile)
 
-    # ------------------------------------------------------
-    # Preparar entorno y BD
-    # ------------------------------------------------------
     ensure_work_paths()
     dsn = wait_until_db_ready(timeout_s=20)
 
-    # ------------------------------------------------------
-    # Lanzar el escaneo en background
-    # ------------------------------------------------------
     result = start_scan_in_background(
         dsn=dsn,
         workdir=get_workdir(),
         url=target_url,
         timeout_s=timeout_s,
         request_source="api",
-        scan_profile=scan_profile,
-        enable_hsecscan=payload.enable_hsecscan,
+        scan_profile=resolved_scan_profile,
+        enable_hsecscan=None,
     )
 
     execution_id = result.get("execution_id")

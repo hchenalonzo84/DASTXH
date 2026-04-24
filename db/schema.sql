@@ -1,27 +1,25 @@
 -- =========================================================
--- DASTXH - Schema base v4 (normalizado + perfiles)
+-- DASTXH - Schema base v5
 --
 -- Objetivo de esta versión:
 --   - conservar executions como entidad principal
---   - guardar el perfil de escaneo utilizado
---   - guardar si hsecscan estuvo habilitado o no
---   - separar el resumen de headers de sus detalles por header
---   - separar las cookies evaluadas en su propia tabla
---   - separar los hallazgos XSS individuales en su propia tabla
---   - mantener raw_output / summary_json como evidencia útil
+--   - guardar perfil de escaneo y uso interno de hsecscan
+--   - persistir resultados normalizados de headers, cookies y XSS
+--   - agregar score HTTP, grade HTTP y pruebas HTTP detalladas
 --
 -- Tablas principales:
 --   executions        : historial principal de ejecuciones
---   header_results    : resumen de la capa 1
---   header_checks     : detalle por cabecera evaluada
---   cookie_checks     : detalle por cookie evaluada
+--   header_results    : resumen agregado HTTP
+--   header_checks     : detalle por cabecera requerida
+--   cookie_checks     : detalle por cookie detectada
+--   http_tests        : pruebas HTTP detalladas (A/B/C + CORS)
 --   hsecscan_results  : resumen/evidencia capa 2
 --   xss_results       : resumen/evidencia capa 3
 --   xss_findings      : hallazgos XSS normalizados por ejecución
 --   artifacts         : archivos generados por ejecución
 --
 -- Vista:
---   vw_execution_summary : resumen cómodo para historial GUI / consultas
+--   vw_execution_summary : resumen para historial GUI / consultas
 -- =========================================================
 
 -- =========================================================
@@ -36,22 +34,17 @@ CREATE TABLE IF NOT EXISTS executions (
                     CHECK (status IN ('initiated', 'running', 'finished', 'failed')),
   error_message     TEXT NULL,
 
-  -- Trazabilidad del origen de la ejecución
   request_source    TEXT NOT NULL DEFAULT 'cli'
                     CHECK (request_source IN ('cli', 'web', 'api')),
 
-  -- Perfil de escaneo utilizado
   scan_profile      TEXT NOT NULL DEFAULT 'superficial'
                     CHECK (scan_profile IN ('superficial', 'profundo')),
 
-  -- Indica si la capa hsecscan estuvo habilitada para esta ejecución
   enable_hsecscan   BOOLEAN NOT NULL DEFAULT FALSE,
 
-  -- Soporte para ejecuciones por archivo/lista
   urls_ingresadas   INT NOT NULL DEFAULT 1 CHECK (urls_ingresadas >= 0),
   urls_evaluadas    INT NOT NULL DEFAULT 0 CHECK (urls_evaluadas >= 0),
 
-  -- Ruta base lógica de reportes dentro de /work
   report_dir        TEXT NULL
 );
 
@@ -69,7 +62,7 @@ CREATE INDEX IF NOT EXISTS ix_executions_scan_profile
 
 
 -- =========================================================
--- 2) RESULTADOS CAPA 1: RESUMEN DE HEADERS
+-- 2) RESULTADOS HTTP: RESUMEN
 -- =========================================================
 CREATE TABLE IF NOT EXISTS header_results (
   execution_id         BIGINT PRIMARY KEY
@@ -80,12 +73,18 @@ CREATE TABLE IF NOT EXISTS header_results (
   cumplimiento_pct     NUMERIC(6,2) NOT NULL
                        CHECK (cumplimiento_pct >= 0 AND cumplimiento_pct <= 100),
 
+  http_score           INT NOT NULL
+                       CHECK (http_score >= 0 AND http_score <= 100),
+
+  http_grade           TEXT NOT NULL
+                       CHECK (http_grade IN ('A', 'B', 'C', 'D', 'F')),
+
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 
 -- =========================================================
--- 3) RESULTADOS CAPA 1: DETALLE POR HEADER
+-- 3) RESULTADOS HTTP: DETALLE POR HEADER REQUERIDO
 -- =========================================================
 CREATE TABLE IF NOT EXISTS header_checks (
   id                   BIGSERIAL PRIMARY KEY,
@@ -111,7 +110,7 @@ CREATE INDEX IF NOT EXISTS ix_header_checks_present
 
 
 -- =========================================================
--- 4) RESULTADOS CAPA 1: DETALLE POR COOKIE
+-- 4) RESULTADOS HTTP: DETALLE POR COOKIE
 -- =========================================================
 CREATE TABLE IF NOT EXISTS cookie_checks (
   id                   BIGSERIAL PRIMARY KEY,
@@ -132,8 +131,48 @@ CREATE TABLE IF NOT EXISTS cookie_checks (
 
 CREATE INDEX IF NOT EXISTS ix_cookie_checks_execution_id
   ON cookie_checks (execution_id);
+
+
 -- =========================================================
--- 5) RESULTADOS CAPA 2: HSECSCAN
+-- 5) RESULTADOS HTTP: PRUEBAS DETALLADAS
+-- =========================================================
+CREATE TABLE IF NOT EXISTS http_tests (
+  id                   BIGSERIAL PRIMARY KEY,
+
+  execution_id         BIGINT NOT NULL
+                       REFERENCES executions(id) ON DELETE CASCADE,
+
+  test_id              TEXT NOT NULL,
+  name                 TEXT NOT NULL,
+  category             TEXT NOT NULL,
+  status               TEXT NOT NULL
+                       CHECK (status IN ('passed', 'failed', 'warning', 'info')),
+  score_delta          INT NOT NULL,
+
+  reason               TEXT NOT NULL,
+  recommendation       TEXT NOT NULL,
+
+  header_name          TEXT NULL,
+  header_value         TEXT NULL,
+
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  CONSTRAINT ux_http_tests_execution_test
+    UNIQUE (execution_id, test_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_http_tests_execution_id
+  ON http_tests (execution_id);
+
+CREATE INDEX IF NOT EXISTS ix_http_tests_status
+  ON http_tests (status);
+
+CREATE INDEX IF NOT EXISTS ix_http_tests_category
+  ON http_tests (category);
+
+
+-- =========================================================
+-- 6) RESULTADOS CAPA 2: HSECSCAN
 -- =========================================================
 CREATE TABLE IF NOT EXISTS hsecscan_results (
   execution_id         BIGINT PRIMARY KEY
@@ -147,7 +186,7 @@ CREATE TABLE IF NOT EXISTS hsecscan_results (
 
 
 -- =========================================================
--- 6) RESULTADOS CAPA 3: DALFOX / XSS (RESUMEN)
+-- 7) RESULTADOS CAPA 3: DALFOX / XSS (RESUMEN)
 -- =========================================================
 CREATE TABLE IF NOT EXISTS xss_results (
   execution_id         BIGINT PRIMARY KEY
@@ -160,10 +199,8 @@ CREATE TABLE IF NOT EXISTS xss_results (
 
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-
 -- =========================================================
--- 7) RESULTADOS CAPA 3: HALLAZGOS XSS NORMALIZADOS
+-- 8) RESULTADOS CAPA 3: HALLAZGOS XSS NORMALIZADOS
 -- =========================================================
 CREATE TABLE IF NOT EXISTS xss_findings (
   id                   BIGSERIAL PRIMARY KEY,
@@ -194,7 +231,7 @@ CREATE INDEX IF NOT EXISTS ix_xss_findings_severity
 
 
 -- =========================================================
--- 8) ARTEFACTOS / REPORTES GENERADOS
+-- 9) ARTEFACTOS / REPORTES GENERADOS
 -- =========================================================
 CREATE TABLE IF NOT EXISTS artifacts (
   id                   BIGSERIAL PRIMARY KEY,
@@ -233,8 +270,10 @@ CREATE INDEX IF NOT EXISTS ix_artifacts_artifact_type
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_artifacts_execution_relative_path
   ON artifacts (execution_id, relative_path);
+
+
 -- =========================================================
--- 9) VISTA DE RESUMEN PARA HISTORIAL
+-- 10) VISTA DE RESUMEN PARA HISTORIAL
 -- =========================================================
 CREATE OR REPLACE VIEW vw_execution_summary AS
 SELECT
@@ -253,6 +292,8 @@ SELECT
   hr.headers_evaluadas,
   hr.headers_presentes,
   hr.cumplimiento_pct,
+  hr.http_score,
+  hr.http_grade,
 
   hs.tool_rc AS hsecscan_rc,
 
@@ -284,6 +325,8 @@ GROUP BY
   hr.headers_evaluadas,
   hr.headers_presentes,
   hr.cumplimiento_pct,
+  hr.http_score,
+  hr.http_grade,
   hs.tool_rc,
   xr.tool_rc,
-  xr.findings_count; 
+  xr.findings_count;

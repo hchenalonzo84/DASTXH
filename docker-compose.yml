@@ -2,18 +2,21 @@
 # docker-compose.yml
 # DASTXH - Orquestación principal del prototipo
 #
-# Servicios actuales:
+# Servicios incluidos:
 #   - db            : Base de datos principal de DASTXH
 #   - orquestador   : Backend principal (GUI web + API)
 #   - pgadmin       : Administración manual de PostgreSQL
-#   - xss-lab-db    : Base de datos propia del laboratorio XSS
-#   - xss-lab       : Laboratorio XSS controlado
+#   - combo-lab-db  : Base de datos propia del laboratorio combinado
+#   - combo-lab     : Laboratorio combinado tipo tienda online
 #
-# Nota importante:
-# - La BD de DASTXH y la BD del laboratorio XSS son distintas.
-# - DASTXH guarda evidencia e historial.
-# - xss-lab guarda contenido funcional del laboratorio para
-#   simular XSS persistente.
+# Importante:
+# - La BD de DASTXH y la BD del laboratorio SON DISTINTAS.
+# - DASTXH guarda historial, evidencia y artifacts.
+# - combo-lab guarda productos y reseñas del laboratorio.
+#
+# Nota importante sobre PostgreSQL 18+:
+# - Estas imágenes ahora esperan el volumen en /var/lib/postgresql
+#   y no en /var/lib/postgresql/data
 # ==========================================================
 
 services:
@@ -36,14 +39,15 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
 
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
       - ./db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 20
+      start_period: 20s
 
     networks:
       - dastxh_net
@@ -51,14 +55,7 @@ services:
   # --------------------------------------------------------
   # Servicio: orquestador
   # - Contenedor principal de DASTXH
-  # - Aloja:
-  #     * GUI web con FastAPI
-  #     * API REST
-  #     * acceso a curl, hsecscan y dalfox
-  #
-  # Nota:
-  # - Arranca la GUI web por defecto
-  # - El usuario final trabajará principalmente desde la GUI
+  # - Aloja la GUI web, la API y las herramientas de análisis
   # --------------------------------------------------------
   orquestador:
     build:
@@ -73,10 +70,10 @@ services:
         condition: service_healthy
 
     environment:
-      # Conexión a PostgreSQL principal usando el nombre del servicio "db"
+      # Conexión a PostgreSQL principal de DASTXH
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
 
-      # Timeout por defecto para análisis
+      # Timeout por defecto del backend
       DEFAULT_TIMEOUT_SECONDS: ${DEFAULT_TIMEOUT_SECONDS:-30}
 
       # Directorio lógico de trabajo dentro del contenedor
@@ -129,62 +126,65 @@ services:
       - dastxh_net
 
   # --------------------------------------------------------
-  # Servicio: xss-lab-db
-  # - Base de datos propia del laboratorio XSS
-  # - NO se mezcla con la base de datos de DASTXH
-  # - Se usa para simular contenido persistente y XSS almacenado
+  # Servicio: combo-lab-db
+  # - Base de datos propia del laboratorio combinado
+  # - No debe mezclarse con la BD principal de DASTXH
   # --------------------------------------------------------
-  xss-lab-db:
+  combo-lab-db:
     image: postgres:18.3-alpine3.23
-    container_name: dastxh-xss-lab-db
+    container_name: dastxh-combo-lab-db
     restart: unless-stopped
 
     environment:
-      POSTGRES_DB: xsslab
-      POSTGRES_USER: xsslab
-      POSTGRES_PASSWORD: xsslab
+      POSTGRES_DB: combolab
+      POSTGRES_USER: combolab
+      POSTGRES_PASSWORD: combolab
 
-    # Puerto opcional para inspección externa/manual
     ports:
-      - "5541:5432"
+      - "5543:5432"
 
     volumes:
-      - xss_lab_pgdata:/var/lib/postgresql/data
-      - ./labs/xss-lab/db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+      - combo_lab_pgdata:/var/lib/postgresql
+      - ./labs/combo-lab/db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U xsslab -d xsslab"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U combolab -d combolab || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 20
+      start_period: 20s
 
     networks:
       - dastxh_net
   # --------------------------------------------------------
-  # Servicio: xss-lab
-  # - Laboratorio XSS controlado para pruebas con DASTXH
-  # - Tiene su propia BD para simular XSS persistente
-  # - Se expone al host en el puerto 5001
-  # - Dentro de la red Docker responde como http://xss-lab:5000
+  # Servicio: combo-lab
+  # - Laboratorio combinado tipo tienda online
+  # - Incluye superficies para:
+  #     * XSS reflejado
+  #     * XSS persistente
+  #     * headers/cookies inseguros
+  # - Tiene su propia BD
   # --------------------------------------------------------
-  xss-lab:
+  combo-lab:
     build:
-      context: ./labs/xss-lab
+      context: ./labs/combo-lab
       dockerfile: Dockerfile
 
-    container_name: dastxh-xss-lab
+    container_name: dastxh-combo-lab
     restart: unless-stopped
 
     depends_on:
-      xss-lab-db:
+      combo-lab-db:
         condition: service_healthy
 
     environment:
       # Conexión a la BD propia del laboratorio
-      LAB_DATABASE_URL: postgresql://xsslab:xsslab@xss-lab-db:5432/xsslab
+      LAB_DATABASE_URL: postgresql://combolab:combolab@combo-lab-db:5432/combolab
 
+    # Puerto expuesto al host:
+    # host 5003 -> contenedor 5000
     ports:
-      - "5001:5000"
+      - "5003:5000"
 
     networks:
       - dastxh_net
@@ -192,29 +192,21 @@ services:
 
 # ----------------------------------------------------------
 # Volúmenes nombrados
-# - pgdata          : persistencia de PostgreSQL principal
-# - pgadmin_data    : persistencia de pgAdmin
-# - xss_lab_pgdata  : persistencia de la BD del laboratorio XSS
+# - pgdata           : persistencia de PostgreSQL principal
+# - pgadmin_data     : persistencia de pgAdmin
+# - combo_lab_pgdata : persistencia de la BD del laboratorio
 # ----------------------------------------------------------
 volumes:
   pgdata:
   pgadmin_data:
-  xss_lab_pgdata:
+  combo_lab_pgdata:
 
 
 # ----------------------------------------------------------
 # Red explícita del proyecto
-# - dastxh_net: red bridge compartida entre:
-#   * db
-#   * orquestador
-#   * pgadmin
-#   * laboratorios integrados
-#
-# Importante:
-# - Se fija el nombre real de la red para mantener
-#   estabilidad y facilitar futuras ampliaciones del stack.
+# - Red compartida entre DASTXH y el laboratorio combinado
 # ----------------------------------------------------------
 networks:
   dastxh_net:
     name: dastxh_net
-    driver: bridge 
+    driver: bridge

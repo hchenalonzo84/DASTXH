@@ -5,24 +5,10 @@
   <h2>Iniciar evaluación</h2>
   <p>
     Desde esta interfaz puedes ejecutar una evaluación DASTXH sobre una URL objetivo.
-    El flujo utilizará:
+    El flujo analizará cabeceras HTTP de seguridad, cookies de seguridad y posibles
+    hallazgos XSS reflejados, aplicando internamente la estrategia que corresponda
+    según el perfil seleccionado.
   </p>
-
-  <ul>
-    <li>Capa 1: evaluación de cabeceras HTTP con curl custom</li>
-    <li>Capa 2: revisión complementaria con hsecscan cuando esté habilitada</li>
-    <li>Capa 3: detección XSS con Dalfox</li>
-  </ul>
-
-  <div class="notice" style="margin-top: 1rem; margin-bottom: 1rem;">
-    <strong>Perfiles de escaneo.</strong>
-    <br>
-    <strong>superficial</strong>: revisión base, más rápida, y por defecto omite hsecscan.
-    <br>
-    <strong>profundo</strong>: amplía el análisis de Dalfox y por defecto activa hsecscan.
-    <br>
-    Además, puedes forzar manualmente el comportamiento de hsecscan si lo necesitas.
-  </div>
 
   <form method="post" action="/scan" class="scan-form">
     <div class="form-group">
@@ -49,29 +35,10 @@
     </div>
 
     <div class="form-group">
-      <label for="scan_profile">Perfil de escaneo</label>
+      <label for="scan_profile">Perfil de análisis</label>
       <select id="scan_profile" name="scan_profile" required>
-        <option value="superficial" {{ "selected" if default_scan_profile == "superficial" else "" }}>
-          superficial
-        </option>
-        <option value="profundo" {{ "selected" if default_scan_profile == "profundo" else "" }}>
-          profundo
-        </option>
-      </select>
-    </div>
-
-    <div class="form-group">
-      <label for="hsecscan_mode">Modo hsecscan</label>
-      <select id="hsecscan_mode" name="hsecscan_mode" required>
-        <option value="auto" {{ "selected" if default_hsecscan_mode == "auto" else "" }}>
-          auto (según perfil)
-        </option>
-        <option value="enable" {{ "selected" if default_hsecscan_mode == "enable" else "" }}>
-          habilitar manualmente
-        </option>
-        <option value="disable" {{ "selected" if default_hsecscan_mode == "disable" else "" }}>
-          deshabilitar manualmente
-        </option>
+        <option value="superficial" selected>superficial</option>
+        <option value="profundo">profundo</option>
       </select>
     </div>
 
@@ -94,7 +61,8 @@
             <th>Estado</th>
             <th>Origen</th>
             <th>Perfil</th>
-            <th>hsecscan</th>
+            <th>Puntaje HTTP</th>
+            <th>Nota HTTP</th>
             <th>Cumplimiento</th>
             <th>XSS</th>
             <th>Inicio</th>
@@ -114,8 +82,31 @@
               </td>
 
               <td>{{ item.request_source }}</td>
-              <td>{{ item.scan_profile or "-" }}</td>
-              <td>{{ "Sí" if item.enable_hsecscan else "No" }}</td>
+              <td>{{ item.scan_profile }}</td>
+
+              <td>
+                {% if item.http_score is not none %}
+                  {{ item.http_score }}/100
+                {% else %}
+                  {% if item.status in ["initiated", "running"] %}
+                    En proceso
+                  {% else %}
+                    -
+                  {% endif %}
+                {% endif %}
+              </td>
+
+              <td>
+                {% if item.http_grade %}
+                  {{ item.http_grade }}
+                {% else %}
+                  {% if item.status in ["initiated", "running"] %}
+                    En proceso
+                  {% else %}
+                    -
+                  {% endif %}
+                {% endif %}
+              </td>
 
               <td>
                 {% if item.cumplimiento_pct is not none %}
@@ -141,7 +132,13 @@
                 {% endif %}
               </td>
 
-              <td>{{ item.started_at }}</td>
+              <td>
+                {% if item.started_at %}
+                  {{ item.started_at.strftime("%Y-%m-%d %H:%M:%S") }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
 
               <td>
                 <a href="/executions/{{ item.id }}">Ver</a>

@@ -1,18 +1,13 @@
 """
 dalfox_tool.py
-- CAPA 3: Dalfox (XSS)
-- Ejecuta Dalfox contra una URL objetivo y guarda salida JSON.
+- CAPA XSS: Dalfox
+- Ejecuta Dalfox en modo url y normaliza hallazgos.
 
-Esta versión agrega soporte para perfiles de escaneo:
-- superficial:
-    * ejecución base, menos agresiva
-- profundo:
-    * agrega mining y análisis DOM más profundo
-
-Objetivo:
-- no romper el flujo actual
-- permitir que scanner_service decida el perfil
-- mantener la normalización de hallazgos para xss_findings
+Objetivos de esta versión:
+- soportar scan_profile superficial/profundo
+- reducir tiempo en perfil superficial
+- filtrar hallazgos vacíos o basura
+- entregar datos más útiles para la GUI
 """
 
 from __future__ import annotations
@@ -25,51 +20,6 @@ from config import UA
 from utils import run_cmd
 
 
-# ==========================================================
-# HELPERS INTERNOS DE PERFIL
-# ==========================================================
-
-def _normalize_scan_profile(scan_profile: str | None) -> str:
-    """
-    Normaliza el perfil recibido.
-
-    Reglas:
-    - 'profundo' se respeta
-    - cualquier otro valor cae en 'superficial'
-
-    Esto evita problemas si en el futuro llega un valor inesperado
-    desde CLI, GUI o API.
-    """
-    value = (scan_profile or "").strip().lower()
-    return "profundo" if value == "profundo" else "superficial"
-
-
-def _build_profile_args(scan_profile: str) -> List[str]:
-    """
-    Devuelve flags adicionales de Dalfox según el perfil.
-
-    superficial:
-    - sin flags extra agresivos
-    - mantiene una ejecución base más conservadora
-
-    profundo:
-    - activa descubrimiento de parámetros y análisis DOM más profundo
-    - útil para objetivos dinámicos con mayor superficie evaluable
-    """
-    if scan_profile == "profundo":
-        return [
-            "--mining-dict",
-            "--mining-dom",
-            "--deep-domxss",
-        ]
-
-    return []
-
-
-# ==========================================================
-# EJECUCIÓN PRINCIPAL DE DALFOX
-# ==========================================================
-
 def run_dalfox(
     url: str,
     timeout_s: int,
@@ -81,12 +31,13 @@ def run_dalfox(
     - código de retorno
     - salida combinada stdout + stderr
 
-    scan_profile controla qué tan profundo será el análisis:
-    - superficial -> ejecución base
-    - profundo    -> agrega mining + análisis DOM más profundo
+    Reglas por perfil:
+    - superficial:
+        * más rápido
+        * sin parameter mining
+    - profundo:
+        * mantiene comportamiento más completo
     """
-    normalized_profile = _normalize_scan_profile(scan_profile)
-
     cmd = [
         "dalfox", "url", url,
         "--no-color",
@@ -98,8 +49,17 @@ def run_dalfox(
         "-F",
     ]
 
-    # Agregar flags extra solo si el perfil lo requiere.
-    cmd.extend(_build_profile_args(normalized_profile))
+    # ------------------------------------------------------
+    # Perfil superficial:
+    # - evita minería extra de parámetros para acelerar
+    # ------------------------------------------------------
+    if scan_profile == "superficial":
+        cmd.extend(["--skip-mining-all"])
+
+    # ------------------------------------------------------
+    # Perfil profundo:
+    # - dejamos el comportamiento estándar de Dalfox
+    # ------------------------------------------------------
 
     r = run_cmd(cmd)
     raw = (r.out or "") + ("\n" + r.err if r.err else "")
@@ -140,11 +100,6 @@ def _coerce_findings_list(summary_json: Any) -> List[Any]:
     """
     Intenta localizar la lista principal de hallazgos dentro
     de la salida estructurada de Dalfox.
-
-    Casos soportados:
-    - summary_json como lista
-    - summary_json como dict con alguna clave típica
-    - cualquier otro caso -> lista vacía
     """
     if isinstance(summary_json, list):
         return summary_json
@@ -161,9 +116,6 @@ def _coerce_findings_list(summary_json: Any) -> List[Any]:
 def _pick_first_text(source: Dict[str, Any], keys: List[str]) -> str | None:
     """
     Busca la primera clave disponible con contenido textual útil.
-
-    Esto ayuda a adaptarnos a variaciones del JSON de Dalfox
-    sin atarnos a un único nombre de propiedad.
     """
     for key in keys:
         value = source.get(key)
@@ -175,6 +127,34 @@ def _pick_first_text(source: Dict[str, Any], keys: List[str]) -> str | None:
             return text
 
     return None
+
+
+def _normalize_optional_text(value: Any) -> str | None:
+    """
+    Convierte un valor a texto útil o None si queda vacío.
+    """
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    return text if text else None
+
+
+def _has_meaningful_content(
+    param_name: str | None,
+    payload: str | None,
+    evidence: str | None,
+    severity: str | None,
+    target_url: str | None,
+) -> bool:
+    """
+    Evita guardar hallazgos completamente vacíos que luego
+    aparecen en la GUI como filas de guiones.
+    """
+    return any(
+        value is not None and str(value).strip()
+        for value in (param_name, payload, evidence, severity, target_url)
+    )
 
 
 def extract_structured_findings(
@@ -194,35 +174,53 @@ def extract_structured_findings(
     - evidence
     - severity
     - raw_finding_json
-
-    Nota:
-    como la forma exacta del JSON puede variar, usamos extracción
-    tolerante y dejamos raw_finding_json como respaldo completo.
     """
     raw_findings = _coerce_findings_list(summary_json)
     normalized: List[Dict[str, Any]] = []
+    finding_order = 0
 
-    for idx, item in enumerate(raw_findings, start=1):
+    for item in raw_findings:
         if isinstance(item, dict):
             source_type = _pick_first_text(item, ["type", "source", "kind", "category"])
             target_url = _pick_first_text(item, ["url", "target", "target_url"]) or fallback_target_url
             param_name = _pick_first_text(item, ["param", "parameter", "param_name", "key"])
             payload = _pick_first_text(item, ["payload", "poc", "proof", "vector", "inject"])
-            evidence = _pick_first_text(item, ["evidence", "message", "detail", "trigger", "proof"])
+            evidence = _pick_first_text(item, ["evidence", "message", "detail", "trigger", "reflected"])
             severity = _pick_first_text(item, ["severity", "risk", "priority", "level"])
             raw_finding_json = item
         else:
             source_type = None
             target_url = fallback_target_url
             param_name = None
-            payload = str(item).strip() or None
-            evidence = str(item).strip() or None
+            payload = _normalize_optional_text(item)
+            evidence = _normalize_optional_text(item)
             severity = None
             raw_finding_json = {"value": item}
 
+        source_type = _normalize_optional_text(source_type)
+        target_url = _normalize_optional_text(target_url)
+        param_name = _normalize_optional_text(param_name)
+        payload = _normalize_optional_text(payload)
+        evidence = _normalize_optional_text(evidence)
+        severity = _normalize_optional_text(severity)
+
+        # --------------------------------------------------
+        # Si el hallazgo viene vacío, no lo persistimos
+        # --------------------------------------------------
+        if not _has_meaningful_content(
+            param_name=param_name,
+            payload=payload,
+            evidence=evidence,
+            severity=severity,
+            target_url=target_url,
+        ):
+            continue
+
+        finding_order += 1
+
         normalized.append(
             {
-                "finding_order": idx,
+                "finding_order": finding_order,
                 "source_type": source_type,
                 "target_url": target_url,
                 "param_name": param_name,

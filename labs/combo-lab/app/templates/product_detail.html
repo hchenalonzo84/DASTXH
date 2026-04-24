@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="card">
+  <div class="grid">
+    <div>
+      <div class="product-thumb">
+        {{ product.name[:1] }}
+      </div>
+    </div>
+
+    <div>
+      <h1>{{ product.name }}</h1>
+      <div class="price">Q {{ "%.2f"|format(product.price) }}</div>
+      <p class="muted">{{ product.short_description }}</p>
+
+      <div class="card" style="padding: 1rem; margin-top: 1rem;">
+        {{ product.description_html|safe }}
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="notice">
+  <strong>Interpretación del laboratorio.</strong>
+  <br>
+  Esta vista sirve como página de producto para evaluar
+  cabeceras, cookies y comportamiento general del sitio.
+</section>
+
+<section class="card">
+  <h2>URL útil para DASTXH</h2>
+  <p>
+    Puedes probar una ruta como:
+  </p>
+  <p>
+    <code>http://combo-lab:5000/products/{{ product.slug }}</code>
+  </p>
+  <p class="muted">
+    Para XSS reflejado seguirán siendo más útiles
+    <code>/search?q=...</code> y <code>/checkout?coupon=...</code>.
+  </p>
+</section>
+{% endblock %}

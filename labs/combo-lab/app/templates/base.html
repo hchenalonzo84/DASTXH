@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ title or "Combo Lab Store" }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <style>
+    :root {
+      --bg-main: #0f172a;
+      --bg-panel: #111827;
+      --bg-panel-soft: #0b1220;
+      --border-main: #243041;
+      --text-main: #e5e7eb;
+      --text-muted: #94a3b8;
+      --text-strong: #ffffff;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --warning-bg: rgba(245, 158, 11, 0.12);
+      --warning-border: rgba(245, 158, 11, 0.35);
+      --danger-bg: rgba(239, 68, 68, 0.12);
+      --danger-border: rgba(239, 68, 68, 0.35);
+      --danger-text: #fca5a5;
+      --radius-lg: 16px;
+      --radius-md: 12px;
+      --shadow-soft: 0 6px 18px rgba(0, 0, 0, 0.18);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      font-size: 16px;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: var(--bg-main);
+      color: var(--text-main);
+      line-height: 1.5;
+    }
+
+    a {
+      color: #93c5fd;
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .container {
+      width: min(1200px, 92%);
+      margin: 0 auto;
+    }
+
+    /* ------------------------------------------------------
+       Barra superior
+       ------------------------------------------------------ */
+    .topbar {
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border-main);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .topbar .container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      padding: 1rem 0;
+      flex-wrap: wrap;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.7rem;
+      color: var(--text-strong);
+      text-decoration: none;
+      font-size: 1.35rem;
+      font-weight: 700;
+    }
+
+    .brand:hover {
+      text-decoration: none;
+    }
+
+    .brand-badge {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #2563eb, #0f172a);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .nav-links a {
+      font-weight: 600;
+    }
+
+    /* ------------------------------------------------------
+       Layout general
+       ------------------------------------------------------ */
+    main.container {
+      padding: 1.5rem 0 2rem 0;
+    }
+
+    .hero,
+    .card,
+    .notice,
+    .error-box {
+      border-radius: var(--radius-lg);
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .hero,
+    .card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-main);
+    }
+
+    .hero h1,
+    .card h1,
+    .card h2,
+    .card h3 {
+      margin-top: 0;
+      color: var(--text-strong);
+    }
+
+    .muted {
+      color: var(--text-muted);
+    }
+
+    .notice {
+      background: var(--warning-bg);
+      border: 1px solid var(--warning-border);
+    }
+
+    .error-box {
+      background: var(--danger-bg);
+      border: 1px solid var(--danger-border);
+      color: var(--danger-text);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 1rem;
+    }
+
+    /* ------------------------------------------------------
+       Formulario de búsqueda global
+       ------------------------------------------------------ */
+    .searchbar-form {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+
+    .searchbar-form input[type="text"] {
+      flex: 1 1 280px;
+      min-width: 220px;
+    }
+
+    /* ------------------------------------------------------
+       Inputs y botones
+       ------------------------------------------------------ */
+    label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 0.4rem;
+      color: var(--text-strong);
+    }
+
+    input[type="text"],
+    input[type="number"],
+    textarea {
+      width: 100%;
+      padding: 0.85rem 0.9rem;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-main);
+      background: var(--bg-panel-soft);
+      color: var(--text-main);
+      font-size: 0.96rem;
+      margin-bottom: 0.95rem;
+    }
+
+    textarea {
+      min-height: 150px;
+      resize: vertical;
+    }
+
+    button,
+    .btn {
+      display: inline-block;
+      border: none;
+      border-radius: var(--radius-md);
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      padding: 0.85rem 1rem;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    button:hover,
+    .btn:hover {
+      background: var(--accent-hover);
+      text-decoration: none;
+    }
+
+    .actions {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    code {
+      background: var(--bg-panel-soft);
+      border: 1px solid var(--border-main);
+      border-radius: 6px;
+      padding: 0.15rem 0.35rem;
+      color: #cbd5e1;
+    }
+
+    /* ------------------------------------------------------
+       Tarjetas de producto
+       ------------------------------------------------------ */
+    .product-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-main);
+      border-radius: var(--radius-lg);
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .product-thumb {
+      height: 180px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #1d4ed8, #0f172a);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 2rem;
+      font-weight: 700;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .price {
+      font-size: 1.12rem;
+      font-weight: 700;
+      color: var(--text-strong);
+    }
+
+    /* ------------------------------------------------------
+       Bloques inseguros para demostración
+       ------------------------------------------------------ */
+    .unsafe-box {
+      margin-top: 0.8rem;
+      padding: 1rem;
+      border: 1px dashed #ef4444;
+      border-radius: 12px;
+      background: rgba(127, 29, 29, 0.18);
+      overflow-wrap: anywhere;
+    }
+
+    /* ------------------------------------------------------
+       Lista/reseñas
+       ------------------------------------------------------ */
+    .review-card {
+      background: var(--bg-panel-soft);
+      border: 1px solid var(--border-main);
+      border-radius: var(--radius-md);
+      padding: 1rem;
+      margin-bottom: 0.85rem;
+    }
+
+    .meta-line {
+      color: var(--text-muted);
+      font-size: 0.94rem;
+    }
+
+    @media (max-width: 768px) {
+      .topbar .container {
+        align-items: flex-start;
+      }
+
+      .brand {
+        font-size: 1.2rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="container">
+      <a class="brand" href="/">
+        <span class="brand-badge">CL</span>
+        <span>Combo Lab Store</span>
+      </a>
+
+      <nav class="nav-links">
+        <a href="/">Inicio</a>
+        <a href="/search?q=phone">Buscar</a>
+        <a href="/checkout?coupon=SALE10">Checkout</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

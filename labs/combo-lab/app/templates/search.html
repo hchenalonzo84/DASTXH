@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="card">
+  <h1>Resultados de búsqueda</h1>
+  <p class="muted">
+    Esta vista simula una búsqueda típica de una tienda online.
+  </p>
+
+  <form class="searchbar-form" method="get" action="/search">
+    <input
+      type="text"
+      id="q"
+      name="q"
+      value="{{ q }}"
+      placeholder="Buscar productos, por ejemplo: phone, laptop, audio"
+      required
+    >
+    <button type="submit">Buscar</button>
+  </form>
+</section>
+
+<section class="notice">
+  <strong>Interpretación del laboratorio.</strong>
+  <br>
+  El valor del parámetro <code>q</code> se muestra abajo de forma insegura
+  para simular un caso de XSS reflejado.
+</section>
+
+<section class="card">
+  <h2>Consulta recibida</h2>
+  <p class="muted">
+    El siguiente bloque renderiza el valor recibido sin escape.
+    Esto es intencional para el laboratorio.
+  </p>
+
+  <div class="unsafe-box">
+    {{ q|safe }}
+  </div>
+</section>
+
+<section class="card">
+  <h2>Productos encontrados</h2>
+
+  {% if results %}
+    <div class="grid">
+      {% for product in results %}
+        <article class="product-card">
+          <div class="product-thumb">
+            {{ product.name[:1] }}
+          </div>
+
+          <div>
+            <h3>{{ product.name }}</h3>
+            <div class="price">Q {{ "%.2f"|format(product.price) }}</div>
+          </div>
+
+          <p class="muted">
+            {{ product.short_description }}
+          </p>
+
+          <div class="actions">
+            <a class="btn" href="/products/{{ product.slug }}">Ver producto</a>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="muted">
+      No se encontraron productos para la búsqueda actual.
+    </p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>URL útil para DASTXH</h2>
+  <p>
+    Puedes usar una URL como esta desde la GUI de DASTXH:
+  </p>
+  <p>
+    <code>http://combo-lab:5000/search?q=phone</code>
+  </p>
+</section>
+{% endblock %}

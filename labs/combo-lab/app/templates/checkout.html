@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="card">
+  <h1>Checkout demo</h1>
+  <p class="muted">
+    Esta vista simula un paso sencillo de compra con aplicación de cupón.
+  </p>
+
+  <form class="searchbar-form" method="get" action="/checkout">
+    <input
+      type="text"
+      id="coupon"
+      name="coupon"
+      value="{{ coupon }}"
+      placeholder="Ingresa un cupón, por ejemplo: SALE10"
+    >
+    <button type="submit">Aplicar cupón</button>
+  </form>
+</section>
+
+<section class="notice">
+  <strong>Interpretación del laboratorio.</strong>
+  <br>
+  El valor del parámetro <code>coupon</code> se muestra abajo de forma insegura
+  para simular una segunda superficie de XSS reflejado.
+</section>
+
+<section class="card">
+  <h2>Cupón recibido</h2>
+  <p class="muted">
+    El siguiente bloque renderiza el valor recibido sin escape.
+    Esto es intencional dentro del laboratorio.
+  </p>
+
+  <div class="unsafe-box">
+    {{ coupon|safe }}
+  </div>
+</section>
+
+<section class="grid">
+  <article class="card" style="margin-bottom: 0;">
+    <h3>Resumen de compra</h3>
+    <p><strong>Producto:</strong> Smartphone X1</p>
+    <p><strong>Subtotal:</strong> Q 2499.99</p>
+    <p><strong>Envío:</strong> Q 35.00</p>
+    <p><strong>Total estimado:</strong> Q 2534.99</p>
+  </article>
+
+  <article class="card" style="margin-bottom: 0;">
+    <h3>Uso sugerido con DASTXH</h3>
+    <p>
+      Puedes usar una URL como esta desde la GUI de DASTXH:
+    </p>
+    <p>
+      <code>http://combo-lab:5000/checkout?coupon=SALE10</code>
+    </p>
+  </article>
+</section>
+{% endblock %}

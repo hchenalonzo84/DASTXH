@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero">
+  <h1>Demo Store vulnerable para pruebas con DASTXH</h1>
+  <p>
+    Este laboratorio simula una pequeña tienda online con búsqueda, detalle de producto
+    y una vista simple de checkout. Está diseñado únicamente para uso local,
+    controlado y autorizado.
+  </p>
+
+  <div class="notice">
+    <strong>Superficies de prueba dentro de este laboratorio.</strong>
+    <br>
+    - <strong>XSS reflejado</strong> en la búsqueda: <code>/search?q=...</code>
+    <br>
+    - <strong>XSS reflejado</strong> adicional en checkout: <code>/checkout?coupon=...</code>
+    <br>
+    - <strong>headers y cookies débiles</strong> para validación desde DASTXH
+  </div>
+
+  <form class="searchbar-form" method="get" action="/search">
+    <input
+      type="text"
+      name="q"
+      placeholder="Buscar productos, por ejemplo: phone, laptop, audio"
+      required
+    >
+    <button type="submit">Buscar</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>URLs sugeridas para DASTXH</h2>
+  <p class="muted">
+    Estas rutas son útiles para comenzar las pruebas desde la GUI de DASTXH:
+  </p>
+
+  <div class="grid">
+    <div class="card" style="margin-bottom: 0;">
+      <h3>Búsqueda</h3>
+      <p><code>http://combo-lab:5000/search?q=phone</code></p>
+    </div>
+
+    <div class="card" style="margin-bottom: 0;">
+      <h3>Checkout</h3>
+      <p><code>http://combo-lab:5000/checkout?coupon=SALE10</code></p>
+    </div>
+
+    <div class="card" style="margin-bottom: 0;">
+      <h3>Producto</h3>
+      <p><code>http://combo-lab:5000/products/smartphone-x1</code></p>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Catálogo de productos</h2>
+
+  {% if products %}
+    <div class="grid">
+      {% for product in products %}
+        <article class="product-card">
+          <div class="product-thumb">
+            {{ product.name[:1] }}
+          </div>
+
+          <div>
+            <h3>{{ product.name }}</h3>
+            <div class="price">Q {{ "%.2f"|format(product.price) }}</div>
+          </div>
+
+          <p class="muted">
+            {{ product.short_description }}
+          </p>
+
+          <div class="actions">
+            <a class="btn" href="/products/{{ product.slug }}">Ver producto</a>
+            <a class="btn" href="/search?q={{ product.name }}">Buscar similar</a>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="muted">No hay productos cargados en este laboratorio.</p>
+  {% endif %}
+</section>
+{% endblock %}

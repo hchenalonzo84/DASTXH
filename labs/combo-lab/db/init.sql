@@ -1,6 +1,6 @@
 -- =========================================================
 -- init.sql
--- Base de datos propia del laboratorio xss-lab
+-- Base de datos propia del laboratorio combinado combo-lab
 -- =========================================================
 
 CREATE TABLE IF NOT EXISTS products (
@@ -11,15 +11,6 @@ CREATE TABLE IF NOT EXISTS products (
   short_description  TEXT NOT NULL DEFAULT '',
   description_html   TEXT NOT NULL DEFAULT '',
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS reviews (
-  id            BIGSERIAL PRIMARY KEY,
-  product_id    BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  author_name   TEXT NOT NULL,
-  rating        INT NOT NULL DEFAULT 5,
-  comment_html  TEXT NOT NULL DEFAULT '',
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 INSERT INTO products (slug, name, price, short_description, description_html)
@@ -46,18 +37,3 @@ VALUES
   '<p>Diseñados para uso diario, música y videollamadas.</p>'
 )
 ON CONFLICT (slug) DO NOTHING;
-
-INSERT INTO reviews (product_id, author_name, rating, comment_html)
-SELECT
-  p.id,
-  'Cliente demo',
-  5,
-  'Buen producto para comenzar las pruebas del laboratorio.'
-FROM products p
-WHERE p.slug = 'smartphone-x1'
-AND NOT EXISTS (
-  SELECT 1
-  FROM reviews r
-  WHERE r.product_id = p.id
-    AND r.author_name = 'Cliente demo'
-);

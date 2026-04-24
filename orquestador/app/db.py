@@ -1,25 +1,25 @@
 """
 db.py
 - Acceso a PostgreSQL usando psycopg (psycopg3).
-- Esta versión queda adaptada al esquema normalizado v4.
+- Esta versión queda adaptada al esquema normalizado v5.
 
 Responsabilidades principales:
 - persistencia de executions
-- persistencia de resultados de headers (resumen + detalle)
-- persistencia de cookies evaluadas
+- persistencia de resultados HTTP:
+    * resumen
+    * detalle por header
+    * detalle por cookie
+    * pruebas HTTP detalladas
 - persistencia de hsecscan
-- persistencia de resultados XSS (resumen + hallazgos)
+- persistencia de resultados XSS
 - persistencia de artifacts
 - consultas de historial y detalle
 
 Importante:
-- Además del modelo normalizado, get_execution_detail()
-  sigue devolviendo algunos campos "compatibles" con la GUI actual:
+- Se conserva compatibilidad con la GUI actual:
     * present_json
     * missing_json
     * cookies_flags_json
-- Así podemos evolucionar el backend sin romper de inmediato
-  los templates y reportes que ya existen.
 """
 
 from __future__ import annotations
@@ -41,9 +41,6 @@ from utils import utc_now
 def connect(dsn: str) -> Connection:
     """
     Crea y devuelve una conexión a PostgreSQL.
-
-    row_factory=dict_row permite que los SELECT devuelvan
-    diccionarios en lugar de tuplas.
     """
     return psycopg.connect(dsn, row_factory=dict_row)
 
@@ -65,8 +62,6 @@ def ping_db(dsn: str) -> None:
 def _json_or_none(value: Any) -> Optional[str]:
     """
     Convierte un valor Python a texto JSON para insertarlo como json/jsonb.
-
-    Si value es None, devuelve None real para almacenar NULL.
     """
     if value is None:
         return None
@@ -75,8 +70,7 @@ def _json_or_none(value: Any) -> Optional[str]:
 
 def _build_header_details_if_missing(hdr_eval: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Si hdr_eval no trae header_details (por compatibilidad con
-    versiones anteriores), los reconstruye usando present/missing.
+    Si hdr_eval no trae header_details, los reconstruye usando present/missing.
     """
     header_details = hdr_eval.get("header_details")
     if isinstance(header_details, list):
@@ -125,6 +119,23 @@ def _normalize_cookie_item(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _normalize_http_test_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normaliza una prueba HTTP detallada antes de persistirla.
+    """
+    return {
+        "test_id": str(item.get("test_id", "") or "").strip(),
+        "name": str(item.get("name", "") or "").strip(),
+        "category": str(item.get("category", "") or "").strip(),
+        "status": str(item.get("status", "info") or "info").strip(),
+        "score_delta": int(item.get("score_delta", 0) or 0),
+        "reason": str(item.get("reason", "") or "").strip(),
+        "recommendation": str(item.get("recommendation", "") or "").strip(),
+        "header_name": item.get("header_name"),
+        "header_value": item.get("header_value"),
+    }
+
+
 # ==========================================================
 # EJECUCIONES
 # ==========================================================
@@ -142,10 +153,6 @@ def insert_execution(
 ) -> int:
     """
     Inserta una nueva ejecución y devuelve el id generado.
-
-    Nuevos campos importantes:
-    - scan_profile: 'superficial' o 'profundo'
-    - enable_hsecscan: indica si la capa 2 estuvo habilitada
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -184,8 +191,6 @@ def insert_execution(
         raise RuntimeError("No fue posible obtener el id de la ejecución insertada.")
 
     return int(row["id"])
-
-
 def update_execution_status(
     dsn: str,
     execution_id: int,
@@ -272,8 +277,10 @@ def update_execution_finished(
         urls_evaluadas=urls_evaluadas,
         finished=True,
     )
+
+
 # ==========================================================
-# RESULTADOS CAPA 1: HEADERS + COOKIES
+# RESULTADOS HTTP: HEADERS + COOKIES + HTTP TESTS
 # ==========================================================
 
 def insert_header_results(
@@ -283,19 +290,18 @@ def insert_header_results(
     raw_headers_json: Dict[str, Any],
 ) -> None:
     """
-    Inserta los resultados de la Capa 1 en forma normalizada:
+    Inserta los resultados HTTP en forma normalizada:
 
     - header_results : resumen agregado
-    - header_checks  : una fila por cabecera evaluada
+    - header_checks  : una fila por cabecera requerida
     - cookie_checks  : una fila por cookie evaluada
-
-    raw_headers_json se mantiene como parámetro por compatibilidad
-    con el flujo actual, aunque ya no se guarda como columna propia.
+    - http_tests     : una fila por prueba HTTP detallada
     """
     _ = raw_headers_json  # compatibilidad intencional
 
     header_details = _build_header_details_if_missing(hdr_eval)
     cookie_items = [_normalize_cookie_item(item) for item in (hdr_eval.get("cookies_flags", []) or [])]
+    http_tests = [_normalize_http_test_item(item) for item in (hdr_eval.get("http_tests", []) or [])]
 
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -305,15 +311,19 @@ def insert_header_results(
                     execution_id,
                     headers_evaluadas,
                     headers_presentes,
-                    cumplimiento_pct
+                    cumplimiento_pct,
+                    http_score,
+                    http_grade
                 )
-                VALUES (%s, %s, %s, %s);
+                VALUES (%s, %s, %s, %s, %s, %s);
                 """,
                 (
                     execution_id,
                     int(hdr_eval.get("headers_evaluadas", 0)),
                     int(hdr_eval.get("headers_presentes", 0)),
                     float(hdr_eval.get("cumplimiento_pct", 0)),
+                    int(hdr_eval.get("http_score", 0)),
+                    str(hdr_eval.get("http_grade", "F")),
                 ),
             )
 
@@ -365,9 +375,51 @@ def insert_header_results(
                     ),
                 )
 
+            for item in http_tests:
+                if not item["test_id"] or not item["name"] or not item["category"] or not item["reason"] or not item["recommendation"]:
+                    continue
+
+                cur.execute(
+                    """
+                    INSERT INTO http_tests (
+                        execution_id,
+                        test_id,
+                        name,
+                        category,
+                        status,
+                        score_delta,
+                        reason,
+                        recommendation,
+                        header_name,
+                        header_value
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (execution_id, test_id)
+                    DO UPDATE SET
+                        name = EXCLUDED.name,
+                        category = EXCLUDED.category,
+                        status = EXCLUDED.status,
+                        score_delta = EXCLUDED.score_delta,
+                        reason = EXCLUDED.reason,
+                        recommendation = EXCLUDED.recommendation,
+                        header_name = EXCLUDED.header_name,
+                        header_value = EXCLUDED.header_value;
+                    """,
+                    (
+                        execution_id,
+                        item["test_id"],
+                        item["name"],
+                        item["category"],
+                        item["status"],
+                        item["score_delta"],
+                        item["reason"],
+                        item["recommendation"],
+                        item["header_name"],
+                        item["header_value"],
+                    ),
+                )
+
         conn.commit()
-
-
 # ==========================================================
 # RESULTADOS CAPA 2: HSECSCAN
 # ==========================================================
@@ -415,10 +467,7 @@ def insert_xss_results(
     xss_findings: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """
-    Inserta los resultados de la Capa 3 en forma normalizada:
-
-    - xss_results  : resumen agregado
-    - xss_findings : una fila por hallazgo detectado/interpretado
+    Inserta los resultados de la Capa 3 en forma normalizada.
     """
     finding_rows = xss_findings or []
 
@@ -560,6 +609,8 @@ def list_artifacts(dsn: str, execution_id: int) -> List[Dict[str, Any]]:
         conn.commit()
 
     return [dict(r) for r in rows]
+
+
 # ==========================================================
 # CONSULTAS DE HISTORIAL Y DETALLE
 # ==========================================================
@@ -591,6 +642,8 @@ def list_execution_summaries(
                     headers_evaluadas,
                     headers_presentes,
                     cumplimiento_pct,
+                    http_score,
+                    http_grade,
                     hsecscan_rc,
                     dalfox_rc,
                     xss_findings_count,
@@ -633,6 +686,8 @@ def get_execution_summary(
                     headers_evaluadas,
                     headers_presentes,
                     cumplimiento_pct,
+                    http_score,
+                    http_grade,
                     hsecscan_rc,
                     dalfox_rc,
                     xss_findings_count,
@@ -654,12 +709,6 @@ def get_execution_detail(
 ) -> Optional[Dict[str, Any]]:
     """
     Devuelve detalle enriquecido de una ejecución.
-
-    Además del modelo normalizado, devuelve algunos campos de
-    compatibilidad para la GUI actual:
-    - present_json
-    - missing_json
-    - cookies_flags_json
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -682,6 +731,8 @@ def get_execution_detail(
                     hr.headers_evaluadas,
                     hr.headers_presentes,
                     hr.cumplimiento_pct,
+                    hr.http_score,
+                    hr.http_grade,
 
                     hs.tool_rc AS hsecscan_rc,
                     hs.raw_output AS hsecscan_raw_output,
@@ -745,6 +796,29 @@ def get_execution_detail(
                 (execution_id,),
             )
             cookie_rows_raw = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    execution_id,
+                    test_id,
+                    name,
+                    category,
+                    status,
+                    score_delta,
+                    reason,
+                    recommendation,
+                    header_name,
+                    header_value,
+                    created_at
+                FROM http_tests
+                WHERE execution_id = %s
+                ORDER BY id ASC;
+                """,
+                (execution_id,),
+            )
+            http_tests_rows = [dict(r) for r in cur.fetchall()]
 
             cur.execute(
                 """
@@ -822,6 +896,7 @@ def get_execution_detail(
 
     detail["header_checks"] = header_rows
     detail["cookie_checks"] = cookie_rows_raw
+    detail["http_tests"] = http_tests_rows
     detail["xss_findings"] = xss_findings_rows
     detail["artifacts"] = artifact_rows
 

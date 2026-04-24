@@ -1,6 +1,6 @@
 # ==========================================================
 # requirements.txt
-# Laboratorio XSS tipo tienda online para pruebas con DASTXH
+# Laboratorio combinado tipo tienda online para pruebas con DASTXH
 # ==========================================================
 
 Flask==3.1.1

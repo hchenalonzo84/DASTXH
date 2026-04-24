@@ -3,23 +3,12 @@ scanner_service.py
 - Servicio reutilizable para ejecutar una evaluación completa DASTXH.
 - Esta versión queda adaptada al esquema normalizado v4.
 
-Formas de uso:
-  1) execute_scan(...)
-     -> ejecución síncrona
-     -> útil para CLI o flujos internos que esperan el resultado final
-
-  2) start_scan_in_background(...)
-     -> crea la ejecución y lanza el pipeline en segundo plano
-     -> útil para GUI web y API
-
-Cambios importantes en esta versión:
-- se conserva el flujo background ya implementado
-- se insertan resultados de headers/cookies en tablas normalizadas
-- se extraen hallazgos XSS estructurados desde Dalfox
-- se insertan hallazgos XSS en xss_findings
-- se soportan scan_profile y enable_hsecscan
-- superficial desactiva hsecscan por defecto
-- profundo activa hsecscan por defecto
+Objetivos de esta versión:
+- conservar flujo síncrono y background
+- respetar scan_profile superficial/profundo
+- habilitar hsecscan automáticamente solo cuando corresponda
+- ocultar hsecscan del pipeline cuando no aplique
+- filtrar hallazgos XSS vacíos
 """
 
 from __future__ import annotations
@@ -71,55 +60,18 @@ class ScanContext:
     execution_id: int
     target_url: str
     request_source: str
+    scan_profile: str
+    enable_hsecscan: bool
     started_at: datetime
     reports_root: Path
     report_dir: Path
     report_dir_logical: str
     run_meta_path: Path
-    scan_profile: str
-    enable_hsecscan: bool
 
 
 # ==========================================================
 # HELPERS INTERNOS
 # ==========================================================
-
-def _normalize_scan_profile(scan_profile: Optional[str]) -> str:
-    """
-    Normaliza el perfil recibido.
-
-    Valores válidos:
-    - superficial
-    - profundo
-
-    Cualquier otro valor cae en superficial para:
-    - evitar errores por input inválido
-    - no romper el CHECK de la BD
-    """
-    value = (scan_profile or "").strip().lower()
-    return "profundo" if value == "profundo" else "superficial"
-
-
-def _resolve_enable_hsecscan(
-    scan_profile: str,
-    enable_hsecscan: Optional[bool],
-) -> bool:
-    """
-    Resuelve el valor final de enable_hsecscan.
-
-    Regla base pedida:
-    - superficial -> False
-    - profundo    -> True
-
-    Pero dejamos soporte para override explícito a futuro:
-    - si llega enable_hsecscan, ese valor manda
-    - si no llega, se deriva del perfil
-    """
-    if enable_hsecscan is not None:
-        return bool(enable_hsecscan)
-
-    return scan_profile == "profundo"
-
 
 def _file_size_or_none(path: Path) -> Optional[int]:
     """
@@ -144,9 +96,6 @@ def _register_file_artifact(
 ) -> None:
     """
     Registra un archivo físico como artifact en la tabla artifacts.
-
-    El relative_path se calcula relativo a /work para que quede algo como:
-      reports/20260313_123000/report.md
     """
     if not file_path.exists() or not file_path.is_file():
         return
@@ -179,8 +128,6 @@ def _append_artifact_name(run_meta: Dict[str, Any], file_name: str) -> None:
 def _build_unique_run_id(reports_root: Path, started: datetime) -> str:
     """
     Genera un identificador de carpeta único basado en timestamp.
-
-    Si ya existe una carpeta con el timestamp base, agrega sufijo.
     """
     base_run_id = ts_folder(started)
     candidate = base_run_id
@@ -193,21 +140,31 @@ def _build_unique_run_id(reports_root: Path, started: datetime) -> str:
     return candidate
 
 
+def _resolve_enable_hsecscan(scan_profile: str, enable_hsecscan: Optional[bool]) -> bool:
+    """
+    Resuelve si hsecscan debe ejecutarse.
+
+    Regla actual:
+    - si viene un valor explícito, se respeta
+    - si no viene, se habilita solo en perfil profundo
+    """
+    if enable_hsecscan is not None:
+        return bool(enable_hsecscan)
+
+    return scan_profile == "profundo"
+
+
 def _prepare_scan_context(
     dsn: str,
     workdir: Path,
     url: str,
     request_source: str,
-    scan_profile: str = "superficial",
-    enable_hsecscan: Optional[bool] = None,
+    scan_profile: str,
+    enable_hsecscan: Optional[bool],
 ) -> Tuple[ScanContext, Dict[str, Any]]:
     """
     Prepara la estructura mínima de una nueva ejecución, pero
     todavía no ejecuta el pipeline.
-
-    Aquí resolvemos y persistimos desde el inicio:
-    - scan_profile
-    - enable_hsecscan
     """
     started = utc_now()
 
@@ -221,12 +178,7 @@ def _prepare_scan_context(
     ensure_dir(report_dir)
 
     report_dir_logical = f"/work/reports/{run_id}"
-
-    normalized_scan_profile = _normalize_scan_profile(scan_profile)
-    resolved_enable_hsecscan = _resolve_enable_hsecscan(
-        scan_profile=normalized_scan_profile,
-        enable_hsecscan=enable_hsecscan,
-    )
+    enable_hsecscan_resolved = _resolve_enable_hsecscan(scan_profile, enable_hsecscan)
 
     execution_id = db_layer.insert_execution(
         dsn=dsn,
@@ -234,8 +186,8 @@ def _prepare_scan_context(
         request_source=request_source,
         report_dir=report_dir_logical,
         status="initiated",
-        scan_profile=normalized_scan_profile,
-        enable_hsecscan=resolved_enable_hsecscan,
+        scan_profile=scan_profile,
+        enable_hsecscan=enable_hsecscan_resolved,
         urls_ingresadas=1,
         urls_evaluadas=0,
     )
@@ -244,13 +196,13 @@ def _prepare_scan_context(
         execution_id=execution_id,
         target_url=url,
         request_source=request_source,
+        scan_profile=scan_profile,
+        enable_hsecscan=enable_hsecscan_resolved,
         started_at=started,
         reports_root=reports_root,
         report_dir=report_dir,
         report_dir_logical=report_dir_logical,
         run_meta_path=report_dir / RUN_META_JSON,
-        scan_profile=normalized_scan_profile,
-        enable_hsecscan=resolved_enable_hsecscan,
     )
 
     run_meta: Dict[str, Any] = {
@@ -260,8 +212,8 @@ def _prepare_scan_context(
         "status": "initiated",
         "execution_id": execution_id,
         "request_source": request_source,
-        "scan_profile": normalized_scan_profile,
-        "enable_hsecscan": resolved_enable_hsecscan,
+        "scan_profile": scan_profile,
+        "enable_hsecscan": enable_hsecscan_resolved,
         "errors": [],
         "report_dir": report_dir_logical,
         "artifacts": [],
@@ -270,8 +222,6 @@ def _prepare_scan_context(
     write_json(context.run_meta_path, run_meta)
 
     return context, run_meta
-
-
 def _run_scan_pipeline(
     dsn: str,
     context: ScanContext,
@@ -280,20 +230,16 @@ def _run_scan_pipeline(
 ) -> Dict[str, Any]:
     """
     Ejecuta el pipeline completo usando un contexto ya preparado.
-
-    Se usa tanto para:
-    - execute_scan(...)
-    - start_scan_in_background(...)
     """
     execution_id = context.execution_id
     url = context.target_url
     request_source = context.request_source
+    scan_profile = context.scan_profile
+    enable_hsecscan = context.enable_hsecscan
     report_dir = context.report_dir
     report_dir_logical = context.report_dir_logical
     reports_root = context.reports_root
     run_meta_path = context.run_meta_path
-    scan_profile = context.scan_profile
-    enable_hsecscan = context.enable_hsecscan
 
     try:
         # --------------------------------------------------
@@ -317,8 +263,6 @@ def _run_scan_pipeline(
                 "evaluation": hdr_eval,
                 "raw": raw_headers_json,
                 "raw_last_block": raw_last_block,
-                "scan_profile": scan_profile,
-                "enable_hsecscan": enable_hsecscan,
             },
         )
 
@@ -330,11 +274,10 @@ def _run_scan_pipeline(
         )
 
         # --------------------------------------------------
-        # CAPA 2: hsecscan (opcional según perfil)
+        # CAPA 2: hsecscan (solo si aplica)
         # --------------------------------------------------
-        hsecscan_rc: Optional[int] = None
-        hsecscan_out = ""
         hsecscan_txt_path = report_dir / HSECSCAN_TXT
+        hsecscan_rc: Optional[int] = None
 
         if enable_hsecscan:
             hsecscan_rc, hsecscan_out = run_hsecscan(url)
@@ -345,12 +288,6 @@ def _run_scan_pipeline(
                 execution_id=execution_id,
                 tool_rc=hsecscan_rc,
                 raw_output=hsecscan_out,
-            )
-        else:
-            run_meta["hsecscan_skipped"] = True
-            run_meta["hsecscan_skip_reason"] = (
-                f"La capa 2 fue omitida porque el perfil activo es '{scan_profile}' "
-                f"y enable_hsecscan quedó en False."
             )
 
         # --------------------------------------------------
@@ -367,18 +304,20 @@ def _run_scan_pipeline(
         dalfox_txt_path = report_dir / DALFOX_TXT
         dalfox_txt_path.write_text(dalfox_raw, encoding="utf-8", errors="replace")
 
-        findings_count, summary_json = read_summary(dalfox_json_path)
+        _raw_findings_count, summary_json = read_summary(dalfox_json_path)
 
-        # Extraer hallazgos estructurados para la tabla xss_findings
         structured_findings = extract_structured_findings(
             summary_json=summary_json,
             fallback_target_url=url,
         )
+
+        effective_findings_count = len(structured_findings)
+
         db_layer.insert_xss_results(
             dsn=dsn,
             execution_id=execution_id,
             tool_rc=dalfox_rc,
-            findings_count=findings_count,
+            findings_count=effective_findings_count,
             summary_json=summary_json,
             raw_output=safe_read_text(dalfox_txt_path),
             xss_findings=structured_findings,
@@ -391,8 +330,6 @@ def _run_scan_pipeline(
             target_url=url,
             report_dir=report_dir,
             hdr_eval=hdr_eval,
-            scan_profile=scan_profile,
-            enable_hsecscan=enable_hsecscan,
             hsecscan_filename=HSECSCAN_TXT if enable_hsecscan else None,
             dalfox_json_filename=DALFOX_JSON,
             dalfox_txt_filename=DALFOX_TXT,
@@ -405,8 +342,6 @@ def _run_scan_pipeline(
             target_url=url,
             report_dir=report_dir,
             hdr_eval=hdr_eval,
-            scan_profile=scan_profile,
-            enable_hsecscan=enable_hsecscan,
             hsecscan_filename=HSECSCAN_TXT if enable_hsecscan else None,
             dalfox_json_filename=DALFOX_JSON,
             dalfox_txt_filename=DALFOX_TXT,
@@ -426,7 +361,6 @@ def _run_scan_pipeline(
             (report_html_path, ARTIFACT_TYPE_REPORT_HTML, MIME_TEXT_HTML),
         ]
 
-        # Solo registrar artifact de hsecscan si realmente se ejecutó.
         if enable_hsecscan and hsecscan_txt_path.exists():
             artifact_specs.insert(
                 1,
@@ -459,12 +393,10 @@ def _run_scan_pipeline(
         finished = utc_now()
         run_meta["finished_at"] = finished.isoformat()
         run_meta["status"] = "finished"
-        run_meta["scan_profile"] = scan_profile
-        run_meta["enable_hsecscan"] = enable_hsecscan
         run_meta["cumplimiento_pct"] = hdr_eval.get("cumplimiento_pct")
         run_meta["hsecscan_rc"] = hsecscan_rc
         run_meta["dalfox_rc"] = dalfox_rc
-        run_meta["findings_count"] = findings_count
+        run_meta["findings_count"] = effective_findings_count
         run_meta["xss_findings_structured_count"] = len(structured_findings)
 
         write_json(run_meta_path, run_meta)
@@ -495,7 +427,7 @@ def _run_scan_pipeline(
             "compliance_pct": hdr_eval.get("cumplimiento_pct"),
             "hsecscan_rc": hsecscan_rc,
             "dalfox_rc": dalfox_rc,
-            "findings_count": findings_count,
+            "findings_count": effective_findings_count,
             "artifacts": run_meta["artifacts"],
         }
 
@@ -508,8 +440,6 @@ def _run_scan_pipeline(
 
         run_meta["status"] = "failed"
         run_meta["finished_at"] = finished.isoformat()
-        run_meta["scan_profile"] = scan_profile
-        run_meta["enable_hsecscan"] = enable_hsecscan
         run_meta["errors"].append(err)
 
         write_json(run_meta_path, run_meta)
@@ -583,10 +513,6 @@ def execute_scan(
 ) -> Dict[str, Any]:
     """
     Ejecuta una evaluación completa de forma síncrona.
-
-    Nuevos parámetros:
-    - scan_profile
-    - enable_hsecscan (opcional; si no llega, se deriva del perfil)
     """
     context, run_meta = _prepare_scan_context(
         dsn=dsn,
@@ -621,10 +547,6 @@ def start_scan_in_background(
     """
     Inicia un escaneo en segundo plano y devuelve inmediatamente
     los datos mínimos de seguimiento.
-
-    Reglas por defecto:
-    - superficial -> hsecscan desactivado
-    - profundo    -> hsecscan activado
     """
     context, run_meta = _prepare_scan_context(
         dsn=dsn,

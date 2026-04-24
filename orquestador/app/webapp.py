@@ -1,18 +1,12 @@
 """
 webapp.py
 - Aplicación web principal de DASTXH usando FastAPI.
-- Esta versión queda ajustada para trabajar mejor con el nuevo flujo:
-  * la GUI web ya no ejecuta el escaneo de forma síncrona
-  * el escaneo se lanza en segundo plano
-  * la petición POST responde rápido y redirige al detalle
-  * el detalle puede consultarse aunque la ejecución siga en curso
 
-Esta versión además agrega:
-- selección de scan_profile desde la GUI
-- modo de hsecscan:
-    * auto    -> lo resuelve el backend según perfil
-    * enable  -> fuerza True
-    * disable -> fuerza False
+Esta versión:
+- mantiene una GUI minimalista
+- usa una sola URL objetivo
+- permite elegir solo el perfil de análisis
+- resuelve internamente el uso de hsecscan según el perfil
 """
 
 from __future__ import annotations
@@ -141,42 +135,17 @@ def validate_target_url(value: str) -> str:
 
 def validate_scan_profile(value: str) -> str:
     """
-    Valida el perfil elegido desde la GUI.
+    Valida el perfil de análisis permitido por la GUI.
     """
-    scan_profile = (value or "").strip().lower()
+    profile = (value or "").strip().lower()
 
-    if scan_profile not in {"superficial", "profundo"}:
+    if profile not in ("superficial", "profundo"):
         raise HTTPException(
             status_code=400,
-            detail="scan_profile debe ser 'superficial' o 'profundo'.",
+            detail="El perfil de análisis debe ser superficial o profundo.",
         )
 
-    return scan_profile
-
-
-def parse_hsecscan_mode(value: str) -> Optional[bool]:
-    """
-    Convierte el modo del formulario a un valor compatible
-    con scanner_service.
-
-    Mapeo:
-    - auto    -> None
-    - enable  -> True
-    - disable -> False
-    """
-    mode = (value or "auto").strip().lower()
-
-    if mode == "auto":
-        return None
-    if mode == "enable":
-        return True
-    if mode == "disable":
-        return False
-
-    raise HTTPException(
-        status_code=400,
-        detail="hsecscan_mode debe ser 'auto', 'enable' o 'disable'.",
-    )
+    return profile
 
 
 def wait_until_db_ready(timeout_s: int = 20) -> str:
@@ -197,6 +166,8 @@ def load_recent_executions(limit: int = 10) -> List[Dict[str, Any]]:
         return db_layer.list_execution_summaries(dsn=dsn, limit=limit, offset=0)
     except Exception:
         return []
+
+
 # ==========================================================
 # RUTAS WEB
 # ==========================================================
@@ -205,10 +176,6 @@ def load_recent_executions(limit: int = 10) -> List[Dict[str, Any]]:
 def home(request: Request):
     """
     Página principal.
-
-    Muestra:
-    - formulario para iniciar una evaluación
-    - últimas ejecuciones registradas
     """
     recent_executions = load_recent_executions(limit=10)
 
@@ -218,8 +185,6 @@ def home(request: Request):
             "request": request,
             "title": "DASTXH - Inicio",
             "default_timeout": get_default_timeout(),
-            "default_scan_profile": "superficial",
-            "default_hsecscan_mode": "auto",
             "recent_executions": recent_executions,
         },
     )
@@ -227,43 +192,33 @@ def home(request: Request):
 
 @app.post("/scan")
 def start_scan(
+    request: Request,
     url: str = Form(...),
     timeout: Optional[int] = Form(default=None),
     scan_profile: str = Form(default="superficial"),
-    hsecscan_mode: str = Form(default="auto"),
 ):
     """
     Inicia un escaneo desde la GUI web.
 
-    Ahora acepta:
-    - scan_profile
-    - hsecscan_mode (auto/enable/disable)
+    Regla importante:
+    - el usuario solo elige el perfil
+    - hsecscan se resuelve internamente según ese perfil
     """
-    # ------------------------------------------------------
-    # Validar entrada desde formulario
-    # ------------------------------------------------------
     target_url = validate_target_url(url)
+    resolved_scan_profile = validate_scan_profile(scan_profile)
     timeout_s = timeout if timeout is not None else get_default_timeout()
-    validated_scan_profile = validate_scan_profile(scan_profile)
-    enable_hsecscan = parse_hsecscan_mode(hsecscan_mode)
 
-    # ------------------------------------------------------
-    # Preparar entorno y esperar base de datos
-    # ------------------------------------------------------
     ensure_work_paths()
     dsn = wait_until_db_ready(timeout_s=20)
 
-    # ------------------------------------------------------
-    # Lanzar escaneo en background
-    # ------------------------------------------------------
     result = start_scan_in_background(
         dsn=dsn,
         workdir=WORKDIR,
         url=target_url,
         timeout_s=timeout_s,
         request_source="web",
-        scan_profile=validated_scan_profile,
-        enable_hsecscan=enable_hsecscan,
+        scan_profile=resolved_scan_profile,
+        enable_hsecscan=None,
     )
 
     execution_id = result.get("execution_id")

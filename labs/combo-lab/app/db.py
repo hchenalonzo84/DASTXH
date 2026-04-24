@@ -1,9 +1,12 @@
 """
 db.py
-- Acceso a la base de datos propia del laboratorio xss-lab.
+- Acceso a la base de datos propia del laboratorio combo-lab.
 - Esta BD es independiente de la BD principal de DASTXH.
-- Aquí se guardan productos y reseñas para simular escenarios
-  más reales de búsqueda, detalle de producto y XSS persistente.
+
+Objetivo:
+- almacenar productos
+- permitir búsquedas
+- alimentar la vista de catálogo y detalle
 """
 
 from __future__ import annotations
@@ -21,20 +24,20 @@ def get_dsn() -> str:
     """
     dsn = os.getenv("LAB_DATABASE_URL")
     if not dsn:
-        raise RuntimeError("LAB_DATABASE_URL no está configurada en xss-lab.")
+        raise RuntimeError("LAB_DATABASE_URL no está configurada en combo-lab.")
     return dsn
 
 
 def connect():
     """
-    Crea una conexión a PostgreSQL devolviendo filas tipo diccionario.
+    Crea una conexión a PostgreSQL devolviendo filas como diccionarios.
     """
     return psycopg.connect(get_dsn(), row_factory=dict_row)
 
 
 def ping_db() -> None:
     """
-    Verificación simple de conectividad.
+    Verificación simple de conectividad con la BD del laboratorio.
     """
     with connect() as conn:
         with conn.cursor() as cur:
@@ -44,7 +47,7 @@ def ping_db() -> None:
 
 def list_products(limit: int = 50) -> List[Dict[str, Any]]:
     """
-    Devuelve productos recientes para la portada.
+    Devuelve productos para la portada del laboratorio.
     """
     with connect() as conn:
         with conn.cursor() as cur:
@@ -72,7 +75,7 @@ def list_products(limit: int = 50) -> List[Dict[str, Any]]:
 
 def get_product_by_slug(slug: str) -> Optional[Dict[str, Any]]:
     """
-    Obtiene un producto por slug.
+    Obtiene un producto por su slug.
     """
     with connect() as conn:
         with conn.cursor() as cur:
@@ -99,12 +102,7 @@ def get_product_by_slug(slug: str) -> Optional[Dict[str, Any]]:
 
 def search_products(term: str, limit: int = 50) -> List[Dict[str, Any]]:
     """
-    Busca productos por nombre, resumen o descripción.
-
-    Nota:
-    la búsqueda en sí solo consulta la BD.
-    La vulnerabilidad reflejada se demostrará en la vista,
-    donde el parámetro q se mostrará de forma insegura.
+    Busca productos por nombre, descripción corta o HTML descriptivo.
     """
     like_term = f"%{term}%"
 
@@ -133,64 +131,3 @@ def search_products(term: str, limit: int = 50) -> List[Dict[str, Any]]:
         conn.commit()
 
     return [dict(r) for r in rows]
-
-
-def list_reviews_for_product(product_id: int, limit: int = 100) -> List[Dict[str, Any]]:
-    """
-    Devuelve reseñas de un producto.
-    """
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    id,
-                    product_id,
-                    author_name,
-                    rating,
-                    comment_html,
-                    created_at
-                FROM reviews
-                WHERE product_id = %s
-                ORDER BY id DESC
-                LIMIT %s;
-                """,
-                (product_id, limit),
-            )
-            rows = cur.fetchall()
-        conn.commit()
-
-    return [dict(r) for r in rows]
-
-
-def add_review(
-    product_id: int,
-    author_name: str,
-    rating: int,
-    comment_html: str,
-) -> int:
-    """
-    Inserta una reseña nueva y devuelve su id.
-    """
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO reviews (
-                    product_id,
-                    author_name,
-                    rating,
-                    comment_html
-                )
-                VALUES (%s, %s, %s, %s)
-                RETURNING id;
-                """,
-                (product_id, author_name, rating, comment_html),
-            )
-            row = cur.fetchone()
-        conn.commit()
-
-    if not row or "id" not in row:
-        raise RuntimeError("No se pudo obtener el id de la reseña insertada.")
-
-    return int(row["id"])

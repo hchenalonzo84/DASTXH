@@ -5,8 +5,8 @@
   <h2>Historial de ejecuciones</h2>
   <p>
     Aquí puedes consultar las evaluaciones registradas en PostgreSQL,
-    incluyendo estado, origen, perfil de escaneo, uso de hsecscan,
-    cumplimiento de cabeceras, hallazgos XSS y acceso al detalle.
+    incluyendo estado, origen, perfil, puntaje HTTP, cumplimiento de cabeceras,
+    hallazgos XSS y acceso al detalle de cada ejecución.
   </p>
 
   <div class="notice" style="margin-top: 1rem; margin-bottom: 1rem;">
@@ -26,10 +26,11 @@
             <th>Estado</th>
             <th>Origen</th>
             <th>Perfil</th>
-            <th>hsecscan</th>
+            <th>Puntaje HTTP</th>
+            <th>Nota HTTP</th>
             <th>Cumplimiento</th>
             <th>XSS</th>
-            <th>Artifacts</th>
+            <th>Archivos</th>
             <th>Inicio</th>
             <th>Detalle</th>
           </tr>
@@ -50,8 +51,31 @@
               </td>
 
               <td>{{ item.request_source }}</td>
-              <td>{{ item.scan_profile or "-" }}</td>
-              <td>{{ "Sí" if item.enable_hsecscan else "No" }}</td>
+              <td>{{ item.scan_profile }}</td>
+
+              <td>
+                {% if item.http_score is not none %}
+                  {{ item.http_score }}/100
+                {% else %}
+                  {% if item.status in ["initiated", "running"] %}
+                    En proceso
+                  {% else %}
+                    -
+                  {% endif %}
+                {% endif %}
+              </td>
+
+              <td>
+                {% if item.http_grade %}
+                  {{ item.http_grade }}
+                {% else %}
+                  {% if item.status in ["initiated", "running"] %}
+                    En proceso
+                  {% else %}
+                    -
+                  {% endif %}
+                {% endif %}
+              </td>
 
               <td>
                 {% if item.cumplimiento_pct is not none %}
@@ -89,7 +113,13 @@
                 {% endif %}
               </td>
 
-              <td>{{ item.started_at }}</td>
+              <td>
+                {% if item.started_at %}
+                  {{ item.started_at.strftime("%Y-%m-%d %H:%M:%S") }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
 
               <td>
                 <a href="/executions/{{ item.id }}">Ver detalle</a>
