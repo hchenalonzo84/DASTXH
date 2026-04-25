@@ -1,92 +1,138 @@
 # ==========================================================
 # docker-compose.yml
-# DASTXH - Orquestación principal del prototipo
+# DASTXH - Orquestación principal del proyecto
 #
-# Servicios incluidos:
-#   - db            : Base de datos principal de DASTXH
-#   - orquestador   : Backend principal (GUI web + API)
-#   - pgadmin       : Administración manual de PostgreSQL
-#   - combo-lab-db  : Base de datos propia del laboratorio combinado
-#   - combo-lab     : Laboratorio combinado tipo tienda online
-#
-# Importante:
-# - La BD de DASTXH y la BD del laboratorio SON DISTINTAS.
-# - DASTXH guarda historial, evidencia y artifacts.
-# - combo-lab guarda productos y reseñas del laboratorio.
+# Este archivo levanta:
+# - la base de datos principal de DASTXH
+# - el backend principal (orquestador)
+# - pgAdmin para revisar la BD principal
+# - la base de datos del laboratorio combinado
+# - el laboratorio combinado
 #
 # Nota importante sobre PostgreSQL 18+:
-# - Estas imágenes ahora esperan el volumen en /var/lib/postgresql
-#   y no en /var/lib/postgresql/data
+# Los volúmenes deben montarse en /var/lib/postgresql
+# y no en /var/lib/postgresql/data
 # ==========================================================
 
 services:
   # --------------------------------------------------------
   # Servicio: db
-  # - Base de datos PostgreSQL principal de DASTXH
-  # - Aquí se guardan ejecuciones, evidencia y artifacts
+  # Base de datos principal de DASTXH
+  # Aquí se guarda:
+  # - historial de ejecuciones
+  # - resultados HTTP
+  # - resultados XSS
+  # - agrupaciones IA
+  # - artifacts y reportes
   # --------------------------------------------------------
   db:
     image: postgres:18.3-alpine3.23
     container_name: dastxh-db
     restart: unless-stopped
 
+    # Variables de entorno internas de PostgreSQL
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
+    # Puerto expuesto al host para acceso externo opcional
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
 
     volumes:
+      # Volumen persistente de PostgreSQL principal
+      # IMPORTANTE: en PostgreSQL 18+ usar /var/lib/postgresql
       - pgdata:/var/lib/postgresql
+
+      # Script de creación de esquema inicial de DASTXH
+      # Solo se ejecuta cuando la BD se inicializa desde cero
       - ./db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
 
+    # Healthcheck para que otros servicios esperen a que
+    # PostgreSQL esté realmente listo antes de usarse
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 20s
 
     networks:
       - dastxh_net
 
   # --------------------------------------------------------
   # Servicio: orquestador
-  # - Contenedor principal de DASTXH
-  # - Aloja la GUI web, la API y las herramientas de análisis
+  # Backend principal de DASTXH
+  #
+  # Aloja:
+  # - GUI web
+  # - API
+  # - lógica de escaneo
+  # - integración opcional con IA local
   # --------------------------------------------------------
   orquestador:
     build:
+      # Carpeta donde está el Dockerfile del backend
       context: ./orquestador
       dockerfile: Dockerfile
 
     container_name: dastxh-orquestador
     restart: unless-stopped
 
+    # No arranca completamente hasta que la BD principal
+    # esté saludable
     depends_on:
       db:
         condition: service_healthy
 
     environment:
-      # Conexión a PostgreSQL principal de DASTXH
+      # Conexión del backend hacia la BD principal
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
 
-      # Timeout por defecto del backend
+      # Timeout general del backend para evaluaciones
       DEFAULT_TIMEOUT_SECONDS: ${DEFAULT_TIMEOUT_SECONDS:-30}
 
-      # Directorio lógico de trabajo dentro del contenedor
+      # Carpeta lógica dentro del contenedor donde se
+      # guardan reportes y evidencias
       WORKDIR: /work
 
+      # ----------------------------------------------------
+      # Variables para integración opcional con IA local
+      # ----------------------------------------------------
+      # Activa o desactiva la interpretación con IA
+      DASTXH_AI_ENABLED: ${DASTXH_AI_ENABLED:-false}
+
+      # Endpoint OpenAI-compatible del Docker Model Runner
+      DASTXH_AI_BASE_URL: ${DASTXH_AI_BASE_URL:-http://model-runner.docker.internal:12434/v1}
+
+      # Modelo local a usar
+      DASTXH_AI_MODEL: ${DASTXH_AI_MODEL:-ai/llama3.2}
+
+      # Docker Model Runner local no requiere una API key real
+      DASTXH_AI_API_KEY: ${DASTXH_AI_API_KEY:-not-needed}
+
+      # Tiempo máximo de espera para la interpretación IA
+      DASTXH_AI_TIMEOUT_SECONDS: ${DASTXH_AI_TIMEOUT_SECONDS:-180}
+
+    # Puerto expuesto para la GUI y la API web
     ports:
       - "${WEB_PORT:-8000}:8000"
 
     volumes:
+      # Carpeta local visible desde el host donde el backend
+      # guardará reportes, JSON y artifacts
       - ./workdata:/work
 
+    # Permite que el contenedor resuelva nombres útiles
+    # para llegar al host / Docker Model Runner
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "model-runner.docker.internal:host-gateway"
+
+    # Directorio de trabajo interno del backend
     working_dir: /app/app
 
+    # Comando de inicio del backend con Uvicorn
     command:
       [
         "uvicorn",
@@ -101,25 +147,29 @@ services:
 
   # --------------------------------------------------------
   # Servicio: pgadmin
-  # - Interfaz web para administrar la BD principal de DASTXH
+  # Interfaz web para administrar la base de datos principal
   # --------------------------------------------------------
   pgadmin:
     image: dpage/pgadmin4:9.8
     container_name: dastxh-pgadmin
     restart: unless-stopped
 
+    # Espera a que la BD principal esté saludable
     depends_on:
       db:
         condition: service_healthy
 
     environment:
+      # Credenciales iniciales de acceso a pgAdmin
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
 
+    # Puerto web de pgAdmin
     ports:
       - "${PGADMIN_PORT:-5050}:80"
 
     volumes:
+      # Volumen persistente de configuración interna de pgAdmin
       - pgadmin_data:/var/lib/pgadmin
 
     networks:
@@ -127,8 +177,10 @@ services:
 
   # --------------------------------------------------------
   # Servicio: combo-lab-db
-  # - Base de datos propia del laboratorio combinado
-  # - No debe mezclarse con la BD principal de DASTXH
+  # Base de datos propia del laboratorio combinado
+  #
+  # Esta BD NO es la misma de DASTXH.
+  # Se usa solo para el laboratorio.
   # --------------------------------------------------------
   combo-lab-db:
     image: postgres:18.3-alpine3.23
@@ -136,75 +188,95 @@ services:
     restart: unless-stopped
 
     environment:
-      POSTGRES_DB: combolab
-      POSTGRES_USER: combolab
-      POSTGRES_PASSWORD: combolab
+      POSTGRES_DB: ${COMBO_LAB_POSTGRES_DB:-combo_lab}
+      POSTGRES_USER: ${COMBO_LAB_POSTGRES_USER:-combo_user}
+      POSTGRES_PASSWORD: ${COMBO_LAB_POSTGRES_PASSWORD:-combo_pass}
 
+    # Puerto de la BD del laboratorio
     ports:
-      - "5543:5432"
+      - "${COMBO_LAB_POSTGRES_PORT:-5543}:5432"
 
     volumes:
+      # Volumen persistente del laboratorio
+      # IMPORTANTE: en PostgreSQL 18+ usar /var/lib/postgresql
       - combo_lab_pgdata:/var/lib/postgresql
-      - ./labs/combo-lab/db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
 
+      # Script inicial del esquema de la BD del laboratorio
+      # IMPORTANTE: aquí debe ser init.sql, no schema.sql
+      - ./labs/combo-lab/db/init.sql:/docker-entrypoint-initdb.d/001-combo-lab-init.sql:ro
+
+    # Healthcheck para que el laboratorio espere a que
+    # su BD esté lista
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U combolab -d combolab || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${COMBO_LAB_POSTGRES_USER:-combo_user} -d ${COMBO_LAB_POSTGRES_DB:-combo_lab}"
+        ]
       interval: 5s
       timeout: 5s
       retries: 20
-      start_period: 20s
 
     networks:
       - dastxh_net
+
   # --------------------------------------------------------
   # Servicio: combo-lab
-  # - Laboratorio combinado tipo tienda online
-  # - Incluye superficies para:
-  #     * XSS reflejado
-  #     * XSS persistente
-  #     * headers/cookies inseguros
-  # - Tiene su propia BD
+  # Laboratorio combinado para pruebas controladas
+  #
+  # Sirve para:
+  # - búsqueda parametrizada
+  # - pruebas de cabeceras
+  # - pruebas de XSS reflejado con Dalfox
   # --------------------------------------------------------
   combo-lab:
     build:
+      # Carpeta donde vive el laboratorio combinado
       context: ./labs/combo-lab
       dockerfile: Dockerfile
 
     container_name: dastxh-combo-lab
     restart: unless-stopped
 
+    # El laboratorio no inicia completamente hasta que
+    # su BD esté saludable
     depends_on:
       combo-lab-db:
         condition: service_healthy
 
     environment:
-      # Conexión a la BD propia del laboratorio
-      LAB_DATABASE_URL: postgresql://combolab:combolab@combo-lab-db:5432/combolab
+      # Conexión interna del laboratorio hacia su propia BD
+      # IMPORTANTE: el código del lab espera LAB_DATABASE_URL
+      LAB_DATABASE_URL: postgresql://${COMBO_LAB_POSTGRES_USER:-combo_user}:${COMBO_LAB_POSTGRES_PASSWORD:-combo_pass}@combo-lab-db:5432/${COMBO_LAB_POSTGRES_DB:-combo_lab}
 
-    # Puerto expuesto al host:
-    # host 5003 -> contenedor 5000
+      # Puerto interno del laboratorio dentro del contenedor
+      PORT: 5000
+
+      # Salida Python sin buffering, útil para logs
+      PYTHONUNBUFFERED: "1"
+
+    # Puerto expuesto del laboratorio hacia el host
     ports:
-      - "5003:5000"
+      - "${COMBO_LAB_PORT:-5003}:5000"
 
     networks:
       - dastxh_net
 
-
 # ----------------------------------------------------------
-# Volúmenes nombrados
-# - pgdata           : persistencia de PostgreSQL principal
-# - pgadmin_data     : persistencia de pgAdmin
-# - combo_lab_pgdata : persistencia de la BD del laboratorio
+# Volúmenes nombrados del proyecto
 # ----------------------------------------------------------
 volumes:
+  # Volumen de la BD principal
   pgdata:
+
+  # Volumen de configuración de pgAdmin
   pgadmin_data:
+
+  # Volumen de la BD del laboratorio combinado
   combo_lab_pgdata:
 
-
 # ----------------------------------------------------------
-# Red explícita del proyecto
-# - Red compartida entre DASTXH y el laboratorio combinado
+# Red interna compartida del proyecto
 # ----------------------------------------------------------
 networks:
   dastxh_net:

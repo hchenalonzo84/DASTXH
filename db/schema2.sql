@@ -1,11 +1,25 @@
 -- =========================================================
--- DASTXH - Schema base v6
+-- DASTXH - Schema base v5
 --
 -- Objetivo de esta versión:
 --   - conservar executions como entidad principal
---   - persistir resultados HTTP normalizados
---   - persistir XSS normalizado
---   - persistir agrupación XSS preparada para futura IA
+--   - guardar perfil de escaneo y uso interno de hsecscan
+--   - persistir resultados normalizados de headers, cookies y XSS
+--   - agregar score HTTP, grade HTTP y pruebas HTTP detalladas
+--
+-- Tablas principales:
+--   executions        : historial principal de ejecuciones
+--   header_results    : resumen agregado HTTP
+--   header_checks     : detalle por cabecera requerida
+--   cookie_checks     : detalle por cookie detectada
+--   http_tests        : pruebas HTTP detalladas (A/B/C + CORS)
+--   hsecscan_results  : resumen/evidencia capa 2
+--   xss_results       : resumen/evidencia capa 3
+--   xss_findings      : hallazgos XSS normalizados por ejecución
+--   artifacts         : archivos generados por ejecución
+--
+-- Vista:
+--   vw_execution_summary : resumen para historial GUI / consultas
 -- =========================================================
 
 -- =========================================================
@@ -155,6 +169,8 @@ CREATE INDEX IF NOT EXISTS ix_http_tests_status
 
 CREATE INDEX IF NOT EXISTS ix_http_tests_category
   ON http_tests (category);
+
+
 -- =========================================================
 -- 6) RESULTADOS CAPA 2: HSECSCAN
 -- =========================================================
@@ -183,8 +199,6 @@ CREATE TABLE IF NOT EXISTS xss_results (
 
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-
 -- =========================================================
 -- 8) RESULTADOS CAPA 3: HALLAZGOS XSS NORMALIZADOS
 -- =========================================================
@@ -217,52 +231,7 @@ CREATE INDEX IF NOT EXISTS ix_xss_findings_severity
 
 
 -- =========================================================
--- 9) AGRUPACIÓN XSS PREPARADA PARA IA
--- =========================================================
-CREATE TABLE IF NOT EXISTS xss_ai_groups (
-  id                     BIGSERIAL PRIMARY KEY,
-
-  execution_id           BIGINT NOT NULL
-                         REFERENCES executions(id) ON DELETE CASCADE,
-
-  group_order            INT NOT NULL CHECK (group_order > 0),
-  entry_type             TEXT NOT NULL
-                         CHECK (entry_type IN ('individual', 'group')),
-
-  parameter_probable     TEXT NULL,
-  context_probable       TEXT NULL,
-  severity_mode          TEXT NULL,
-  payload_signature      TEXT NULL,
-  occurrences            INT NOT NULL DEFAULT 1 CHECK (occurrences >= 1),
-  target_url             TEXT NULL,
-
-  sample_finding_orders  JSONB NULL,
-  sample_payloads        JSONB NULL,
-  sample_evidence        JSONB NULL,
-
-  interpretation_humana  TEXT NULL,
-  risk_summary           TEXT NULL,
-  likely_root_cause      TEXT NULL,
-  recommended_review_area TEXT NULL,
-  confidence             TEXT NULL,
-  model_name             TEXT NULL,
-
-  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-  CONSTRAINT ux_xss_ai_groups_execution_order
-    UNIQUE (execution_id, group_order)
-);
-
-CREATE INDEX IF NOT EXISTS ix_xss_ai_groups_execution_id
-  ON xss_ai_groups (execution_id);
-
-CREATE INDEX IF NOT EXISTS ix_xss_ai_groups_entry_type
-  ON xss_ai_groups (entry_type);
-
-CREATE INDEX IF NOT EXISTS ix_xss_ai_groups_severity_mode
-  ON xss_ai_groups (severity_mode);
--- =========================================================
--- 10) ARTEFACTOS / REPORTES GENERADOS
+-- 9) ARTEFACTOS / REPORTES GENERADOS
 -- =========================================================
 CREATE TABLE IF NOT EXISTS artifacts (
   id                   BIGSERIAL PRIMARY KEY,
@@ -304,7 +273,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_artifacts_execution_relative_path
 
 
 -- =========================================================
--- 11) VISTA DE RESUMEN PARA HISTORIAL
+-- 10) VISTA DE RESUMEN PARA HISTORIAL
 -- =========================================================
 CREATE OR REPLACE VIEW vw_execution_summary AS
 SELECT
@@ -331,8 +300,7 @@ SELECT
   xr.tool_rc AS dalfox_rc,
   xr.findings_count AS xss_findings_count,
 
-  COUNT(DISTINCT xag.id) AS xss_ai_groups_count,
-  COUNT(DISTINCT a.id) AS artifacts_count
+  COUNT(a.id) AS artifacts_count
 FROM executions e
 LEFT JOIN header_results hr
   ON hr.execution_id = e.id
@@ -340,8 +308,6 @@ LEFT JOIN hsecscan_results hs
   ON hs.execution_id = e.id
 LEFT JOIN xss_results xr
   ON xr.execution_id = e.id
-LEFT JOIN xss_ai_groups xag
-  ON xag.execution_id = e.id
 LEFT JOIN artifacts a
   ON a.execution_id = e.id
 GROUP BY

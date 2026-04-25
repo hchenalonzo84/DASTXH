@@ -1,14 +1,15 @@
 """
 scanner_service.py
 - Servicio reutilizable para ejecutar una evaluación completa DASTXH.
-- Esta versión queda adaptada al esquema normalizado v4.
+- Esta versión queda adaptada al esquema normalizado v6.
 
 Objetivos de esta versión:
 - conservar flujo síncrono y background
 - respetar scan_profile superficial/profundo
 - habilitar hsecscan automáticamente solo cuando corresponda
-- ocultar hsecscan del pipeline cuando no aplique
 - filtrar hallazgos XSS vacíos
+- preparar agrupación XSS para IA
+- intentar interpretación con backend compatible con OpenAI
 """
 
 from __future__ import annotations
@@ -41,6 +42,11 @@ from config import (
     RUN_META_JSON,
 )
 from report import build_report_html, build_report_md
+from services.xss_ai_service import build_xss_ai_input_payload
+from services.xss_model_runner_service import (
+    interpret_xss_groups_with_ai,
+    merge_xss_ai_interpretations,
+)
 from tools.curl_custom import curl_fetch_headers, evaluate_headers_and_cookies
 from tools.dalfox_tool import extract_structured_findings, read_summary, run_dalfox
 from tools.hsecscan_tool import run_hsecscan
@@ -143,10 +149,6 @@ def _build_unique_run_id(reports_root: Path, started: datetime) -> str:
 def _resolve_enable_hsecscan(scan_profile: str, enable_hsecscan: Optional[bool]) -> bool:
     """
     Resuelve si hsecscan debe ejecutarse.
-
-    Regla actual:
-    - si viene un valor explícito, se respeta
-    - si no viene, se habilita solo en perfil profundo
     """
     if enable_hsecscan is not None:
         return bool(enable_hsecscan)
@@ -163,8 +165,7 @@ def _prepare_scan_context(
     enable_hsecscan: Optional[bool],
 ) -> Tuple[ScanContext, Dict[str, Any]]:
     """
-    Prepara la estructura mínima de una nueva ejecución, pero
-    todavía no ejecuta el pipeline.
+    Prepara la estructura mínima de una nueva ejecución.
     """
     started = utc_now()
 
@@ -222,6 +223,8 @@ def _prepare_scan_context(
     write_json(context.run_meta_path, run_meta)
 
     return context, run_meta
+
+
 def _run_scan_pipeline(
     dsn: str,
     context: ScanContext,
@@ -274,7 +277,7 @@ def _run_scan_pipeline(
         )
 
         # --------------------------------------------------
-        # CAPA 2: hsecscan (solo si aplica)
+        # CAPA 2: hsecscan
         # --------------------------------------------------
         hsecscan_txt_path = report_dir / HSECSCAN_TXT
         hsecscan_rc: Optional[int] = None
@@ -324,7 +327,67 @@ def _run_scan_pipeline(
         )
 
         # --------------------------------------------------
-        # Generar reportes principales
+        # PREPARACIÓN XSS PARA IA
+        # --------------------------------------------------
+        xss_ai_input_payload = build_xss_ai_input_payload(structured_findings)
+
+        # Agregamos group_order estable para que BD, reporte e IA
+        # trabajen con la misma numeración.
+        prepared_entries: list[dict[str, Any]] = []
+        for index, raw_entry in enumerate(xss_ai_input_payload.get("entries", []), start=1):
+            entry = dict(raw_entry)
+            entry["group_order"] = index
+            prepared_entries.append(entry)
+
+        xss_ai_input_payload["entries"] = prepared_entries
+
+        # Guardar grupos preparados en BD
+        db_layer.insert_xss_ai_groups(
+            dsn=dsn,
+            execution_id=execution_id,
+            xss_ai_payload=xss_ai_input_payload,
+        )
+
+        # Intentar interpretación con IA
+        ai_result = interpret_xss_groups_with_ai(xss_ai_input_payload)
+
+        # Por defecto usamos los grupos preparados
+        enriched_xss_ai_groups = prepared_entries
+
+        if ai_result.get("ok"):
+            db_layer.update_xss_ai_group_interpretations(
+                dsn=dsn,
+                execution_id=execution_id,
+                interpretations=ai_result.get("groups", []),
+                model_name=ai_result.get("model_name"),
+            )
+
+            enriched_xss_ai_groups = merge_xss_ai_interpretations(
+                prepared_entries=prepared_entries,
+                interpreted_groups=ai_result.get("groups", []),
+                model_name=ai_result.get("model_name"),
+            )
+
+        run_meta["xss_ai_preparation"] = {
+            "enabled": True,
+            "mode": xss_ai_input_payload.get("mode"),
+            "total_findings": xss_ai_input_payload.get("total_findings"),
+            "total_groups": xss_ai_input_payload.get("total_groups"),
+            "entries": enriched_xss_ai_groups,
+        }
+
+        run_meta["xss_ai_interpretation"] = {
+            "enabled": ai_result.get("enabled"),
+            "ok": ai_result.get("ok"),
+            "skipped": ai_result.get("skipped"),
+            "model_name": ai_result.get("model_name"),
+            "error": ai_result.get("error"),
+        }
+
+        write_json(run_meta_path, run_meta)
+
+        # --------------------------------------------------
+        # REPORTES
         # --------------------------------------------------
         report_md = build_report_md(
             target_url=url,
@@ -333,6 +396,7 @@ def _run_scan_pipeline(
             hsecscan_filename=HSECSCAN_TXT if enable_hsecscan else None,
             dalfox_json_filename=DALFOX_JSON,
             dalfox_txt_filename=DALFOX_TXT,
+            xss_ai_groups=enriched_xss_ai_groups,
         )
 
         report_md_path = report_dir / REPORT_MD
@@ -345,6 +409,7 @@ def _run_scan_pipeline(
             hsecscan_filename=HSECSCAN_TXT if enable_hsecscan else None,
             dalfox_json_filename=DALFOX_JSON,
             dalfox_txt_filename=DALFOX_TXT,
+            xss_ai_groups=enriched_xss_ai_groups,
         )
 
         report_html_path = report_dir / REPORT_HTML
@@ -394,6 +459,8 @@ def _run_scan_pipeline(
         run_meta["finished_at"] = finished.isoformat()
         run_meta["status"] = "finished"
         run_meta["cumplimiento_pct"] = hdr_eval.get("cumplimiento_pct")
+        run_meta["http_score"] = hdr_eval.get("http_score")
+        run_meta["http_grade"] = hdr_eval.get("http_grade")
         run_meta["hsecscan_rc"] = hsecscan_rc
         run_meta["dalfox_rc"] = dalfox_rc
         run_meta["findings_count"] = effective_findings_count
@@ -425,16 +492,17 @@ def _run_scan_pipeline(
             "report_md": f"{report_dir_logical}/{REPORT_MD}",
             "report_html": f"{report_dir_logical}/{REPORT_HTML}",
             "compliance_pct": hdr_eval.get("cumplimiento_pct"),
+            "http_score": hdr_eval.get("http_score"),
+            "http_grade": hdr_eval.get("http_grade"),
             "hsecscan_rc": hsecscan_rc,
             "dalfox_rc": dalfox_rc,
             "findings_count": effective_findings_count,
+            "xss_ai_mode": xss_ai_input_payload.get("mode"),
+            "xss_ai_total_groups": xss_ai_input_payload.get("total_groups"),
             "artifacts": run_meta["artifacts"],
         }
 
     except Exception as exc:
-        # --------------------------------------------------
-        # Manejo controlado de errores
-        # --------------------------------------------------
         err = str(exc)
         finished = utc_now()
 

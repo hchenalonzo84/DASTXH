@@ -5,15 +5,14 @@
   <h2>Historial de ejecuciones</h2>
   <p>
     Aquí puedes consultar las evaluaciones registradas en PostgreSQL,
-    incluyendo estado, origen, perfil, puntaje HTTP, cumplimiento de cabeceras,
-    hallazgos XSS y acceso al detalle de cada ejecución.
+    incluyendo estado, origen, perfil, puntaje HTTP, hallazgos XSS,
+    grupos preparados para IA y acceso al detalle de cada ejecución.
   </p>
 
   <div class="notice" style="margin-top: 1rem; margin-bottom: 1rem;">
     <strong>Seguimiento de ejecuciones.</strong>
     Las evaluaciones pueden aparecer como iniciadas o en progreso mientras
-    el pipeline termina en segundo plano. En esos casos, algunos datos aún
-    pueden no haberse persistido por completo.
+    el pipeline termina en segundo plano.
   </div>
 
   {% if executions %}
@@ -30,6 +29,7 @@
             <th>Nota HTTP</th>
             <th>Cumplimiento</th>
             <th>XSS</th>
+            <th>Grupos IA</th>
             <th>Archivos</th>
             <th>Inicio</th>
             <th>Detalle</th>
@@ -92,6 +92,18 @@
               <td>
                 {% if item.xss_findings_count is not none %}
                   {{ item.xss_findings_count }}
+                {% else %}
+                  {% if item.status in ["initiated", "running"] %}
+                    En proceso
+                  {% else %}
+                    -
+                  {% endif %}
+                {% endif %}
+              </td>
+
+              <td>
+                {% if item.xss_ai_groups_count is not none %}
+                  {{ item.xss_ai_groups_count }}
                 {% else %}
                   {% if item.status in ["initiated", "running"] %}
                     En proceso

@@ -65,6 +65,7 @@
             <th>Nota HTTP</th>
             <th>Cumplimiento</th>
             <th>XSS</th>
+            <th>Grupos IA</th>
             <th>Inicio</th>
             <th>Detalle</th>
           </tr>
@@ -123,6 +124,18 @@
               <td>
                 {% if item.xss_findings_count is not none %}
                   {{ item.xss_findings_count }}
+                {% else %}
+                  {% if item.status in ["initiated", "running"] %}
+                    En proceso
+                  {% else %}
+                    -
+                  {% endif %}
+                {% endif %}
+              </td>
+
+              <td>
+                {% if item.xss_ai_groups_count is not none %}
+                  {{ item.xss_ai_groups_count }}
                 {% else %}
                   {% if item.status in ["initiated", "running"] %}
                     En proceso

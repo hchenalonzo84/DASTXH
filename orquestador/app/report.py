@@ -5,12 +5,10 @@ report.py
   * report.md
   * report.html
 
-Objetivo:
-- centralizar la presentación de resultados
-- adaptarse a la ejecución real del pipeline
-- ocultar hsecscan cuando no aplica
-- mostrar score HTTP, grade y pruebas detalladas
-- mantener el reporte en español
+Esta versión:
+- muestra score HTTP y pruebas HTTP
+- muestra preparación XSS para futura IA
+- mantiene hsecscan oculto cuando no aplica
 """
 
 from __future__ import annotations
@@ -229,6 +227,20 @@ def _status_label_es(value: str) -> str:
     return mapping.get((value or "").strip().lower(), value or "-")
 
 
+def _score_label(value: Any, status: str) -> str:
+    """
+    Muestra el puntaje como Mozilla:
+    - falló/advertencia -> valor negativo o 0 real
+    - aprobada -> 0
+    - informativo -> -
+    """
+    status_norm = (status or "").strip().lower()
+    if status_norm == "info":
+        return "-"
+    try:
+        return str(int(value or 0))
+    except Exception:
+        return "-"
 def _http_tests_md(http_tests: List[Dict[str, Any]]) -> str:
     """
     Construye la sección Markdown de pruebas HTTP.
@@ -240,10 +252,12 @@ def _http_tests_md(http_tests: List[Dict[str, Any]]) -> str:
     for item in http_tests:
         lines.append(f"- **{item.get('name', '-') }**")
         lines.append(f"  - Estado: **{_status_label_es(str(item.get('status', '')))}**")
-        lines.append(f"  - Puntaje: **{item.get('score_delta', 0)}**")
+        lines.append(f"  - Puntaje: **{_score_label(item.get('score_delta', 0), str(item.get('status', '')))}**")
         lines.append(f"  - Razón: {item.get('reason', '-')}")
         lines.append(f"  - Recomendación: {item.get('recommendation', '-')}")
     return "\n".join(lines)
+
+
 def _http_tests_html(http_tests: List[Dict[str, Any]]) -> str:
     """
     Construye una tabla HTML de pruebas HTTP.
@@ -258,7 +272,7 @@ def _http_tests_html(http_tests: List[Dict[str, Any]]) -> str:
             <tr>
               <td>{escape(str(item.get("name", "-")))}</td>
               <td>{escape(_status_label_es(str(item.get("status", ""))))}</td>
-              <td>{escape(str(item.get("score_delta", 0)))}</td>
+              <td>{escape(_score_label(item.get("score_delta", 0), str(item.get("status", ""))))}</td>
               <td>{escape(str(item.get("reason", "-")))}</td>
               <td>{escape(str(item.get("recommendation", "-")))}</td>
             </tr>
@@ -273,7 +287,7 @@ def _http_tests_html(http_tests: List[Dict[str, Any]]) -> str:
         <thead>
           <tr>
             <th style="text-align:left; border-bottom:1px solid #d1d5db; padding:0.6rem;">Prueba</th>
-            <th style="text-align:left; border-bottom:1px solid #d1d5db; padding:0.6rem;">Estado</th>
+            <th style="text-align:left; border-bottom:1px solid #d1d5db; padding:0.6rem;">Resultado</th>
             <th style="text-align:left; border-bottom:1px solid #d1d5db; padding:0.6rem;">Puntaje</th>
             <th style="text-align:left; border-bottom:1px solid #d1d5db; padding:0.6rem;">Razón</th>
             <th style="text-align:left; border-bottom:1px solid #d1d5db; padding:0.6rem;">Recomendación</th>
@@ -281,6 +295,67 @@ def _http_tests_html(http_tests: List[Dict[str, Any]]) -> str:
         </thead>
         <tbody>
           {rows_html}
+        </tbody>
+      </table>
+    </div>
+    """
+
+
+def _xss_ai_groups_md(xss_ai_groups: List[Dict[str, Any]]) -> str:
+    """
+    Construye sección Markdown de grupos XSS preparados para IA.
+    """
+    if not xss_ai_groups:
+        return "- No hay grupos XSS preparados para IA."
+
+    lines: List[str] = []
+    for item in xss_ai_groups:
+        lines.append(f"- **Grupo {item.get('group_order', '-')}**")
+        lines.append(f"  - Tipo: {item.get('entry_type', '-')}")
+        lines.append(f"  - Parámetro probable: {item.get('parameter_probable', '-') or '-'}")
+        lines.append(f"  - Contexto probable: {item.get('context_probable', '-') or '-'}")
+        lines.append(f"  - Severidad: {item.get('severity_mode', '-') or '-'}")
+        lines.append(f"  - Ocurrencias: {item.get('occurrences', 0)}")
+    return "\n".join(lines)
+
+
+def _xss_ai_groups_html(xss_ai_groups: List[Dict[str, Any]]) -> str:
+    """
+    Construye tabla HTML de grupos XSS preparados para IA.
+    """
+    if not xss_ai_groups:
+        return "<p>No hay grupos XSS preparados para IA.</p>"
+
+    rows: List[str] = []
+    for item in xss_ai_groups:
+        rows.append(
+            f"""
+            <tr>
+              <td>{escape(str(item.get("group_order", "-")))}</td>
+              <td>{escape(str(item.get("entry_type", "-")))}</td>
+              <td>{escape(str(item.get("parameter_probable", "-") or "-"))}</td>
+              <td>{escape(str(item.get("context_probable", "-") or "-"))}</td>
+              <td>{escape(str(item.get("severity_mode", "-") or "-"))}</td>
+              <td>{escape(str(item.get("occurrences", 0)))}</td>
+            </tr>
+            """.strip()
+        )
+
+    return f"""
+    <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; margin-top:0.75rem;">
+        <thead>
+          <tr>
+            <th style="text-align:left; border-bottom:1px solid #d1d5db; padding:0.6rem;">Grupo</th>
+            <th style="text-align:left; border-bottom:1px solid #d1d5db; padding:0.6rem;">Tipo</th>
+            <th style="text-align:left; border-bottom:1px solid #d1d5db; padding:0.6rem;">Parámetro probable</th>
+            <th style="text-align:left; border-bottom:1px solid #d1d5db; padding:0.6rem;">Contexto probable</th>
+            <th style="text-align:left; border-bottom:1px solid #d1d5db; padding:0.6rem;">Severidad</th>
+            <th style="text-align:left; border-bottom:1px solid #d1d5db; padding:0.6rem;">Ocurrencias</th>
+          </tr>
+        </thead>
+        <tbody>
+          {"".join(rows)}
         </tbody>
       </table>
     </div>
@@ -298,6 +373,7 @@ def build_report_md(
     hsecscan_filename: Optional[str],
     dalfox_json_filename: str,
     dalfox_txt_filename: str = "dalfox.txt",
+    xss_ai_groups: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
     Construye el contenido del reporte principal en formato Markdown.
@@ -312,11 +388,13 @@ def build_report_md(
     missing = _to_list(hdr_eval.get("missing"))
     cookies_flags = _to_list(hdr_eval.get("cookies_flags"))
     http_tests = _to_list(hdr_eval.get("http_tests"))
+    xss_ai_groups = _to_list(xss_ai_groups)
 
     present_md = _md_bullets([str(x) for x in present])
     missing_md = _md_bullets([str(x) for x in missing])
     cookies_md = _cookie_flags_md(cookies_flags)
     http_tests_md = _http_tests_md(http_tests)
+    xss_ai_groups_md = _xss_ai_groups_md(xss_ai_groups)
 
     recommendations = _build_recommendations(hdr_eval)
     recommendations_md = _md_bullets(recommendations)
@@ -394,6 +472,12 @@ Salida técnica: `{dalfox_txt_filename}`
 
 ---
 
+## Agrupación XSS preparada para IA
+
+{xss_ai_groups_md}
+
+---
+
 ## Recomendaciones
 
 {recommendations_md}
@@ -417,6 +501,7 @@ def build_report_html(
     hsecscan_filename: Optional[str],
     dalfox_json_filename: str,
     dalfox_txt_filename: str = "dalfox.txt",
+    xss_ai_groups: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
     Construye el contenido del reporte en HTML.
@@ -431,6 +516,7 @@ def build_report_html(
     missing = [str(x) for x in _to_list(hdr_eval.get("missing"))]
     cookies_flags = _to_list(hdr_eval.get("cookies_flags"))
     http_tests = _to_list(hdr_eval.get("http_tests"))
+    xss_ai_groups = _to_list(xss_ai_groups)
 
     recommendations = _build_recommendations(hdr_eval)
     include_hsecscan = _should_include_hsecscan(report_dir, hsecscan_filename)
@@ -439,6 +525,7 @@ def build_report_html(
     missing_html = _html_list(missing)
     cookies_html = _cookie_flags_html(cookies_flags)
     http_tests_html = _http_tests_html(http_tests)
+    xss_ai_groups_html = _xss_ai_groups_html(xss_ai_groups)
     recommendations_html = _html_list(recommendations, empty_label="Sin recomendaciones.")
 
     safe_target_url = escape(str(target_url))
@@ -607,6 +694,11 @@ def build_report_html(
         Revisar la salida estructurada y la evidencia técnica para validar hallazgos
         en entornos autorizados.
       </p>
+    </section>
+
+    <section class="card">
+      <h2>Agrupación XSS preparada para IA</h2>
+      {xss_ai_groups_html}
     </section>
 
     <section class="card">

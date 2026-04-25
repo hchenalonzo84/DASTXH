@@ -1,0 +1,212 @@
+# ==========================================================
+# docker-compose.yml
+# DASTXH - Orquestación principal del prototipo
+#
+# Servicios incluidos:
+#   - db            : Base de datos principal de DASTXH
+#   - orquestador   : Backend principal (GUI web + API)
+#   - pgadmin       : Administración manual de PostgreSQL
+#   - combo-lab-db  : Base de datos propia del laboratorio combinado
+#   - combo-lab     : Laboratorio combinado tipo tienda online
+#
+# Importante:
+# - La BD de DASTXH y la BD del laboratorio SON DISTINTAS.
+# - DASTXH guarda historial, evidencia y artifacts.
+# - combo-lab guarda productos y reseñas del laboratorio.
+#
+# Nota importante sobre PostgreSQL 18+:
+# - Estas imágenes ahora esperan el volumen en /var/lib/postgresql
+#   y no en /var/lib/postgresql/data
+# ==========================================================
+
+services:
+  # --------------------------------------------------------
+  # Servicio: db
+  # - Base de datos PostgreSQL principal de DASTXH
+  # - Aquí se guardan ejecuciones, evidencia y artifacts
+  # --------------------------------------------------------
+  db:
+    image: postgres:18.3-alpine3.23
+    container_name: dastxh-db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+    networks:
+      - dastxh_net
+
+  # --------------------------------------------------------
+  # Servicio: orquestador
+  # - Contenedor principal de DASTXH
+  # - Aloja la GUI web, la API y las herramientas de análisis
+  # --------------------------------------------------------
+  orquestador:
+    build:
+      context: ./orquestador
+      dockerfile: Dockerfile
+
+    container_name: dastxh-orquestador
+    restart: unless-stopped
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    environment:
+      # Conexión a PostgreSQL principal de DASTXH
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+
+      # Timeout por defecto del backend
+      DEFAULT_TIMEOUT_SECONDS: ${DEFAULT_TIMEOUT_SECONDS:-30}
+
+      # Directorio lógico de trabajo dentro del contenedor
+      WORKDIR: /work
+
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+
+    volumes:
+      - ./workdata:/work
+
+    working_dir: /app/app
+
+    command:
+      [
+        "uvicorn",
+        "webapp:app",
+        "--host", "0.0.0.0",
+        "--port", "8000",
+        "--reload"
+      ]
+
+    networks:
+      - dastxh_net
+
+  # --------------------------------------------------------
+  # Servicio: pgadmin
+  # - Interfaz web para administrar la BD principal de DASTXH
+  # --------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:9.8
+    container_name: dastxh-pgadmin
+    restart: unless-stopped
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+    networks:
+      - dastxh_net
+
+  # --------------------------------------------------------
+  # Servicio: combo-lab-db
+  # - Base de datos propia del laboratorio combinado
+  # - No debe mezclarse con la BD principal de DASTXH
+  # --------------------------------------------------------
+  combo-lab-db:
+    image: postgres:18.3-alpine3.23
+    container_name: dastxh-combo-lab-db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: combolab
+      POSTGRES_USER: combolab
+      POSTGRES_PASSWORD: combolab
+
+    ports:
+      - "5543:5432"
+
+    volumes:
+      - combo_lab_pgdata:/var/lib/postgresql
+      - ./labs/combo-lab/db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U combolab -d combolab || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+    networks:
+      - dastxh_net
+  # --------------------------------------------------------
+  # Servicio: combo-lab
+  # - Laboratorio combinado tipo tienda online
+  # - Incluye superficies para:
+  #     * XSS reflejado
+  #     * XSS persistente
+  #     * headers/cookies inseguros
+  # - Tiene su propia BD
+  # --------------------------------------------------------
+  combo-lab:
+    build:
+      context: ./labs/combo-lab
+      dockerfile: Dockerfile
+
+    container_name: dastxh-combo-lab
+    restart: unless-stopped
+
+    depends_on:
+      combo-lab-db:
+        condition: service_healthy
+
+    environment:
+      # Conexión a la BD propia del laboratorio
+      LAB_DATABASE_URL: postgresql://combolab:combolab@combo-lab-db:5432/combolab
+
+    # Puerto expuesto al host:
+    # host 5003 -> contenedor 5000
+    ports:
+      - "5003:5000"
+
+    networks:
+      - dastxh_net
+
+
+# ----------------------------------------------------------
+# Volúmenes nombrados
+# - pgdata           : persistencia de PostgreSQL principal
+# - pgadmin_data     : persistencia de pgAdmin
+# - combo_lab_pgdata : persistencia de la BD del laboratorio
+# ----------------------------------------------------------
+volumes:
+  pgdata:
+  pgadmin_data:
+  combo_lab_pgdata:
+
+
+# ----------------------------------------------------------
+# Red explícita del proyecto
+# - Red compartida entre DASTXH y el laboratorio combinado
+# ----------------------------------------------------------
+networks:
+  dastxh_net:
+    name: dastxh_net
+    driver: bridge

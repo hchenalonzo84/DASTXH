@@ -1,25 +1,15 @@
 """
 db.py
 - Acceso a PostgreSQL usando psycopg (psycopg3).
-- Esta versión queda adaptada al esquema normalizado v5.
+- Adaptado al esquema normalizado v6.
 
-Responsabilidades principales:
-- persistencia de executions
-- persistencia de resultados HTTP:
-    * resumen
-    * detalle por header
-    * detalle por cookie
-    * pruebas HTTP detalladas
-- persistencia de hsecscan
-- persistencia de resultados XSS
-- persistencia de artifacts
-- consultas de historial y detalle
-
-Importante:
-- Se conserva compatibilidad con la GUI actual:
-    * present_json
-    * missing_json
-    * cookies_flags_json
+Responsabilidades:
+- ejecutar operaciones CRUD de persistencia
+- guardar resultados HTTP
+- guardar resultados XSS
+- guardar agrupación XSS preparada para IA
+- guardar interpretaciones generadas por IA
+- exponer consultas de historial y detalle
 """
 
 from __future__ import annotations
@@ -136,6 +126,61 @@ def _normalize_http_test_item(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _normalize_xss_ai_group_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normaliza una entrada agrupada XSS antes de persistirla.
+    """
+    entry_type = str(item.get("entry_type", "group") or "group").strip()
+
+    finding_orders = item.get("finding_orders")
+    if not isinstance(finding_orders, list):
+        finding_orders = item.get("sample_finding_orders") or []
+
+    sample_payloads = item.get("sample_payloads") or []
+    sample_evidence = item.get("sample_evidence") or []
+
+    if entry_type == "individual":
+        finding_order = int(item.get("finding_order", 0) or 0)
+
+        if not finding_orders and finding_order > 0:
+            finding_orders = [finding_order]
+
+        payload = item.get("payload")
+        evidence = item.get("evidence")
+
+        if not sample_payloads and payload:
+            sample_payloads = [payload]
+
+        if not sample_evidence and evidence:
+            sample_evidence = [evidence]
+
+        return {
+            "entry_type": "individual",
+            "parameter_probable": item.get("parameter_probable"),
+            "context_probable": item.get("context_probable"),
+            "severity_mode": item.get("severity") or item.get("severity_mode"),
+            "payload_signature": item.get("payload_signature"),
+            "occurrences": 1,
+            "target_url": item.get("target_url"),
+            "sample_finding_orders": finding_orders,
+            "sample_payloads": sample_payloads,
+            "sample_evidence": sample_evidence,
+        }
+
+    return {
+        "entry_type": "group",
+        "parameter_probable": item.get("parameter_probable"),
+        "context_probable": item.get("context_probable"),
+        "severity_mode": item.get("severity_mode"),
+        "payload_signature": item.get("payload_signature"),
+        "occurrences": int(item.get("occurrences", 1) or 1),
+        "target_url": item.get("target_url"),
+        "sample_finding_orders": finding_orders,
+        "sample_payloads": sample_payloads,
+        "sample_evidence": sample_evidence,
+    }
+
+
 # ==========================================================
 # EJECUCIONES
 # ==========================================================
@@ -191,6 +236,8 @@ def insert_execution(
         raise RuntimeError("No fue posible obtener el id de la ejecución insertada.")
 
     return int(row["id"])
+
+
 def update_execution_status(
     dsn: str,
     execution_id: int,
@@ -290,14 +337,9 @@ def insert_header_results(
     raw_headers_json: Dict[str, Any],
 ) -> None:
     """
-    Inserta los resultados HTTP en forma normalizada:
-
-    - header_results : resumen agregado
-    - header_checks  : una fila por cabecera requerida
-    - cookie_checks  : una fila por cookie evaluada
-    - http_tests     : una fila por prueba HTTP detallada
+    Inserta los resultados HTTP en forma normalizada.
     """
-    _ = raw_headers_json  # compatibilidad intencional
+    _ = raw_headers_json
 
     header_details = _build_header_details_if_missing(hdr_eval)
     cookie_items = [_normalize_cookie_item(item) for item in (hdr_eval.get("cookies_flags", []) or [])]
@@ -420,6 +462,8 @@ def insert_header_results(
                 )
 
         conn.commit()
+
+
 # ==========================================================
 # RESULTADOS CAPA 2: HSECSCAN
 # ==========================================================
@@ -467,7 +511,7 @@ def insert_xss_results(
     xss_findings: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """
-    Inserta los resultados de la Capa 3 en forma normalizada.
+    Inserta los resultados XSS en forma normalizada.
     """
     finding_rows = xss_findings or []
 
@@ -528,6 +572,117 @@ def insert_xss_results(
                         item.get("evidence"),
                         item.get("severity"),
                         _json_or_none(item.get("raw_finding_json")),
+                    ),
+                )
+
+        conn.commit()
+
+
+# ==========================================================
+# AGRUPACIÓN XSS PREPARADA PARA IA
+# ==========================================================
+
+def insert_xss_ai_groups(
+    dsn: str,
+    execution_id: int,
+    xss_ai_payload: Dict[str, Any],
+) -> None:
+    """
+    Persiste la agrupación XSS preparada para futura IA.
+    """
+    entries = xss_ai_payload.get("entries", []) or []
+
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            for index, raw_item in enumerate(entries, start=1):
+                item = _normalize_xss_ai_group_item(raw_item)
+
+                cur.execute(
+                    """
+                    INSERT INTO xss_ai_groups (
+                        execution_id,
+                        group_order,
+                        entry_type,
+                        parameter_probable,
+                        context_probable,
+                        severity_mode,
+                        payload_signature,
+                        occurrences,
+                        target_url,
+                        sample_finding_orders,
+                        sample_payloads,
+                        sample_evidence
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb)
+                    ON CONFLICT (execution_id, group_order)
+                    DO UPDATE SET
+                        entry_type = EXCLUDED.entry_type,
+                        parameter_probable = EXCLUDED.parameter_probable,
+                        context_probable = EXCLUDED.context_probable,
+                        severity_mode = EXCLUDED.severity_mode,
+                        payload_signature = EXCLUDED.payload_signature,
+                        occurrences = EXCLUDED.occurrences,
+                        target_url = EXCLUDED.target_url,
+                        sample_finding_orders = EXCLUDED.sample_finding_orders,
+                        sample_payloads = EXCLUDED.sample_payloads,
+                        sample_evidence = EXCLUDED.sample_evidence;
+                    """,
+                    (
+                        execution_id,
+                        index,
+                        item["entry_type"],
+                        item["parameter_probable"],
+                        item["context_probable"],
+                        item["severity_mode"],
+                        item["payload_signature"],
+                        item["occurrences"],
+                        item["target_url"],
+                        _json_or_none(item["sample_finding_orders"]),
+                        _json_or_none(item["sample_payloads"]),
+                        _json_or_none(item["sample_evidence"]),
+                    ),
+                )
+
+        conn.commit()
+
+
+def update_xss_ai_group_interpretations(
+    dsn: str,
+    execution_id: int,
+    interpretations: List[Dict[str, Any]],
+    model_name: Optional[str] = None,
+) -> None:
+    """
+    Actualiza las interpretaciones generadas por IA sobre los grupos XSS.
+    """
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            for item in interpretations:
+                group_order = int(item.get("group_order", 0) or 0)
+                if group_order <= 0:
+                    continue
+
+                cur.execute(
+                    """
+                    UPDATE xss_ai_groups
+                    SET interpretation_humana = %s,
+                        risk_summary = %s,
+                        likely_root_cause = %s,
+                        recommended_review_area = %s,
+                        confidence = %s,
+                        model_name = %s
+                    WHERE execution_id = %s
+                      AND group_order = %s;
+                    """,
+                    (
+                        item.get("interpretation_humana"),
+                        item.get("risk_summary"),
+                        item.get("likely_root_cause"),
+                        item.get("recommended_review_area"),
+                        item.get("confidence"),
+                        model_name,
+                        execution_id,
+                        group_order,
                     ),
                 )
 
@@ -647,6 +802,7 @@ def list_execution_summaries(
                     hsecscan_rc,
                     dalfox_rc,
                     xss_findings_count,
+                    xss_ai_groups_count,
                     artifacts_count
                 FROM vw_execution_summary
                 ORDER BY started_at DESC
@@ -691,6 +847,7 @@ def get_execution_summary(
                     hsecscan_rc,
                     dalfox_rc,
                     xss_findings_count,
+                    xss_ai_groups_count,
                     artifacts_count
                 FROM vw_execution_summary
                 WHERE id = %s;
@@ -847,6 +1004,37 @@ def get_execution_detail(
                 SELECT
                     id,
                     execution_id,
+                    group_order,
+                    entry_type,
+                    parameter_probable,
+                    context_probable,
+                    severity_mode,
+                    payload_signature,
+                    occurrences,
+                    target_url,
+                    sample_finding_orders,
+                    sample_payloads,
+                    sample_evidence,
+                    interpretation_humana,
+                    risk_summary,
+                    likely_root_cause,
+                    recommended_review_area,
+                    confidence,
+                    model_name,
+                    created_at
+                FROM xss_ai_groups
+                WHERE execution_id = %s
+                ORDER BY group_order ASC, id ASC;
+                """,
+                (execution_id,),
+            )
+            xss_ai_groups_rows = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    execution_id,
                     artifact_type,
                     file_name,
                     relative_path,
@@ -889,6 +1077,50 @@ def get_execution_detail(
         }
     }
 
+    # ------------------------------------------------------
+    # Enriquecer cada finding de Dalfox con la interpretación
+    # IA correspondiente.
+    #
+    # La GUI ya no muestra una sección separada de agrupación.
+    # La interpretación humanizada vive ahora en la tabla Dalfox.
+    # ------------------------------------------------------
+    interpretation_by_finding_order: Dict[int, Dict[str, Any]] = {}
+
+    for group in xss_ai_groups_rows:
+        finding_orders = group.get("sample_finding_orders") or []
+        if not isinstance(finding_orders, list):
+            continue
+
+        for raw_order in finding_orders:
+            try:
+                finding_order = int(raw_order)
+            except Exception:
+                continue
+
+            interpretation_by_finding_order[finding_order] = {
+                "interpretation_humana": group.get("interpretation_humana"),
+                "risk_summary": group.get("risk_summary"),
+                "likely_root_cause": group.get("likely_root_cause"),
+                "recommended_review_area": group.get("recommended_review_area"),
+                "confidence": group.get("confidence"),
+                "model_name": group.get("model_name"),
+            }
+
+    enriched_xss_findings_rows: List[Dict[str, Any]] = []
+    for row in xss_findings_rows:
+        current = dict(row)
+        finding_order = int(current.get("finding_order", 0) or 0)
+
+        ai_data = interpretation_by_finding_order.get(finding_order, {})
+        current["interpretation_humana"] = ai_data.get("interpretation_humana")
+        current["risk_summary"] = ai_data.get("risk_summary")
+        current["likely_root_cause"] = ai_data.get("likely_root_cause")
+        current["recommended_review_area"] = ai_data.get("recommended_review_area")
+        current["confidence"] = ai_data.get("confidence")
+        current["model_name"] = ai_data.get("model_name")
+
+        enriched_xss_findings_rows.append(current)
+
     detail["present_json"] = present_headers
     detail["missing_json"] = missing_headers
     detail["raw_headers_json"] = raw_headers_derived
@@ -897,7 +1129,14 @@ def get_execution_detail(
     detail["header_checks"] = header_rows
     detail["cookie_checks"] = cookie_rows_raw
     detail["http_tests"] = http_tests_rows
-    detail["xss_findings"] = xss_findings_rows
+
+    # Exponer la versión enriquecida para la tabla Dalfox.
+    detail["xss_findings"] = enriched_xss_findings_rows
+
+    # Se conserva por si hace falta internamente, pero ya no
+    # se debe mostrar como sección separada en la GUI.
+    detail["xss_ai_groups"] = xss_ai_groups_rows
+
     detail["artifacts"] = artifact_rows
 
     return detail
