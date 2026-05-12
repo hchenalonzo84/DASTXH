@@ -119,7 +119,7 @@ dastxh/
       ├─ db/
       └─ Dockerfile
       
-Comandos principales del proyecto
+## Comandos principales del proyecto
 1. Preparar Docker Model Runner
 docker desktop enable model-runner --tcp=12434
 docker model pull ai/llama3.2
@@ -172,3 +172,8 @@ run_meta.json
 Y si el perfil es profundo, también puede aparecer:
 
 hsecscan.txt
+
+docker compose down -v
+docker compose build --no-cache
+docker compose up -d
+docker compose ps

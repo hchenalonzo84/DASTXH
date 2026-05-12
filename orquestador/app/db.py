@@ -866,6 +866,8 @@ def get_execution_detail(
 ) -> Optional[Dict[str, Any]]:
     """
     Devuelve detalle enriquecido de una ejecución.
+    También prepara xss_display_rows para que la GUI decida
+    si mostrar hallazgos individuales o grupos interpretados.
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -917,6 +919,9 @@ def get_execution_detail(
 
             detail = dict(row)
 
+            # --------------------------------------------------
+            # Cabeceras observadas
+            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -934,6 +939,9 @@ def get_execution_detail(
             )
             header_rows = [dict(r) for r in cur.fetchall()]
 
+            # --------------------------------------------------
+            # Cookies observadas
+            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -954,6 +962,9 @@ def get_execution_detail(
             )
             cookie_rows_raw = [dict(r) for r in cur.fetchall()]
 
+            # --------------------------------------------------
+            # Pruebas HTTP detalladas (tabla de cabeceras/curl)
+            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -977,6 +988,9 @@ def get_execution_detail(
             )
             http_tests_rows = [dict(r) for r in cur.fetchall()]
 
+            # --------------------------------------------------
+            # Hallazgos XSS crudos estructurados
+            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -999,6 +1013,9 @@ def get_execution_detail(
             )
             xss_findings_rows = [dict(r) for r in cur.fetchall()]
 
+            # --------------------------------------------------
+            # Grupos XSS interpretados por IA
+            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -1030,6 +1047,9 @@ def get_execution_detail(
             )
             xss_ai_groups_rows = [dict(r) for r in cur.fetchall()]
 
+            # --------------------------------------------------
+            # Artifacts
+            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -1051,9 +1071,23 @@ def get_execution_detail(
 
         conn.commit()
 
+    # ------------------------------------------------------
+    # Derivados de cabeceras
+    # ------------------------------------------------------
     present_headers = [r["header_name"] for r in header_rows if r.get("is_present")]
     missing_headers = [r["header_name"] for r in header_rows if not r.get("is_present")]
 
+    raw_headers_derived = {
+        "headers": {
+            str(r["header_name"]).lower(): r.get("header_value")
+            for r in header_rows
+            if r.get("is_present")
+        }
+    }
+
+    # ------------------------------------------------------
+    # Derivados de cookies para la GUI
+    # ------------------------------------------------------
     cookies_flags_json: List[Dict[str, Any]] = []
     for row in cookie_rows_raw:
         cookies_flags_json.append(
@@ -1069,20 +1103,8 @@ def get_execution_detail(
             }
         )
 
-    raw_headers_derived = {
-        "headers": {
-            str(r["header_name"]).lower(): r.get("header_value")
-            for r in header_rows
-            if r.get("is_present")
-        }
-    }
-
     # ------------------------------------------------------
-    # Enriquecer cada finding de Dalfox con la interpretación
-    # IA correspondiente.
-    #
-    # La GUI ya no muestra una sección separada de agrupación.
-    # La interpretación humanizada vive ahora en la tabla Dalfox.
+    # 1) Enriquecer hallazgos individuales con IA cuando aplique
     # ------------------------------------------------------
     interpretation_by_finding_order: Dict[int, Dict[str, Any]] = {}
 
@@ -1121,21 +1143,80 @@ def get_execution_detail(
 
         enriched_xss_findings_rows.append(current)
 
+    # ------------------------------------------------------
+    # 2) Preparar filas de visualización para Dalfox
+    #    - individual: pocos hallazgos
+    #    - grouped: muchos hallazgos agrupados por IA
+    # ------------------------------------------------------
+    has_real_groups = any(
+        str(item.get("entry_type") or "").strip().lower() == "group"
+        for item in xss_ai_groups_rows
+    )
+
+    xss_display_mode = "grouped" if has_real_groups else "individual"
+    xss_display_rows: List[Dict[str, Any]] = []
+
+    if has_real_groups:
+        # Mostrar grupos interpretados por IA
+        for group in xss_ai_groups_rows:
+            sample_payloads = group.get("sample_payloads") or []
+            sample_evidence = group.get("sample_evidence") or []
+
+            payload_example = sample_payloads[0] if isinstance(sample_payloads, list) and sample_payloads else None
+            evidence_example = sample_evidence[0] if isinstance(sample_evidence, list) and sample_evidence else None
+
+            xss_display_rows.append(
+                {
+                    "row_order": group.get("group_order"),
+                    "parameter": group.get("parameter_probable") or "-",
+                    "payload": payload_example or "-",
+                    "evidence": evidence_example or "-",
+                    "severity": group.get("severity_mode") or "-",
+                    "occurrences": group.get("occurrences") or 1,
+                    "interpretation_humana": group.get("interpretation_humana"),
+                    "risk_summary": group.get("risk_summary"),
+                    "likely_root_cause": group.get("likely_root_cause"),
+                    "recommended_review_area": group.get("recommended_review_area"),
+                    "confidence": group.get("confidence"),
+                    "model_name": group.get("model_name"),
+                }
+            )
+    else:
+        # Mostrar hallazgos individuales
+        for finding in enriched_xss_findings_rows:
+            xss_display_rows.append(
+                {
+                    "row_order": finding.get("finding_order"),
+                    "parameter": finding.get("param_name") or "-",
+                    "payload": finding.get("payload") or "-",
+                    "evidence": finding.get("evidence") or "-",
+                    "severity": finding.get("severity") or "-",
+                    "occurrences": 1,
+                    "interpretation_humana": finding.get("interpretation_humana"),
+                    "risk_summary": finding.get("risk_summary"),
+                    "likely_root_cause": finding.get("likely_root_cause"),
+                    "recommended_review_area": finding.get("recommended_review_area"),
+                    "confidence": finding.get("confidence"),
+                    "model_name": finding.get("model_name"),
+                }
+            )
+
     detail["present_json"] = present_headers
     detail["missing_json"] = missing_headers
     detail["raw_headers_json"] = raw_headers_derived
-    detail["cookies_flags_json"] = cookies_flags_json
 
     detail["header_checks"] = header_rows
     detail["cookie_checks"] = cookie_rows_raw
+    detail["cookies_flags_json"] = cookies_flags_json
     detail["http_tests"] = http_tests_rows
 
-    # Exponer la versión enriquecida para la tabla Dalfox.
     detail["xss_findings"] = enriched_xss_findings_rows
-
-    # Se conserva por si hace falta internamente, pero ya no
-    # se debe mostrar como sección separada en la GUI.
     detail["xss_ai_groups"] = xss_ai_groups_rows
+
+    # IMPORTANTE:
+    # Esta es la colección que debe usar la GUI de Dalfox.
+    detail["xss_display_mode"] = xss_display_mode
+    detail["xss_display_rows"] = xss_display_rows
 
     detail["artifacts"] = artifact_rows
 

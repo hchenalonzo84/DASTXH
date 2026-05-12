@@ -69,10 +69,14 @@ def _build_messages(xss_ai_payload: Dict[str, Any]) -> List[Dict[str, str]]:
     entries = xss_ai_payload.get("entries", []) or []
 
     compact_entries = []
-    for item in entries:
+    for index, item in enumerate(entries, start=1):
+        # IMPORTANTE:
+        # Si por alguna razón group_order no viene, se fuerza aquí.
+        group_order = int(item.get("group_order", index) or index)
+
         compact_entries.append(
             {
-                "group_order": item.get("group_order"),
+                "group_order": group_order,
                 "entry_type": item.get("entry_type"),
                 "parameter_probable": item.get("parameter_probable"),
                 "context_probable": item.get("context_probable"),
@@ -114,6 +118,7 @@ Tu salida debe ser SOLO JSON válido con este formato:
 }
 
 Reglas:
+- Debes conservar el mismo group_order que recibes.
 - Si la evidencia apunta a enlaces HTML, dilo explícitamente.
 - Si la evidencia apunta a formularios, filtros, paginación u opciones de listado, dilo explícitamente.
 - Si el payload aparece incrustado en atributos o fragmentos concretos, menciónalo.
@@ -183,11 +188,17 @@ def _post_chat_completion(
 # NORMALIZACIÓN DE RESPUESTA
 # ==========================================================
 
-def _normalize_interpretation_item(item: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_interpretation_item(item: Dict[str, Any], fallback_group_order: int) -> Dict[str, Any]:
     """
     Normaliza una interpretación devuelta por el modelo.
+    Si el modelo no devuelve group_order correcto, se usa fallback.
     """
-    group_order = int(item.get("group_order", 0) or 0)
+    raw_group_order = item.get("group_order", fallback_group_order)
+
+    try:
+        group_order = int(raw_group_order or fallback_group_order)
+    except Exception:
+        group_order = fallback_group_order
 
     confidence = str(item.get("confidence", "") or "").strip().lower()
     if confidence not in ("baja", "media", "alta"):
@@ -263,14 +274,11 @@ def interpret_xss_groups_with_ai(xss_ai_payload: Dict[str, Any]) -> Dict[str, An
             raw_groups = parsed
 
         normalized_groups: List[Dict[str, Any]] = []
-        for raw_item in raw_groups:
+        for index, raw_item in enumerate(raw_groups, start=1):
             if not isinstance(raw_item, dict):
                 continue
 
-            item = _normalize_interpretation_item(raw_item)
-            if item["group_order"] <= 0:
-                continue
-
+            item = _normalize_interpretation_item(raw_item, fallback_group_order=index)
             normalized_groups.append(item)
 
         return {
@@ -319,9 +327,14 @@ def merge_xss_ai_interpretations(
 
     merged: List[Dict[str, Any]] = []
 
-    for entry in prepared_entries:
+    for index, entry in enumerate(prepared_entries, start=1):
         current = dict(entry)
-        group_order = int(current.get("group_order", 0) or 0)
+
+        # IMPORTANTE:
+        # Si la entrada preparada no trae group_order, lo forzamos aquí.
+        group_order = int(current.get("group_order", index) or index)
+        current["group_order"] = group_order
+
         ai_item = by_order.get(group_order, {})
 
         current["interpretation_humana"] = ai_item.get("interpretation_humana")

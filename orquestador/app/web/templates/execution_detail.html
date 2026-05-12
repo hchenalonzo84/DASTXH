@@ -37,7 +37,6 @@
   {% endif %}
 
   <div class="row g-3 mb-4">
-    <!-- ID -->
     <div class="col-12 col-md-6 col-xl-3">
       <div class="detail-item h-100">
         <h3>ID</h3>
@@ -45,7 +44,6 @@
       </div>
     </div>
 
-    <!-- Estado -->
     <div class="col-12 col-md-6 col-xl-3">
       <div class="detail-item h-100">
         <h3>Estado</h3>
@@ -57,7 +55,6 @@
       </div>
     </div>
 
-    <!-- Origen -->
     <div class="col-12 col-md-6 col-xl-3">
       <div class="detail-item h-100">
         <h3>Origen</h3>
@@ -65,7 +62,6 @@
       </div>
     </div>
 
-    <!-- Perfil -->
     <div class="col-12 col-md-6 col-xl-3">
       <div class="detail-item h-100">
         <h3>Perfil</h3>
@@ -73,7 +69,6 @@
       </div>
     </div>
 
-    <!-- URL objetivo -->
     <div class="col-12 col-md-6 col-xl-6">
       <div class="detail-item h-100">
         <h3>URL objetivo</h3>
@@ -81,7 +76,6 @@
       </div>
     </div>
 
-    <!-- Inicio -->
     <div class="col-12 col-md-6 col-xl-3">
       <div class="detail-item h-100">
         <h3>Inicio</h3>
@@ -95,7 +89,6 @@
       </div>
     </div>
 
-    <!-- Fin -->
     <div class="col-12 col-md-6 col-xl-3">
       <div class="detail-item h-100">
         <h3>Fin</h3>
@@ -109,13 +102,12 @@
       </div>
     </div>
 
-    <!-- Cabeceras evaluadas -->
-    <div class="col-12 col-md-6 col-xl-3">
+    <div class="col-12 col-md-6 col-xl-2">
       <div class="stat-card h-100">
-        <h3>Cabeceras evaluadas</h3>
+        <h3>Puntaje HTTP</h3>
         <p>
-          {% if detail.headers_evaluadas is not none %}
-            {{ detail.headers_evaluadas }}
+          {% if detail.http_score is not none %}
+            {{ detail.http_score }}/100
           {% else %}
             -
           {% endif %}
@@ -123,13 +115,12 @@
       </div>
     </div>
 
-    <!-- Cabeceras presentes -->
-    <div class="col-12 col-md-6 col-xl-3">
+    <div class="col-12 col-md-6 col-xl-2">
       <div class="stat-card h-100">
-        <h3>Cabeceras presentes</h3>
+        <h3>Nota HTTP</h3>
         <p>
-          {% if detail.headers_presentes is not none %}
-            {{ detail.headers_presentes }}
+          {% if detail.http_grade %}
+            {{ detail.http_grade }}
           {% else %}
             -
           {% endif %}
@@ -137,8 +128,7 @@
       </div>
     </div>
 
-    <!-- Cumplimiento -->
-    <div class="col-12 col-md-6 col-xl-3">
+    <div class="col-12 col-md-6 col-xl-2">
       <div class="stat-card h-100">
         <h3>Cumplimiento</h3>
         <p>
@@ -151,13 +141,25 @@
       </div>
     </div>
 
-    <!-- Hallazgos XSS -->
     <div class="col-12 col-md-6 col-xl-3">
       <div class="stat-card h-100">
         <h3>Hallazgos XSS</h3>
         <p>
           {% if detail.findings_count is not none %}
             {{ detail.findings_count }}
+          {% else %}
+            -
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="detail-item h-100">
+        <h3>Carpeta lógica</h3>
+        <p class="break-cell">
+          {% if detail.report_dir %}
+            {{ detail.report_dir }}
           {% else %}
             -
           {% endif %}
@@ -220,9 +222,6 @@
   </ul>
 
   <div class="tab-content" id="executionDetailTabsContent">
-    <!-- ================================================== -->
-    <!-- RESUMEN -->
-    <!-- ================================================== -->
     <div
       class="tab-pane fade show active"
       id="pretty-pane"
@@ -230,80 +229,63 @@
       aria-labelledby="pretty-tab"
       tabindex="0"
     >
-      <!-- ----------------------------------------------- -->
+      <!-- ================================================== -->
       <!-- CAPA 1: CURL / VERIFICACIÓN DE CABECERAS -->
-      <!-- ----------------------------------------------- -->
+      <!-- ================================================== -->
       <section class="card mb-3">
         <h2 class="mb-3">Capa 1: curl / verificación de cabeceras</h2>
 
-        <div class="detail-item mb-3">
-          <h3>Qué muestra esta tabla</h3>
-          <p class="mb-1"><strong>Cabecera:</strong> nombre de la cabecera de seguridad esperada.</p>
-          <p class="mb-1"><strong>Estado:</strong> indica si la cabecera fue observada o no en la respuesta final.</p>
-          <p class="mb-1"><strong>Valor detectado:</strong> muestra el valor observado cuando el backend lo tenga disponible.</p>
-          <p class="mb-0"><strong>Observación:</strong> lectura rápida del resultado de esta verificación básica.</p>
-        </div>
-
-        {% if detail.header_checks %}
+        {% if detail.http_tests %}
           <div class="table-responsive">
             <table class="table table-dark table-hover align-middle mb-0">
               <thead>
                 <tr>
-                  <th>Cabecera</th>
-                  <th>Estado</th>
-                  <th>Valor detectado</th>
-                  <th>Observación</th>
+                  <th>Prueba</th>
+                  <th>Resultado</th>
+                  <th>Puntaje</th>
+                  <th>Razón</th>
+                  <th>Recomendación</th>
                 </tr>
               </thead>
               <tbody>
-                {% for item in detail.header_checks %}
+                {% for test in detail.http_tests %}
                   <tr>
-                    <td>{{ item.header_name }}</td>
+                    <td>{{ test.name }}</td>
                     <td>
-                      {% if item.is_present %}
-                        Presente
+                      {% if test.status == "passed" %}
+                        Aprobada
+                      {% elif test.status == "failed" %}
+                        Falló
+                      {% elif test.status == "warning" %}
+                        Advertencia
                       {% else %}
-                        Faltante
+                        Informativo
                       {% endif %}
                     </td>
-                    <td class="break-cell">
-                      {% if item.header_value %}
-                        {{ item.header_value }}
-                      {% else %}
+                    <td>
+                      {% if test.status == "info" %}
                         -
-                      {% endif %}
-                    </td>
-                    <td class="break-cell">
-                      {% if item.is_present %}
-                        La cabecera fue observada en la respuesta final.
                       {% else %}
-                        La cabecera no fue observada en la respuesta final.
+                        {{ test.score_delta }}
                       {% endif %}
                     </td>
+                    <td class="break-cell">{{ test.reason }}</td>
+                    <td class="break-cell">{{ test.recommendation }}</td>
                   </tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
         {% else %}
-          <p class="mb-0">Todavía no hay resultados de cabeceras para esta ejecución.</p>
+          <p class="mb-0">Todavía no hay pruebas HTTP detalladas registradas para esta ejecución.</p>
         {% endif %}
       </section>
 
-      <!-- ----------------------------------------------- -->
+      <!-- ================================================== -->
       <!-- COOKIES -->
-      <!-- ----------------------------------------------- -->
+      <!-- ================================================== -->
       <section class="card mb-3">
         <h2 class="mb-3">Cookies observadas</h2>
-
-        <div class="detail-item mb-3">
-          <h3>Qué muestra esta tabla</h3>
-          <p class="mb-1"><strong>Cookie:</strong> nombre de la cookie observada.</p>
-          <p class="mb-1"><strong>Secure:</strong> indica si la cookie exige transporte seguro.</p>
-          <p class="mb-1"><strong>HttpOnly:</strong> indica si la cookie evita acceso desde JavaScript del navegador.</p>
-          <p class="mb-1"><strong>SameSite:</strong> indica si la cookie aplica esta restricción.</p>
-          <p class="mb-0"><strong>Valor SameSite:</strong> muestra el valor detectado si estuvo presente.</p>
-        </div>
 
         {% if detail.cookies_flags_json %}
           <div class="table-responsive">
@@ -353,9 +335,9 @@
         {% endif %}
       </section>
 
-      <!-- ----------------------------------------------- -->
+      <!-- ================================================== -->
       <!-- CAPA 2: HSECSCAN -->
-      <!-- ----------------------------------------------- -->
+      <!-- ================================================== -->
       {% if detail.enable_hsecscan %}
       <section class="card mb-3">
         <h2 class="mb-3">Capa 2: hsecscan</h2>
@@ -396,9 +378,9 @@
       </section>
       {% endif %}
 
-      <!-- ----------------------------------------------- -->
+      <!-- ================================================== -->
       <!-- CAPA 3: DALFOX / XSS -->
-      <!-- ----------------------------------------------- -->
+      <!-- ================================================== -->
       <section class="card mb-3">
         <h2 class="mb-3">Capa 3: Dalfox / XSS</h2>
 
@@ -431,8 +413,8 @@
 
           <div class="col-12 col-md-4">
             <div class="stat-card h-100">
-              <h3>Hallazgos estructurados</h3>
-              <p>{{ detail.xss_findings|length if detail.xss_findings else 0 }}</p>
+              <h3>Filas mostradas</h3>
+              <p>{{ detail.xss_display_rows|length if detail.xss_display_rows else 0 }}</p>
             </div>
           </div>
         </div>
@@ -441,14 +423,19 @@
           <div class="alert alert-warning border-0 mb-0" role="alert">
             La revisión XSS todavía no ha terminado o sus resultados aún no se han persistido.
           </div>
-        {% elif detail.xss_findings %}
+        {% elif detail.xss_display_rows %}
           <div class="detail-item mb-3">
             <h3>Cómo leer esta tabla</h3>
-            <p class="mb-1"><strong>Parámetro:</strong> nombre del parámetro que Dalfox probó.</p>
-            <p class="mb-1"><strong>Payload:</strong> cadena de prueba que Dalfox inyectó para comprobar XSS.</p>
+            <p class="mb-1"><strong>Parámetro:</strong> nombre del parámetro o parámetro probable asociado al patrón detectado.</p>
+            <p class="mb-1"><strong>Payload:</strong> carga útil usada por Dalfox o ejemplo representativo del grupo.</p>
             <p class="mb-1"><strong>Evidencia:</strong> fragmento de la respuesta donde la carga apareció reflejada.</p>
-            <p class="mb-1"><strong>Severidad:</strong> clasificación que devuelve la herramienta para ese hallazgo.</p>
-            <p class="mb-0"><strong>Interpretación:</strong> explicación humanizada generada por IA con base en la evidencia.</p>
+            <p class="mb-1"><strong>Severidad:</strong> clasificación del hallazgo o del grupo.</p>
+            <p class="mb-1"><strong>Interpretación:</strong> explicación humanizada generada por IA con base en la evidencia.</p>
+            {% if detail.xss_display_mode == "grouped" %}
+              <p class="mb-0"><strong>Nota:</strong> por el volumen de hallazgos, se muestra una vista agrupada con ejemplos representativos.</p>
+            {% else %}
+              <p class="mb-0"><strong>Nota:</strong> se muestra una vista individual porque el volumen de hallazgos es pequeño.</p>
+            {% endif %}
           </div>
 
           <div class="table-responsive">
@@ -460,35 +447,43 @@
                   <th>Payload</th>
                   <th>Evidencia</th>
                   <th>Severidad</th>
+                  {% if detail.xss_display_mode == "grouped" %}
+                    <th>Ocurrencias</th>
+                  {% endif %}
                   <th>Interpretación</th>
                 </tr>
               </thead>
               <tbody>
-                {% for finding in detail.xss_findings %}
+                {% for item in detail.xss_display_rows %}
                   <tr>
-                    <td>{{ finding.finding_order }}</td>
-                    <td>{{ finding.param_name or "-" }}</td>
-                    <td class="break-cell">{{ finding.payload or "-" }}</td>
-                    <td class="break-cell">{{ finding.evidence or "-" }}</td>
-                    <td>{{ finding.severity or "-" }}</td>
+                    <td>{{ item.row_order }}</td>
+                    <td>{{ item.parameter or "-" }}</td>
+                    <td class="break-cell">{{ item.payload or "-" }}</td>
+                    <td class="break-cell">{{ item.evidence or "-" }}</td>
+                    <td>{{ item.severity or "-" }}</td>
+
+                    {% if detail.xss_display_mode == "grouped" %}
+                      <td>{{ item.occurrences or 1 }}</td>
+                    {% endif %}
+
                     <td class="break-cell">
-                      {% if finding.interpretation_humana %}
-                        <div><strong>{{ finding.interpretation_humana }}</strong></div>
+                      {% if item.interpretation_humana %}
+                        <div><strong>{{ item.interpretation_humana }}</strong></div>
 
-                        {% if finding.risk_summary %}
-                          <div class="mt-1"><span class="text-info">Riesgo:</span> {{ finding.risk_summary }}</div>
+                        {% if item.risk_summary %}
+                          <div class="mt-1"><span class="text-info">Riesgo:</span> {{ item.risk_summary }}</div>
                         {% endif %}
 
-                        {% if finding.likely_root_cause %}
-                          <div class="mt-1"><span class="text-warning">Causa probable:</span> {{ finding.likely_root_cause }}</div>
+                        {% if item.likely_root_cause %}
+                          <div class="mt-1"><span class="text-warning">Causa probable:</span> {{ item.likely_root_cause }}</div>
                         {% endif %}
 
-                        {% if finding.recommended_review_area %}
-                          <div class="mt-1"><span class="text-success">Revisar:</span> {{ finding.recommended_review_area }}</div>
+                        {% if item.recommended_review_area %}
+                          <div class="mt-1"><span class="text-success">Revisar:</span> {{ item.recommended_review_area }}</div>
                         {% endif %}
 
-                        {% if finding.confidence %}
-                          <div class="mt-1"><span class="text-secondary">Confianza:</span> {{ finding.confidence }}</div>
+                        {% if item.confidence %}
+                          <div class="mt-1"><span class="text-secondary">Confianza:</span> {{ item.confidence }}</div>
                         {% endif %}
                       {% else %}
                         -
@@ -511,9 +506,6 @@
       </section>
     </div>
 
-    <!-- ================================================== -->
-    <!-- DETALLE TÉCNICO -->
-    <!-- ================================================== -->
     <div
       class="tab-pane fade"
       id="raw-pane"
@@ -639,9 +631,6 @@
       </section>
     </div>
 
-    <!-- ================================================== -->
-    <!-- ARTIFACTS -->
-    <!-- ================================================== -->
     <div
       class="tab-pane fade"
       id="artifacts-pane"

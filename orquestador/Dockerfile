@@ -8,7 +8,8 @@
 # Etapa 1: build de Dalfox (Go)
 # ----------------------------------------------------------
 FROM golang:1.23-bullseye AS dalfox_builder
-RUN go install github.com/hahwul/dalfox/v2@latest
+
+RUN go install github.com/hahwul/dalfox/v2@v2.12.0
 
 # ----------------------------------------------------------
 # Etapa 2: runtime principal
