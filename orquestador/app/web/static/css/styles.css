@@ -11,6 +11,7 @@
      * tablas
      * tabs Pretty / Raw / Artifacts
      * detalle de ejecuciones
+     * tabla XSS con columnas separadas de interpretación
    ========================================================== */
 
 /* ----------------------------------------------------------
@@ -191,6 +192,7 @@ a:hover {
     overflow-wrap: anywhere;
     max-width: 320px;
 }
+
 /* ----------------------------------------------------------
    Formularios
    ---------------------------------------------------------- */
@@ -349,7 +351,6 @@ button:active,
     border: 1px solid var(--danger-border);
     color: var(--danger-text);
 }
-
 /* ----------------------------------------------------------
    Tabs Bootstrap personalizadas
    ---------------------------------------------------------- */
@@ -384,6 +385,7 @@ button:active,
 .tab-content > .tab-pane {
     padding-top: 0.25rem;
 }
+
 /* ----------------------------------------------------------
    Tablas propias y de Bootstrap
    ---------------------------------------------------------- */
@@ -458,6 +460,185 @@ button:active,
 }
 
 /* ----------------------------------------------------------
+   Tabla XSS
+   - Se aplica únicamente a la tabla con clase xss-results-table.
+   - Evita comprimir demasiado las columnas nuevas:
+     Interpretación, Riesgo, Causa probable, Revisar y Confianza.
+   ---------------------------------------------------------- */
+.xss-table-wrapper {
+    margin-top: 1rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel-soft);
+}
+
+.xss-table-wrapper::-webkit-scrollbar {
+    height: 10px;
+}
+
+.xss-table-wrapper::-webkit-scrollbar-track {
+    background: var(--bg-panel-soft);
+    border-radius: 999px;
+}
+
+.xss-table-wrapper::-webkit-scrollbar-thumb {
+    background: var(--border-soft);
+    border-radius: 999px;
+}
+
+.xss-table-wrapper::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+}
+
+.xss-results-table {
+    min-width: 1850px;
+    table-layout: fixed;
+    font-size: 0.88rem;
+}
+
+.xss-results-table th,
+.xss-results-table td {
+    padding: 0.75rem 0.8rem;
+    line-height: 1.45;
+    vertical-align: top;
+}
+
+.xss-results-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    white-space: nowrap;
+}
+
+/* Columnas base */
+.xss-results-table th:nth-child(1),
+.xss-results-table td:nth-child(1) {
+    width: 48px;
+    min-width: 48px;
+    text-align: center;
+}
+
+.xss-results-table th:nth-child(2),
+.xss-results-table td:nth-child(2) {
+    width: 95px;
+    min-width: 95px;
+}
+
+.xss-results-table th:nth-child(3),
+.xss-results-table td:nth-child(3) {
+    width: 250px;
+    min-width: 250px;
+}
+
+.xss-results-table th:nth-child(4),
+.xss-results-table td:nth-child(4) {
+    width: 310px;
+    min-width: 310px;
+}
+
+.xss-results-table th:nth-child(5),
+.xss-results-table td:nth-child(5) {
+    width: 100px;
+    min-width: 100px;
+}
+
+/* Cuando existe la columna Ocurrencias, la tabla agrupada tiene 11 columnas. */
+.xss-results-table th:nth-child(6),
+.xss-results-table td:nth-child(6) {
+    width: 105px;
+    min-width: 105px;
+    text-align: center;
+}
+
+/* Columnas de IA en vista agrupada:
+   7 Interpretación, 8 Riesgo, 9 Causa, 10 Revisar, 11 Confianza */
+.xss-results-table th:nth-child(7),
+.xss-results-table td:nth-child(7) {
+    width: 270px;
+    min-width: 270px;
+}
+
+.xss-results-table th:nth-child(8),
+.xss-results-table td:nth-child(8) {
+    width: 260px;
+    min-width: 260px;
+}
+
+.xss-results-table th:nth-child(9),
+.xss-results-table td:nth-child(9) {
+    width: 260px;
+    min-width: 260px;
+}
+
+.xss-results-table th:nth-child(10),
+.xss-results-table td:nth-child(10) {
+    width: 260px;
+    min-width: 260px;
+}
+
+.xss-results-table th:nth-child(11),
+.xss-results-table td:nth-child(11) {
+    width: 115px;
+    min-width: 115px;
+    text-align: center;
+}
+
+/* En vista individual no aparece Ocurrencias.
+   La tabla tiene 10 columnas, pero estas reglas ayudan a mantener
+   legibles las columnas finales cuando no existe la columna 6 como ocurrencias. */
+.xss-results-table:not(:has(th:nth-child(11))) th:nth-child(6),
+.xss-results-table:not(:has(th:nth-child(11))) td:nth-child(6) {
+    width: 280px;
+    min-width: 280px;
+    text-align: left;
+}
+
+.xss-results-table:not(:has(th:nth-child(11))) th:nth-child(7),
+.xss-results-table:not(:has(th:nth-child(11))) td:nth-child(7),
+.xss-results-table:not(:has(th:nth-child(11))) th:nth-child(8),
+.xss-results-table:not(:has(th:nth-child(11))) td:nth-child(8),
+.xss-results-table:not(:has(th:nth-child(11))) th:nth-child(9),
+.xss-results-table:not(:has(th:nth-child(11))) td:nth-child(9) {
+    width: 260px;
+    min-width: 260px;
+    text-align: left;
+}
+
+.xss-results-table:not(:has(th:nth-child(11))) th:nth-child(10),
+.xss-results-table:not(:has(th:nth-child(11))) td:nth-child(10) {
+    width: 115px;
+    min-width: 115px;
+    text-align: center;
+}
+
+/* Celdas largas dentro de la tabla XSS */
+.xss-results-table .break-cell {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* Payload y evidencia suelen ser técnicos: se leen mejor con fuente monoespaciada */
+.xss-results-table td:nth-child(3),
+.xss-results-table td:nth-child(4) {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.82rem;
+}
+
+/* Separación visual para columnas de IA */
+.xss-results-table th:nth-child(7),
+.xss-results-table td:nth-child(7) {
+    border-left: 1px solid var(--border-soft);
+}
+
+.xss-results-table tbody tr:hover td {
+    background: #111b2e;
+}
+
+/* ----------------------------------------------------------
    Código y bloques preformateados
    ---------------------------------------------------------- */
 code {
@@ -507,13 +688,28 @@ button:focus,
     background: rgba(255, 255, 255, 0.03);
     color: var(--text-muted);
 }
-
 /* ----------------------------------------------------------
    Responsive
    ---------------------------------------------------------- */
+@media (max-width: 1200px) {
+    .xss-results-table {
+        min-width: 1750px;
+        font-size: 0.85rem;
+    }
+
+    .xss-results-table th,
+    .xss-results-table td {
+        padding: 0.68rem 0.72rem;
+    }
+}
+
 @media (max-width: 992px) {
     .break-cell {
         max-width: 100%;
+    }
+
+    .xss-results-table {
+        min-width: 1650px;
     }
 }
 
@@ -539,7 +735,17 @@ button:focus,
         padding: 0.6rem 0.8rem;
         font-size: 0.95rem;
     }
+
+    .xss-table-wrapper {
+        border-radius: var(--radius-sm);
+    }
+
+    .xss-results-table {
+        min-width: 1500px;
+        font-size: 0.82rem;
+    }
 }
+
 /* ==========================================================
    FIX FUERTE DE TEXTO OSCURO
    - Este bloque debe ir al FINAL del archivo.

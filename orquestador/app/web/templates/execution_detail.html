@@ -230,10 +230,10 @@
       tabindex="0"
     >
       <!-- ================================================== -->
-      <!-- CAPA 1: CURL / VERIFICACIÓN DE CABECERAS -->
+      <!-- VERIFICACIÓN DE CABECERAS -->
       <!-- ================================================== -->
       <section class="card mb-3">
-        <h2 class="mb-3">Capa 1: curl / verificación de cabeceras</h2>
+        <h2 class="mb-3">verificación de cabeceras</h2>
 
         {% if detail.http_tests %}
           <div class="table-responsive">
@@ -336,16 +336,16 @@
       </section>
 
       <!-- ================================================== -->
-      <!-- CAPA 2: HSECSCAN -->
+      <!-- HSECSCAN -->
       <!-- ================================================== -->
       {% if detail.enable_hsecscan %}
       <section class="card mb-3">
-        <h2 class="mb-3">Capa 2: hsecscan</h2>
+        <h2 class="mb-3">hsecscan</h2>
 
         <div class="row g-3">
           <div class="col-12 col-md-4">
             <div class="stat-card h-100">
-              <h3>Código de retorno</h3>
+              <h3>Código técnico</h3>
               <p>
                 {% if detail.hsecscan_rc is not none %}
                   {{ detail.hsecscan_rc }}
@@ -379,25 +379,12 @@
       {% endif %}
 
       <!-- ================================================== -->
-      <!-- CAPA 3: DALFOX / XSS -->
+      <!-- XSS -->
       <!-- ================================================== -->
       <section class="card mb-3">
-        <h2 class="mb-3">Capa 3: Dalfox / XSS</h2>
+        <h2 class="mb-3">XSS</h2>
 
         <div class="row g-3 mb-3">
-          <div class="col-12 col-md-4">
-            <div class="stat-card h-100">
-              <h3>Código de retorno</h3>
-              <p>
-                {% if detail.dalfox_rc is not none %}
-                  {{ detail.dalfox_rc }}
-                {% else %}
-                  -
-                {% endif %}
-              </p>
-            </div>
-          </div>
-
           <div class="col-12 col-md-4">
             <div class="stat-card h-100">
               <h3>Hallazgos detectados</h3>
@@ -417,6 +404,21 @@
               <p>{{ detail.xss_display_rows|length if detail.xss_display_rows else 0 }}</p>
             </div>
           </div>
+
+          <div class="col-12 col-md-4">
+            <div class="stat-card h-100">
+              <h3>Vista</h3>
+              <p>
+                {% if detail.xss_display_mode == "grouped" %}
+                  Agrupada
+                {% elif detail.xss_display_mode == "individual" %}
+                  Individual
+                {% else %}
+                  -
+                {% endif %}
+              </p>
+            </div>
+          </div>
         </div>
 
         {% if detail.dalfox_rc is none and detail.status in ["initiated", "running"] %}
@@ -430,7 +432,11 @@
             <p class="mb-1"><strong>Payload:</strong> carga útil usada por Dalfox o ejemplo representativo del grupo.</p>
             <p class="mb-1"><strong>Evidencia:</strong> fragmento de la respuesta donde la carga apareció reflejada.</p>
             <p class="mb-1"><strong>Severidad:</strong> clasificación del hallazgo o del grupo.</p>
-            <p class="mb-1"><strong>Interpretación:</strong> explicación humanizada generada por IA con base en la evidencia disponible.</p>
+            <p class="mb-1"><strong>Interpretación:</strong> explicación principal generada por IA.</p>
+            <p class="mb-1"><strong>Riesgo:</strong> posible impacto asociado al patrón detectado.</p>
+            <p class="mb-1"><strong>Causa probable:</strong> debilidad técnica que pudo permitir la reflexión.</p>
+            <p class="mb-1"><strong>Revisar:</strong> área sugerida para validación manual o corrección.</p>
+            <p class="mb-1"><strong>Confianza:</strong> nivel estimado de certeza de la interpretación.</p>
 
             {% if detail.xss_display_mode == "grouped" %}
               <p class="mb-0">
@@ -466,8 +472,8 @@
             </div>
           {% endif %}
 
-          <div class="table-responsive">
-            <table class="table table-dark table-hover align-middle mb-0">
+          <div class="table-responsive xss-table-wrapper">
+            <table class="table table-dark table-hover align-middle mb-0 xss-results-table">
               <thead>
                 <tr>
                   <th>#</th>
@@ -479,6 +485,10 @@
                     <th>Ocurrencias</th>
                   {% endif %}
                   <th>Interpretación</th>
+                  <th>Riesgo</th>
+                  <th>Causa probable</th>
+                  <th>Revisar</th>
+                  <th>Confianza</th>
                 </tr>
               </thead>
               <tbody>
@@ -496,42 +506,43 @@
 
                     <td class="break-cell">
                       {% if item.interpretation_humana %}
-                        <div><strong>{{ item.interpretation_humana }}</strong></div>
-
-                        {% if item.risk_summary %}
-                          <div class="mt-1">
-                            <span class="text-info">Riesgo:</span>
-                            {{ item.risk_summary }}
-                          </div>
-                        {% endif %}
-
-                        {% if item.likely_root_cause %}
-                          <div class="mt-1">
-                            <span class="text-warning">Causa probable:</span>
-                            {{ item.likely_root_cause }}
-                          </div>
-                        {% endif %}
-
-                        {% if item.recommended_review_area %}
-                          <div class="mt-1">
-                            <span class="text-success">Revisar:</span>
-                            {{ item.recommended_review_area }}
-                          </div>
-                        {% endif %}
-
-                        {% if item.confidence %}
-                          <div class="mt-1">
-                            <span class="text-secondary">Confianza:</span>
-                            {{ item.confidence }}
-                          </div>
-                        {% endif %}
+                        {{ item.interpretation_humana }}
                       {% else %}
-                        <div class="text-warning">
-                          Interpretación IA no disponible para esta fila.
-                        </div>
-                        <div class="text-secondary mt-1">
-                          El hallazgo fue detectado y persistido, pero no existe explicación generada o guardada por el modelo.
-                        </div>
+                        <span class="text-warning">Interpretación IA no disponible.</span>
+                      {% endif %}
+                    </td>
+
+                    <td class="break-cell">
+                      {% if item.risk_summary %}
+                        {{ item.risk_summary }}
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+
+                    <td class="break-cell">
+                      {% if item.likely_root_cause %}
+                        {{ item.likely_root_cause }}
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+
+                    <td class="break-cell">
+                      {% if item.recommended_review_area %}
+                        {{ item.recommended_review_area }}
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+
+                    <td>
+                      {% if item.confidence %}
+                        <span class="badge badge-running">
+                          {{ item.confidence }}
+                        </span>
+                      {% else %}
+                        -
                       {% endif %}
                     </td>
                   </tr>
@@ -550,8 +561,7 @@
         {% endif %}
       </section>
     </div>
-
-    <div
+     <div
       class="tab-pane fade"
       id="raw-pane"
       role="tabpanel"
@@ -745,4 +755,4 @@
     </div>
   </div>
 </section>
-{% endblock %}
+{% endblock %}   
