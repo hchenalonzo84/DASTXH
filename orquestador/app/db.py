@@ -55,6 +55,7 @@ def _json_or_none(value: Any) -> Optional[str]:
     """
     if value is None:
         return None
+
     return json.dumps(value, ensure_ascii=False)
 
 
@@ -63,6 +64,7 @@ def _build_header_details_if_missing(hdr_eval: Dict[str, Any]) -> List[Dict[str,
     Si hdr_eval no trae header_details, los reconstruye usando present/missing.
     """
     header_details = hdr_eval.get("header_details")
+
     if isinstance(header_details, list):
         return header_details
 
@@ -72,6 +74,7 @@ def _build_header_details_if_missing(hdr_eval: Dict[str, Any]) -> List[Dict[str,
     combined = list(present) + [h for h in missing if h not in present]
 
     result: List[Dict[str, Any]] = []
+
     for header_name in combined:
         result.append(
             {
@@ -90,12 +93,14 @@ def _normalize_cookie_item(item: Dict[str, Any]) -> Dict[str, Any]:
     como la nueva.
     """
     cookie_raw = item.get("cookie_raw")
+
     if cookie_raw is None:
         cookie_raw = item.get("cookie", "")
 
     cookie_name = item.get("cookie_name")
 
     samesite_present = item.get("samesite_present")
+
     if samesite_present is None:
         samesite_present = bool(item.get("samesite"))
 
@@ -133,6 +138,7 @@ def _normalize_xss_ai_group_item(item: Dict[str, Any]) -> Dict[str, Any]:
     entry_type = str(item.get("entry_type", "group") or "group").strip()
 
     finding_orders = item.get("finding_orders")
+
     if not isinstance(finding_orders, list):
         finding_orders = item.get("sample_finding_orders") or []
 
@@ -178,6 +184,156 @@ def _normalize_xss_ai_group_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "sample_finding_orders": finding_orders,
         "sample_payloads": sample_payloads,
         "sample_evidence": sample_evidence,
+    }
+
+
+# ==========================================================
+# HELPERS PRIVADOS PARA RENDER XSS EN GUI
+# ==========================================================
+
+def _clean_display_text(value: Any) -> str:
+    """
+    Normaliza texto para decidir si un valor es útil para mostrar en GUI.
+
+    Se usa para evitar que valores como None, "", "-" o "Unknown" sean tratados
+    como hallazgos reales cuando no tienen payload ni evidencia.
+    """
+    text = str(value or "").strip()
+    return " ".join(text.replace("\n", " ").replace("\r", " ").split())
+
+
+def _is_empty_visual_value(value: Any) -> bool:
+    """
+    Determina si un valor debe considerarse vacío o no informativo.
+    """
+    text = _clean_display_text(value).lower()
+    return text in ("", "-", "none", "null", "unknown", "desconocido")
+
+
+def _as_list(value: Any) -> List[Any]:
+    """
+    Normaliza campos jsonb que deberían venir como lista.
+
+    psycopg normalmente devuelve jsonb como list/dict, pero esta defensa permite
+    tolerar casos donde el valor llegue como string JSON.
+    """
+    if value is None:
+        return []
+
+    if isinstance(value, list):
+        return value
+
+    if isinstance(value, str):
+        raw = value.strip()
+
+        if not raw:
+            return []
+
+        try:
+            parsed = json.loads(raw)
+
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            return [value]
+
+    return []
+
+
+def _first_non_empty_text(values: Any) -> Optional[str]:
+    """
+    Devuelve el primer texto no vacío de una lista.
+    """
+    for item in _as_list(values):
+        text = _clean_display_text(item)
+
+        if text:
+            return text
+
+    return None
+
+
+def _has_valid_xss_group_signal(group: Dict[str, Any]) -> bool:
+    """
+    Determina si un grupo XSS tiene suficiente señal para mostrarse.
+
+    Un grupo NO es válido para render cuando:
+    - severidad es Unknown o vacía
+    - firma es payload_desconocido o vacía
+    - parámetro es desconocido o vacío
+    - no tiene payloads de ejemplo
+    - no tiene evidencia de ejemplo
+
+    Esto corrige las filas tipo:
+    Parámetro: -
+    Payload: -
+    Evidencia: -
+    Severidad: Unknown
+    """
+    severity = _clean_display_text(group.get("severity_mode")).lower()
+    signature = _clean_display_text(group.get("payload_signature")).lower()
+    parameter = _clean_display_text(group.get("parameter_probable")).lower()
+
+    sample_payloads = _as_list(group.get("sample_payloads"))
+    sample_evidence = _as_list(group.get("sample_evidence"))
+
+    has_payload = any(not _is_empty_visual_value(item) for item in sample_payloads)
+    has_evidence = any(not _is_empty_visual_value(item) for item in sample_evidence)
+
+    severity_unknown = severity in ("", "-", "unknown", "desconocido")
+    signature_unknown = signature in ("", "-", "unknown", "payload_desconocido")
+    parameter_unknown = parameter in ("", "-", "unknown", "desconocido")
+
+    # Caso claramente vacío/no útil.
+    if severity_unknown and signature_unknown and parameter_unknown and not has_payload and not has_evidence:
+        return False
+
+    # Para mostrarlo en la tabla debe existir al menos payload o evidencia.
+    return has_payload or has_evidence
+
+
+def _has_valid_xss_finding_signal(finding: Dict[str, Any]) -> bool:
+    """
+    Determina si un hallazgo individual tiene suficiente señal para mostrarse.
+    """
+    payload = finding.get("payload")
+    evidence = finding.get("evidence")
+    severity = finding.get("severity")
+    parameter = finding.get("param_name")
+
+    has_payload = not _is_empty_visual_value(payload)
+    has_evidence = not _is_empty_visual_value(evidence)
+
+    severity_unknown = _clean_display_text(severity).lower() in ("", "-", "unknown", "desconocido")
+    parameter_unknown = _clean_display_text(parameter).lower() in ("", "-", "unknown", "desconocido")
+
+    # Si todo está vacío o desconocido, no debe renderizarse como hallazgo real.
+    if not has_payload and not has_evidence and severity_unknown and parameter_unknown:
+        return False
+
+    return has_payload or has_evidence
+
+
+def _build_no_valid_xss_row(raw_count: int = 0) -> Dict[str, Any]:
+    """
+    Construye una fila informativa solo para el caso en que Dalfox haya producido
+    registros no estructurados/vacíos, pero ningún hallazgo tenga payload/evidencia útil.
+
+    Esta fila NO debe aparecer cuando sí existen hallazgos XSS válidos.
+    """
+    return {
+        "row_order": "-",
+        "parameter": "-",
+        "payload": "-",
+        "evidence": "Dalfox no devolvió payload/evidencia estructurada suficiente para mostrar un hallazgo XSS válido.",
+        "severity": "Unknown",
+        "occurrences": raw_count if raw_count > 0 else 1,
+        "interpretation_humana": None,
+        "risk_summary": None,
+        "likely_root_cause": None,
+        "recommended_review_area": None,
+        "confidence": None,
+        "model_name": None,
     }
 
 
@@ -230,6 +386,7 @@ def insert_execution(
                 ),
             )
             row = cur.fetchone()
+
         conn.commit()
 
     if not row or "id" not in row:
@@ -287,6 +444,7 @@ def update_execution_status(
                         execution_id,
                     ),
                 )
+
         conn.commit()
 
 
@@ -494,6 +652,7 @@ def insert_hsecscan_results(
                     raw_output,
                 ),
             )
+
         conn.commit()
 
 
@@ -659,6 +818,7 @@ def update_xss_ai_group_interpretations(
         with conn.cursor() as cur:
             for item in interpretations:
                 group_order = int(item.get("group_order", 0) or 0)
+
                 if group_order <= 0:
                     continue
 
@@ -734,6 +894,7 @@ def register_artifact(
                     size_bytes,
                 ),
             )
+
         conn.commit()
 
 
@@ -761,6 +922,7 @@ def list_artifacts(dsn: str, execution_id: int) -> List[Dict[str, Any]]:
                 (execution_id,),
             )
             rows = cur.fetchall()
+
         conn.commit()
 
     return [dict(r) for r in rows]
@@ -811,6 +973,7 @@ def list_execution_summaries(
                 (limit, offset),
             )
             rows = cur.fetchall()
+
         conn.commit()
 
     return [dict(r) for r in rows]
@@ -855,6 +1018,7 @@ def get_execution_summary(
                 (execution_id,),
             )
             row = cur.fetchone()
+
         conn.commit()
 
     return dict(row) if row else None
@@ -866,6 +1030,7 @@ def get_execution_detail(
 ) -> Optional[Dict[str, Any]]:
     """
     Devuelve detalle enriquecido de una ejecución.
+
     También prepara xss_display_rows para que la GUI decida
     si mostrar hallazgos individuales o grupos interpretados.
     """
@@ -1089,6 +1254,7 @@ def get_execution_detail(
     # Derivados de cookies para la GUI
     # ------------------------------------------------------
     cookies_flags_json: List[Dict[str, Any]] = []
+
     for row in cookie_rows_raw:
         cookies_flags_json.append(
             {
@@ -1110,6 +1276,7 @@ def get_execution_detail(
 
     for group in xss_ai_groups_rows:
         finding_orders = group.get("sample_finding_orders") or []
+
         if not isinstance(finding_orders, list):
             continue
 
@@ -1129,6 +1296,7 @@ def get_execution_detail(
             }
 
     enriched_xss_findings_rows: List[Dict[str, Any]] = []
+
     for row in xss_findings_rows:
         current = dict(row)
         finding_order = int(current.get("finding_order", 0) or 0)
@@ -1145,25 +1313,41 @@ def get_execution_detail(
 
     # ------------------------------------------------------
     # 2) Preparar filas de visualización para Dalfox
-    #    - individual: pocos hallazgos
+    #    - individual: pocos hallazgos válidos
     #    - grouped: muchos hallazgos agrupados por IA
+    #
+    # Regla importante:
+    # Si existen hallazgos/grupos válidos, NO se renderizan filas vacías
+    # tipo Unknown + payload_desconocido + sin payload + sin evidencia.
     # ------------------------------------------------------
+    valid_xss_ai_groups_rows = [
+        group
+        for group in xss_ai_groups_rows
+        if _has_valid_xss_group_signal(group)
+    ]
+
+    valid_enriched_xss_findings_rows = [
+        finding
+        for finding in enriched_xss_findings_rows
+        if _has_valid_xss_finding_signal(finding)
+    ]
+
     has_real_groups = any(
         str(item.get("entry_type") or "").strip().lower() == "group"
-        for item in xss_ai_groups_rows
+        for item in valid_xss_ai_groups_rows
     )
 
     xss_display_mode = "grouped" if has_real_groups else "individual"
     xss_display_rows: List[Dict[str, Any]] = []
 
     if has_real_groups:
-        # Mostrar grupos interpretados por IA
-        for group in xss_ai_groups_rows:
+        # Mostrar únicamente grupos con payload/evidencia útil.
+        for group in valid_xss_ai_groups_rows:
             sample_payloads = group.get("sample_payloads") or []
             sample_evidence = group.get("sample_evidence") or []
 
-            payload_example = sample_payloads[0] if isinstance(sample_payloads, list) and sample_payloads else None
-            evidence_example = sample_evidence[0] if isinstance(sample_evidence, list) and sample_evidence else None
+            payload_example = _first_non_empty_text(sample_payloads)
+            evidence_example = _first_non_empty_text(sample_evidence)
 
             xss_display_rows.append(
                 {
@@ -1181,9 +1365,10 @@ def get_execution_detail(
                     "model_name": group.get("model_name"),
                 }
             )
+
     else:
-        # Mostrar hallazgos individuales
-        for finding in enriched_xss_findings_rows:
+        # Mostrar únicamente hallazgos individuales con payload/evidencia útil.
+        for finding in valid_enriched_xss_findings_rows:
             xss_display_rows.append(
                 {
                     "row_order": finding.get("finding_order"),
@@ -1200,6 +1385,16 @@ def get_execution_detail(
                     "model_name": finding.get("model_name"),
                 }
             )
+
+    # Si no quedó ninguna fila válida, solo entonces se permite mostrar una fila
+    # informativa. Esto evita que el falso positivo visual aparezca mezclado con
+    # hallazgos reales.
+    if not xss_display_rows and (xss_ai_groups_rows or enriched_xss_findings_rows):
+        xss_display_rows.append(
+            _build_no_valid_xss_row(
+                raw_count=len(xss_ai_groups_rows) or len(enriched_xss_findings_rows)
+            )
+        )
 
     detail["present_json"] = present_headers
     detail["missing_json"] = missing_headers

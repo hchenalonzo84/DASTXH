@@ -400,7 +400,7 @@
 
           <div class="col-12 col-md-4">
             <div class="stat-card h-100">
-              <h3>Hallazgos</h3>
+              <h3>Hallazgos detectados</h3>
               <p>
                 {% if detail.findings_count is not none %}
                   {{ detail.findings_count }}
@@ -430,13 +430,41 @@
             <p class="mb-1"><strong>Payload:</strong> carga útil usada por Dalfox o ejemplo representativo del grupo.</p>
             <p class="mb-1"><strong>Evidencia:</strong> fragmento de la respuesta donde la carga apareció reflejada.</p>
             <p class="mb-1"><strong>Severidad:</strong> clasificación del hallazgo o del grupo.</p>
-            <p class="mb-1"><strong>Interpretación:</strong> explicación humanizada generada por IA con base en la evidencia.</p>
+            <p class="mb-1"><strong>Interpretación:</strong> explicación humanizada generada por IA con base en la evidencia disponible.</p>
+
             {% if detail.xss_display_mode == "grouped" %}
-              <p class="mb-0"><strong>Nota:</strong> por el volumen de hallazgos, se muestra una vista agrupada con ejemplos representativos.</p>
+              <p class="mb-0">
+                <strong>Nota:</strong> por el volumen de hallazgos, se muestra una vista agrupada con ejemplos representativos.
+                La interpretación corresponde al patrón del grupo, no a cada payload individual.
+              </p>
             {% else %}
-              <p class="mb-0"><strong>Nota:</strong> se muestra una vista individual porque el volumen de hallazgos es pequeño.</p>
+              <p class="mb-0">
+                <strong>Nota:</strong> se muestra una vista individual porque el volumen de hallazgos es pequeño.
+              </p>
             {% endif %}
           </div>
+
+          {% set interpreted_count = namespace(value=0) %}
+          {% for item in detail.xss_display_rows %}
+            {% if item.interpretation_humana %}
+              {% set interpreted_count.value = interpreted_count.value + 1 %}
+            {% endif %}
+          {% endfor %}
+
+          {% if interpreted_count.value == 0 %}
+            <div class="alert alert-warning border-0 mb-3" role="alert">
+              <strong>Interpretación IA no disponible.</strong>
+              Dalfox registró hallazgos XSS estructurados, pero no hay interpretación guardada para estas filas.
+              Revisa <strong>run_meta.json</strong> en los archivos generados para confirmar si la IA falló por timeout,
+              error HTTP, respuesta inválida o configuración del modelo.
+            </div>
+          {% elif interpreted_count.value < (detail.xss_display_rows|length) %}
+            <div class="alert alert-warning border-0 mb-3" role="alert">
+              <strong>Interpretación IA parcial.</strong>
+              Algunas filas sí fueron interpretadas, pero otras no tienen explicación guardada.
+              Esto puede ocurrir si algún lote de IA falló o si ciertos grupos fueron omitidos por falta de evidencia útil.
+            </div>
+          {% endif %}
 
           <div class="table-responsive">
             <table class="table table-dark table-hover align-middle mb-0">
@@ -471,22 +499,39 @@
                         <div><strong>{{ item.interpretation_humana }}</strong></div>
 
                         {% if item.risk_summary %}
-                          <div class="mt-1"><span class="text-info">Riesgo:</span> {{ item.risk_summary }}</div>
+                          <div class="mt-1">
+                            <span class="text-info">Riesgo:</span>
+                            {{ item.risk_summary }}
+                          </div>
                         {% endif %}
 
                         {% if item.likely_root_cause %}
-                          <div class="mt-1"><span class="text-warning">Causa probable:</span> {{ item.likely_root_cause }}</div>
+                          <div class="mt-1">
+                            <span class="text-warning">Causa probable:</span>
+                            {{ item.likely_root_cause }}
+                          </div>
                         {% endif %}
 
                         {% if item.recommended_review_area %}
-                          <div class="mt-1"><span class="text-success">Revisar:</span> {{ item.recommended_review_area }}</div>
+                          <div class="mt-1">
+                            <span class="text-success">Revisar:</span>
+                            {{ item.recommended_review_area }}
+                          </div>
                         {% endif %}
 
                         {% if item.confidence %}
-                          <div class="mt-1"><span class="text-secondary">Confianza:</span> {{ item.confidence }}</div>
+                          <div class="mt-1">
+                            <span class="text-secondary">Confianza:</span>
+                            {{ item.confidence }}
+                          </div>
                         {% endif %}
                       {% else %}
-                        -
+                        <div class="text-warning">
+                          Interpretación IA no disponible para esta fila.
+                        </div>
+                        <div class="text-secondary mt-1">
+                          El hallazgo fue detectado y persistido, pero no existe explicación generada o guardada por el modelo.
+                        </div>
                       {% endif %}
                     </td>
                   </tr>

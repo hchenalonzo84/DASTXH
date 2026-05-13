@@ -7,9 +7,16 @@ Objetivos de esta versión:
 - conservar flujo síncrono y background
 - respetar scan_profile superficial/profundo
 - habilitar hsecscan automáticamente solo cuando corresponda
-- filtrar hallazgos XSS vacíos
+- persistir hallazgos XSS estructurados
 - preparar agrupación XSS para IA
 - intentar interpretación con backend compatible con OpenAI
+- registrar claramente en run_meta.json:
+  * total de hallazgos estructurados
+  * total de hallazgos válidos para IA
+  * hallazgos excluidos por estar vacíos/no útiles
+  * modo individual o agrupado
+  * estado de interpretación IA
+  * error o éxito parcial cuando aplique
 """
 
 from __future__ import annotations
@@ -89,6 +96,7 @@ def _file_size_or_none(path: Path) -> Optional[int]:
             return int(path.stat().st_size)
     except Exception:
         return None
+
     return None
 
 
@@ -127,6 +135,7 @@ def _append_artifact_name(run_meta: Dict[str, Any], file_name: str) -> None:
     Agrega un artifact al run_meta solo si todavía no existe.
     """
     artifacts = run_meta.setdefault("artifacts", [])
+
     if file_name and file_name not in artifacts:
         artifacts.append(file_name)
 
@@ -149,11 +158,98 @@ def _build_unique_run_id(reports_root: Path, started: datetime) -> str:
 def _resolve_enable_hsecscan(scan_profile: str, enable_hsecscan: Optional[bool]) -> bool:
     """
     Resuelve si hsecscan debe ejecutarse.
+
+    - Si enable_hsecscan viene explícito, se respeta.
+    - Si viene None, se activa automáticamente solo en perfil profundo.
     """
     if enable_hsecscan is not None:
         return bool(enable_hsecscan)
 
     return scan_profile == "profundo"
+
+
+def _assign_stable_group_order(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Garantiza que cada entrada preparada para IA tenga group_order estable.
+
+    xss_ai_service.py ya debería asignarlo, pero esta defensa evita que la BD,
+    run_meta.json y la respuesta de IA se desalineen si alguna entrada llegara
+    sin numeración.
+    """
+    prepared_entries: list[dict[str, Any]] = []
+
+    for index, raw_entry in enumerate(entries or [], start=1):
+        entry = dict(raw_entry)
+
+        try:
+            group_order = int(entry.get("group_order") or index)
+        except Exception:
+            group_order = index
+
+        entry["group_order"] = group_order
+        prepared_entries.append(entry)
+
+    return prepared_entries
+
+
+def _build_xss_ai_preparation_meta(
+    xss_ai_input_payload: Dict[str, Any],
+    entries: list[dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Construye el bloque xss_ai_preparation para run_meta.json.
+
+    Incluye los nuevos conteos generados por xss_ai_service.py:
+    - total_valid_findings
+    - excluded_findings
+    """
+    return {
+        "enabled": True,
+        "mode": xss_ai_input_payload.get("mode"),
+        "total_findings": xss_ai_input_payload.get("total_findings"),
+        "total_valid_findings": xss_ai_input_payload.get("total_valid_findings"),
+        "excluded_findings": xss_ai_input_payload.get("excluded_findings"),
+        "total_groups": xss_ai_input_payload.get("total_groups"),
+        "entries": entries,
+    }
+
+
+def _build_xss_ai_interpretation_meta(ai_result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Construye el bloque xss_ai_interpretation para run_meta.json.
+
+    Permite distinguir:
+    - IA deshabilitada
+    - IA omitida por falta de entradas válidas
+    - IA fallida
+    - IA exitosa
+    - IA parcialmente exitosa, cuando ok=True pero existe error informativo
+    """
+    return {
+        "enabled": ai_result.get("enabled"),
+        "ok": ai_result.get("ok"),
+        "skipped": ai_result.get("skipped"),
+        "model_name": ai_result.get("model_name"),
+        "error": ai_result.get("error"),
+        "groups_interpreted": len(ai_result.get("groups", []) or []),
+    }
+
+
+def _build_skipped_ai_result(model_name: Optional[str], reason: str) -> Dict[str, Any]:
+    """
+    Construye una respuesta interna cuando no hay grupos válidos para enviar a IA.
+
+    Esto evita llamar innecesariamente al modelo cuando xss_ai_service.py filtró
+    entradas vacías o no útiles.
+    """
+    return {
+        "enabled": True,
+        "ok": False,
+        "skipped": True,
+        "model_name": model_name,
+        "groups": [],
+        "error": reason,
+    }
 
 
 def _prepare_scan_context(
@@ -224,6 +320,10 @@ def _prepare_scan_context(
 
     return context, run_meta
 
+
+# ==========================================================
+# PIPELINE PRINCIPAL
+# ==========================================================
 
 def _run_scan_pipeline(
     dsn: str,
@@ -314,6 +414,9 @@ def _run_scan_pipeline(
             fallback_target_url=url,
         )
 
+        # Este conteo representa lo que se logró estructurar desde Dalfox.
+        # Puede incluir elementos que luego xss_ai_service.py excluya para IA
+        # por estar vacíos/no útiles.
         effective_findings_count = len(structured_findings)
 
         db_layer.insert_xss_results(
@@ -331,58 +434,70 @@ def _run_scan_pipeline(
         # --------------------------------------------------
         xss_ai_input_payload = build_xss_ai_input_payload(structured_findings)
 
-        # Agregamos group_order estable para que BD, reporte e IA
-        # trabajen con la misma numeración.
-        prepared_entries: list[dict[str, Any]] = []
-        for index, raw_entry in enumerate(xss_ai_input_payload.get("entries", []), start=1):
-            entry = dict(raw_entry)
-            entry["group_order"] = index
-            prepared_entries.append(entry)
+        prepared_entries = _assign_stable_group_order(
+            xss_ai_input_payload.get("entries", []) or []
+        )
 
         xss_ai_input_payload["entries"] = prepared_entries
 
-        # Guardar grupos preparados en BD
+        # Guardar grupos preparados en BD.
+        # Si xss_ai_service.py excluyó hallazgos vacíos, aquí solo se insertan
+        # grupos/hallazgos con señal útil.
         db_layer.insert_xss_ai_groups(
             dsn=dsn,
             execution_id=execution_id,
             xss_ai_payload=xss_ai_input_payload,
         )
 
-        # Intentar interpretación con IA
-        ai_result = interpret_xss_groups_with_ai(xss_ai_input_payload)
+        # Guardar preparación antes de llamar a IA.
+        # Así, si el modelo tarda o falla, run_meta.json conserva el estado
+        # exacto de agrupación/filtrado.
+        run_meta["xss_ai_preparation"] = _build_xss_ai_preparation_meta(
+            xss_ai_input_payload=xss_ai_input_payload,
+            entries=prepared_entries,
+        )
+        write_json(run_meta_path, run_meta)
 
-        # Por defecto usamos los grupos preparados
+        # --------------------------------------------------
+        # INTERPRETACIÓN IA
+        # --------------------------------------------------
+        if prepared_entries:
+            ai_result = interpret_xss_groups_with_ai(xss_ai_input_payload)
+        else:
+            ai_result = _build_skipped_ai_result(
+                model_name=None,
+                reason="No hay grupos XSS válidos para interpretar con IA.",
+            )
+
+        # Por defecto usamos los grupos preparados.
+        # Si la IA devuelve interpretación total o parcial, se fusiona después.
         enriched_xss_ai_groups = prepared_entries
 
         if ai_result.get("ok"):
+            interpreted_groups = ai_result.get("groups", []) or []
+
             db_layer.update_xss_ai_group_interpretations(
                 dsn=dsn,
                 execution_id=execution_id,
-                interpretations=ai_result.get("groups", []),
+                interpretations=interpreted_groups,
                 model_name=ai_result.get("model_name"),
             )
 
             enriched_xss_ai_groups = merge_xss_ai_interpretations(
                 prepared_entries=prepared_entries,
-                interpreted_groups=ai_result.get("groups", []),
+                interpreted_groups=interpreted_groups,
                 model_name=ai_result.get("model_name"),
             )
 
-        run_meta["xss_ai_preparation"] = {
-            "enabled": True,
-            "mode": xss_ai_input_payload.get("mode"),
-            "total_findings": xss_ai_input_payload.get("total_findings"),
-            "total_groups": xss_ai_input_payload.get("total_groups"),
-            "entries": enriched_xss_ai_groups,
-        }
+        # Actualizar run_meta con entradas enriquecidas.
+        # Si la IA falló, enriched_xss_ai_groups conserva entradas preparadas
+        # sin interpretación. Si fue parcial, conserva lo interpretado y lo faltante.
+        run_meta["xss_ai_preparation"] = _build_xss_ai_preparation_meta(
+            xss_ai_input_payload=xss_ai_input_payload,
+            entries=enriched_xss_ai_groups,
+        )
 
-        run_meta["xss_ai_interpretation"] = {
-            "enabled": ai_result.get("enabled"),
-            "ok": ai_result.get("ok"),
-            "skipped": ai_result.get("skipped"),
-            "model_name": ai_result.get("model_name"),
-            "error": ai_result.get("error"),
-        }
+        run_meta["xss_ai_interpretation"] = _build_xss_ai_interpretation_meta(ai_result)
 
         write_json(run_meta_path, run_meta)
 
@@ -441,6 +556,7 @@ def _run_scan_pipeline(
                 artifact_type=artifact_type,
                 mime_type=mime_type,
             )
+
             if file_path.exists():
                 _append_artifact_name(run_meta, file_path.name)
 
@@ -465,6 +581,8 @@ def _run_scan_pipeline(
         run_meta["dalfox_rc"] = dalfox_rc
         run_meta["findings_count"] = effective_findings_count
         run_meta["xss_findings_structured_count"] = len(structured_findings)
+        run_meta["xss_ai_valid_findings_count"] = xss_ai_input_payload.get("total_valid_findings")
+        run_meta["xss_ai_excluded_findings_count"] = xss_ai_input_payload.get("excluded_findings")
 
         write_json(run_meta_path, run_meta)
 
@@ -499,6 +617,10 @@ def _run_scan_pipeline(
             "findings_count": effective_findings_count,
             "xss_ai_mode": xss_ai_input_payload.get("mode"),
             "xss_ai_total_groups": xss_ai_input_payload.get("total_groups"),
+            "xss_ai_total_valid_findings": xss_ai_input_payload.get("total_valid_findings"),
+            "xss_ai_excluded_findings": xss_ai_input_payload.get("excluded_findings"),
+            "xss_ai_interpretation_ok": ai_result.get("ok"),
+            "xss_ai_interpretation_error": ai_result.get("error"),
             "artifacts": run_meta["artifacts"],
         }
 
