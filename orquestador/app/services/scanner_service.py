@@ -1,17 +1,24 @@
 """
 scanner_service.py
 - Servicio reutilizable para ejecutar una evaluación completa DASTXH.
-- Esta versión queda adaptada al esquema normalizado v6.
+- Esta versión queda adaptada al esquema normalizado v7.
 
 Objetivos de esta versión:
 - conservar flujo síncrono y background
 - respetar scan_profile superficial/profundo
 - habilitar hsecscan automáticamente solo cuando corresponda
+- persistir hsecscan como segunda capa:
+  * salida cruda en hsecscan.txt
+  * salida estructurada en hsecscan.json
+  * salida estructurada en hsecscan_results.structured_json
+  * resumen en hsecscan_results.summary_json
+  * checks normalizados en hsecscan_checks
 - persistir hallazgos XSS estructurados
 - preparar agrupación XSS para IA
 - intentar interpretación con backend compatible con OpenAI
 - registrar claramente en run_meta.json:
-  * total de hallazgos estructurados
+  * resumen estructurado de hsecscan
+  * total de hallazgos XSS estructurados
   * total de hallazgos válidos para IA
   * hallazgos excluidos por estar vacíos/no útiles
   * modo individual o agrupado
@@ -56,8 +63,18 @@ from services.xss_model_runner_service import (
 )
 from tools.curl_custom import curl_fetch_headers, evaluate_headers_and_cookies
 from tools.dalfox_tool import extract_structured_findings, read_summary, run_dalfox
-from tools.hsecscan_tool import run_hsecscan
+from tools.hsecscan_tool import parse_hsecscan_output, run_hsecscan
 from utils import ensure_dir, safe_read_text, ts_folder, utc_now, write_json
+
+
+# ==========================================================
+# CONSTANTES LOCALES PARA HSECSCAN ESTRUCTURADO
+# ==========================================================
+
+# Se deja local por ahora para no depender de config.py.
+# Ya está permitido en schema.sql v7 dentro de artifacts.artifact_type.
+HSECSCAN_JSON = "hsecscan.json"
+ARTIFACT_TYPE_HSECSCAN_JSON = "hsecscan_json"
 
 
 # ==========================================================
@@ -198,10 +215,6 @@ def _build_xss_ai_preparation_meta(
 ) -> Dict[str, Any]:
     """
     Construye el bloque xss_ai_preparation para run_meta.json.
-
-    Incluye los nuevos conteos generados por xss_ai_service.py:
-    - total_valid_findings
-    - excluded_findings
     """
     return {
         "enabled": True,
@@ -217,13 +230,6 @@ def _build_xss_ai_preparation_meta(
 def _build_xss_ai_interpretation_meta(ai_result: Dict[str, Any]) -> Dict[str, Any]:
     """
     Construye el bloque xss_ai_interpretation para run_meta.json.
-
-    Permite distinguir:
-    - IA deshabilitada
-    - IA omitida por falta de entradas válidas
-    - IA fallida
-    - IA exitosa
-    - IA parcialmente exitosa, cuando ok=True pero existe error informativo
     """
     return {
         "enabled": ai_result.get("enabled"),
@@ -238,9 +244,6 @@ def _build_xss_ai_interpretation_meta(ai_result: Dict[str, Any]) -> Dict[str, An
 def _build_skipped_ai_result(model_name: Optional[str], reason: str) -> Dict[str, Any]:
     """
     Construye una respuesta interna cuando no hay grupos válidos para enviar a IA.
-
-    Esto evita llamar innecesariamente al modelo cuando xss_ai_service.py filtró
-    entradas vacías o no útiles.
     """
     return {
         "enabled": True,
@@ -249,6 +252,71 @@ def _build_skipped_ai_result(model_name: Optional[str], reason: str) -> Dict[str
         "model_name": model_name,
         "groups": [],
         "error": reason,
+    }
+
+
+def _safe_parse_hsecscan_output(raw_output: str) -> Dict[str, Any]:
+    """
+    Ejecuta el parser de hsecscan sin permitir que un error de parseo
+    detenga todo el escaneo.
+
+    Si el parser falla, se devuelve un objeto estructurado con ok=False.
+    """
+    try:
+        return parse_hsecscan_output(raw_output)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "response_info": {
+                "url": None,
+                "status_code": None,
+                "headers": [],
+            },
+            "observed_headers": [],
+            "missing_headers": [],
+            "summary": {
+                "status_code": None,
+                "response_headers_count": 0,
+                "observed_security_headers_count": 0,
+                "missing_security_headers_count": 0,
+                "total_hsecscan_records": 0,
+                "missing_header_names": [],
+                "observed_header_names": [],
+                "has_set_cookie": False,
+                "has_server_disclosure": False,
+                "has_content_security_policy": False,
+                "has_x_frame_options": False,
+                "has_x_content_type_options": False,
+                "has_strict_transport_security": False,
+            },
+            "parse_warnings": [
+                f"No fue posible parsear la salida de hsecscan: {str(exc)}"
+            ],
+        }
+
+
+def _build_hsecscan_meta(
+    hsecscan_rc: Optional[int],
+    hsecscan_structured: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Construye un resumen pequeño de hsecscan para run_meta.json.
+    """
+    if not hsecscan_structured:
+        return {
+            "enabled": False,
+            "tool_rc": hsecscan_rc,
+            "ok": False,
+            "summary": None,
+            "parse_warnings": [],
+        }
+
+    return {
+        "enabled": True,
+        "tool_rc": hsecscan_rc,
+        "ok": hsecscan_structured.get("ok"),
+        "summary": hsecscan_structured.get("summary"),
+        "parse_warnings": hsecscan_structured.get("parse_warnings", []),
     }
 
 
@@ -319,8 +387,6 @@ def _prepare_scan_context(
     write_json(context.run_meta_path, run_meta)
 
     return context, run_meta
-
-
 # ==========================================================
 # PIPELINE PRINCIPAL
 # ==========================================================
@@ -380,18 +446,65 @@ def _run_scan_pipeline(
         # CAPA 2: hsecscan
         # --------------------------------------------------
         hsecscan_txt_path = report_dir / HSECSCAN_TXT
+        hsecscan_json_path = report_dir / HSECSCAN_JSON
         hsecscan_rc: Optional[int] = None
+        hsecscan_structured: Optional[Dict[str, Any]] = None
+        hsecscan_json_document: Optional[Dict[str, Any]] = None
 
         if enable_hsecscan:
             hsecscan_rc, hsecscan_out = run_hsecscan(url)
-            hsecscan_txt_path.write_text(hsecscan_out, encoding="utf-8", errors="replace")
 
+            # Evidencia cruda original.
+            hsecscan_txt_path.write_text(
+                hsecscan_out,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+            # Nueva evidencia estructurada.
+            # Primero se parsea, luego se persiste en BD con el nuevo schema v7.
+            hsecscan_structured = _safe_parse_hsecscan_output(hsecscan_out)
+
+            hsecscan_json_document = {
+                "target_url": url,
+                "tool_rc": hsecscan_rc,
+                "parsed_at": utc_now().isoformat(),
+                "structured": hsecscan_structured,
+            }
+
+            write_json(
+                hsecscan_json_path,
+                hsecscan_json_document,
+            )
+
+            # Persistencia v7:
+            # - raw_output queda igual que antes
+            # - structured_json guarda el documento completo
+            # - summary_json guarda el resumen útil
+            # - hsecscan_checks se llena desde observed_headers + missing_headers
             db_layer.insert_hsecscan_results(
                 dsn=dsn,
                 execution_id=execution_id,
                 tool_rc=hsecscan_rc,
                 raw_output=hsecscan_out,
+                structured_json=hsecscan_json_document,
+                summary_json=hsecscan_structured.get("summary")
+                if isinstance(hsecscan_structured, dict)
+                else None,
+                hsecscan_checks=(
+                    (hsecscan_structured.get("observed_headers", []) or [])
+                    + (hsecscan_structured.get("missing_headers", []) or [])
+                    if isinstance(hsecscan_structured, dict)
+                    else []
+                ),
             )
+
+            run_meta["hsecscan_structured"] = _build_hsecscan_meta(
+                hsecscan_rc=hsecscan_rc,
+                hsecscan_structured=hsecscan_structured,
+            )
+
+            write_json(run_meta_path, run_meta)
 
         # --------------------------------------------------
         # CAPA 3: Dalfox
@@ -441,8 +554,6 @@ def _run_scan_pipeline(
         xss_ai_input_payload["entries"] = prepared_entries
 
         # Guardar grupos preparados en BD.
-        # Si xss_ai_service.py excluyó hallazgos vacíos, aquí solo se insertan
-        # grupos/hallazgos con señal útil.
         db_layer.insert_xss_ai_groups(
             dsn=dsn,
             execution_id=execution_id,
@@ -450,8 +561,6 @@ def _run_scan_pipeline(
         )
 
         # Guardar preparación antes de llamar a IA.
-        # Así, si el modelo tarda o falla, run_meta.json conserva el estado
-        # exacto de agrupación/filtrado.
         run_meta["xss_ai_preparation"] = _build_xss_ai_preparation_meta(
             xss_ai_input_payload=xss_ai_input_payload,
             entries=prepared_entries,
@@ -470,7 +579,6 @@ def _run_scan_pipeline(
             )
 
         # Por defecto usamos los grupos preparados.
-        # Si la IA devuelve interpretación total o parcial, se fusiona después.
         enriched_xss_ai_groups = prepared_entries
 
         if ai_result.get("ok"):
@@ -490,8 +598,6 @@ def _run_scan_pipeline(
             )
 
         # Actualizar run_meta con entradas enriquecidas.
-        # Si la IA falló, enriched_xss_ai_groups conserva entradas preparadas
-        # sin interpretación. Si fue parcial, conserva lo interpretado y lo faltante.
         run_meta["xss_ai_preparation"] = _build_xss_ai_preparation_meta(
             xss_ai_input_payload=xss_ai_input_payload,
             entries=enriched_xss_ai_groups,
@@ -500,7 +606,6 @@ def _run_scan_pipeline(
         run_meta["xss_ai_interpretation"] = _build_xss_ai_interpretation_meta(ai_result)
 
         write_json(run_meta_path, run_meta)
-
         # --------------------------------------------------
         # REPORTES
         # --------------------------------------------------
@@ -547,6 +652,12 @@ def _run_scan_pipeline(
                 (hsecscan_txt_path, ARTIFACT_TYPE_HSECSCAN_TXT, MIME_TEXT_PLAIN),
             )
 
+        if enable_hsecscan and hsecscan_json_path.exists():
+            artifact_specs.insert(
+                2,
+                (hsecscan_json_path, ARTIFACT_TYPE_HSECSCAN_JSON, MIME_APPLICATION_JSON),
+            )
+
         for file_path, artifact_type, mime_type in artifact_specs:
             _register_file_artifact(
                 dsn=dsn,
@@ -578,6 +689,10 @@ def _run_scan_pipeline(
         run_meta["http_score"] = hdr_eval.get("http_score")
         run_meta["http_grade"] = hdr_eval.get("http_grade")
         run_meta["hsecscan_rc"] = hsecscan_rc
+        run_meta["hsecscan_structured"] = _build_hsecscan_meta(
+            hsecscan_rc=hsecscan_rc,
+            hsecscan_structured=hsecscan_structured,
+        )
         run_meta["dalfox_rc"] = dalfox_rc
         run_meta["findings_count"] = effective_findings_count
         run_meta["xss_findings_structured_count"] = len(structured_findings)
@@ -613,6 +728,11 @@ def _run_scan_pipeline(
             "http_score": hdr_eval.get("http_score"),
             "http_grade": hdr_eval.get("http_grade"),
             "hsecscan_rc": hsecscan_rc,
+            "hsecscan_structured_summary": (
+                hsecscan_structured.get("summary")
+                if isinstance(hsecscan_structured, dict)
+                else None
+            ),
             "dalfox_rc": dalfox_rc,
             "findings_count": effective_findings_count,
             "xss_ai_mode": xss_ai_input_payload.get("mode"),
@@ -669,8 +789,6 @@ def _run_scan_pipeline(
             "error": err,
             "artifacts": run_meta.get("artifacts", []),
         }
-
-
 def _background_scan_worker(
     dsn: str,
     context: ScanContext,

@@ -1,11 +1,13 @@
 """
 db.py
 - Acceso a PostgreSQL usando psycopg (psycopg3).
-- Adaptado al esquema normalizado v6.
+- Adaptado al esquema normalizado v7.
 
 Responsabilidades:
 - ejecutar operaciones CRUD de persistencia
 - guardar resultados HTTP
+- guardar resultados hsecscan crudos y estructurados
+- guardar checks normalizados de hsecscan
 - guardar resultados XSS
 - guardar agrupación XSS preparada para IA
 - guardar interpretaciones generadas por IA
@@ -188,6 +190,104 @@ def _normalize_xss_ai_group_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ==========================================================
+# HELPERS PRIVADOS PARA HSECSCAN
+# ==========================================================
+
+def _unwrap_hsecscan_structured_payload(value: Any) -> Dict[str, Any]:
+    """
+    Acepta dos formas:
+    1. El objeto interno devuelto por parse_hsecscan_output(...):
+       { ok, response_info, observed_headers, missing_headers, summary, ... }
+
+    2. El wrapper escrito en hsecscan.json:
+       { target_url, tool_rc, parsed_at, structured: {...} }
+
+    Devuelve siempre el objeto estructurado interno.
+    """
+    if not isinstance(value, dict):
+        return {}
+
+    structured = value.get("structured")
+
+    if isinstance(structured, dict):
+        return structured
+
+    return value
+
+
+def _extract_hsecscan_summary(structured_json: Any) -> Optional[Dict[str, Any]]:
+    """
+    Extrae summary desde el objeto estructurado de hsecscan.
+    """
+    structured = _unwrap_hsecscan_structured_payload(structured_json)
+    summary = structured.get("summary")
+
+    if isinstance(summary, dict):
+        return summary
+
+    return None
+
+
+def _extract_hsecscan_checks(structured_json: Any) -> List[Dict[str, Any]]:
+    """
+    Extrae observed_headers + missing_headers desde el JSON estructurado.
+    """
+    structured = _unwrap_hsecscan_structured_payload(structured_json)
+
+    observed = structured.get("observed_headers") or []
+    missing = structured.get("missing_headers") or []
+
+    result: List[Dict[str, Any]] = []
+
+    if isinstance(observed, list):
+        result.extend([item for item in observed if isinstance(item, dict)])
+
+    if isinstance(missing, list):
+        result.extend([item for item in missing if isinstance(item, dict)])
+
+    return result
+
+
+def _normalize_hsecscan_check_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Normaliza un registro de hsecscan para insertarlo en hsecscan_checks.
+    """
+    header_name = str(item.get("header_name") or "").strip()
+
+    if not header_name:
+        return None
+
+    record_type = str(item.get("record_type") or "").strip().lower()
+
+    if record_type not in ("observed", "missing"):
+        record_type = "missing" if item.get("value") is None else "observed"
+
+    risk_level = item.get("risk_level")
+
+    if risk_level is not None:
+        risk_level = str(risk_level).strip().lower()
+
+    if risk_level not in ("alta", "media", "baja", "informativa"):
+        risk_level = None
+
+    return {
+        "record_type": record_type,
+        "display_status": item.get("display_status"),
+        "header_name": header_name,
+        "header_value": item.get("value"),
+        "risk_level": risk_level,
+        "reference_url": item.get("reference"),
+        "security_description": item.get("security_description"),
+        "security_reference": item.get("security_reference"),
+        "recommendations": item.get("recommendations"),
+        "cwe": item.get("cwe"),
+        "cwe_url": item.get("cwe_url"),
+        "https": item.get("https"),
+        "raw_check_json": item,
+    }
+
+
+# ==========================================================
 # HELPERS PRIVADOS PARA RENDER XSS EN GUI
 # ==========================================================
 
@@ -335,8 +435,6 @@ def _build_no_valid_xss_row(raw_count: int = 0) -> Dict[str, Any]:
         "confidence": None,
         "model_name": None,
     }
-
-
 # ==========================================================
 # EJECUCIONES
 # ==========================================================
@@ -631,10 +729,34 @@ def insert_hsecscan_results(
     execution_id: int,
     tool_rc: int,
     raw_output: str,
+    structured_json: Optional[Dict[str, Any]] = None,
+    summary_json: Optional[Dict[str, Any]] = None,
+    hsecscan_checks: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """
-    Inserta los resultados de la Capa 2 (hsecscan).
+    Inserta o actualiza los resultados de la Capa 2 (hsecscan).
+
+    Compatibilidad:
+    - Si solo se envía tool_rc + raw_output, funciona como antes.
+    - Si se envía structured_json, guarda:
+      * hsecscan_results.structured_json
+      * hsecscan_results.summary_json
+      * hsecscan_checks normalizados
     """
+    if summary_json is None and structured_json is not None:
+        summary_json = _extract_hsecscan_summary(structured_json)
+
+    if hsecscan_checks is None and structured_json is not None:
+        hsecscan_checks = _extract_hsecscan_checks(structured_json)
+
+    normalized_checks: List[Dict[str, Any]] = []
+
+    for raw_item in hsecscan_checks or []:
+        normalized = _normalize_hsecscan_check_item(raw_item)
+
+        if normalized:
+            normalized_checks.append(normalized)
+
     with connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -642,20 +764,81 @@ def insert_hsecscan_results(
                 INSERT INTO hsecscan_results (
                     execution_id,
                     tool_rc,
-                    raw_output
+                    raw_output,
+                    structured_json,
+                    summary_json
                 )
-                VALUES (%s, %s, %s);
+                VALUES (%s, %s, %s, %s::jsonb, %s::jsonb)
+                ON CONFLICT (execution_id)
+                DO UPDATE SET
+                    tool_rc = EXCLUDED.tool_rc,
+                    raw_output = EXCLUDED.raw_output,
+                    structured_json = EXCLUDED.structured_json,
+                    summary_json = EXCLUDED.summary_json;
                 """,
                 (
                     execution_id,
                     int(tool_rc),
                     raw_output,
+                    _json_or_none(structured_json),
+                    _json_or_none(summary_json),
                 ),
             )
 
+            # Se reemplazan los checks de hsecscan de esta ejecución para que
+            # una re-ejecución o actualización no deje datos viejos duplicados.
+            cur.execute(
+                """
+                DELETE FROM hsecscan_checks
+                WHERE execution_id = %s;
+                """,
+                (execution_id,),
+            )
+
+            for item in normalized_checks:
+                cur.execute(
+                    """
+                    INSERT INTO hsecscan_checks (
+                        execution_id,
+                        record_type,
+                        display_status,
+                        header_name,
+                        header_value,
+                        risk_level,
+                        reference_url,
+                        security_description,
+                        security_reference,
+                        recommendations,
+                        cwe,
+                        cwe_url,
+                        https,
+                        raw_check_json
+                    )
+                    VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s::jsonb
+                    );
+                    """,
+                    (
+                        execution_id,
+                        item["record_type"],
+                        item["display_status"],
+                        item["header_name"],
+                        item["header_value"],
+                        item["risk_level"],
+                        item["reference_url"],
+                        item["security_description"],
+                        item["security_reference"],
+                        item["recommendations"],
+                        item["cwe"],
+                        item["cwe_url"],
+                        item["https"],
+                        _json_or_none(item["raw_check_json"]),
+                    ),
+                )
+
         conn.commit()
-
-
 # ==========================================================
 # RESULTADOS CAPA 3: DALFOX / XSS
 # ==========================================================
@@ -962,8 +1145,12 @@ def list_execution_summaries(
                     http_score,
                     http_grade,
                     hsecscan_rc,
+                    hsecscan_missing_headers_count,
+                    hsecscan_observed_headers_count,
+                    hsecscan_records_count,
                     dalfox_rc,
                     xss_findings_count,
+                    hsecscan_checks_count,
                     xss_ai_groups_count,
                     artifacts_count
                 FROM vw_execution_summary
@@ -1008,8 +1195,12 @@ def get_execution_summary(
                     http_score,
                     http_grade,
                     hsecscan_rc,
+                    hsecscan_missing_headers_count,
+                    hsecscan_observed_headers_count,
+                    hsecscan_records_count,
                     dalfox_rc,
                     xss_findings_count,
+                    hsecscan_checks_count,
                     xss_ai_groups_count,
                     artifacts_count
                 FROM vw_execution_summary
@@ -1022,8 +1213,6 @@ def get_execution_summary(
         conn.commit()
 
     return dict(row) if row else None
-
-
 def get_execution_detail(
     dsn: str,
     execution_id: int,
@@ -1060,6 +1249,8 @@ def get_execution_detail(
 
                     hs.tool_rc AS hsecscan_rc,
                     hs.raw_output AS hsecscan_raw_output,
+                    hs.structured_json AS hsecscan_structured_json,
+                    hs.summary_json AS hsecscan_summary_json,
 
                     xr.tool_rc AS dalfox_rc,
                     xr.findings_count,
@@ -1152,6 +1343,46 @@ def get_execution_detail(
                 (execution_id,),
             )
             http_tests_rows = [dict(r) for r in cur.fetchall()]
+
+            # --------------------------------------------------
+            # Checks hsecscan normalizados
+            # --------------------------------------------------
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    execution_id,
+                    record_type,
+                    display_status,
+                    header_name,
+                    header_value,
+                    risk_level,
+                    reference_url,
+                    security_description,
+                    security_reference,
+                    recommendations,
+                    cwe,
+                    cwe_url,
+                    https,
+                    raw_check_json,
+                    created_at
+                FROM hsecscan_checks
+                WHERE execution_id = %s
+                ORDER BY
+                    CASE
+                        WHEN risk_level = 'alta' THEN 1
+                        WHEN risk_level = 'media' THEN 2
+                        WHEN risk_level = 'baja' THEN 3
+                        WHEN risk_level = 'informativa' THEN 4
+                        ELSE 5
+                    END,
+                    record_type ASC,
+                    header_name ASC,
+                    id ASC;
+                """,
+                (execution_id,),
+            )
+            hsecscan_checks_rows = [dict(r) for r in cur.fetchall()]
 
             # --------------------------------------------------
             # Hallazgos XSS crudos estructurados
@@ -1268,6 +1499,19 @@ def get_execution_detail(
                 "samesite_value": row.get("samesite_value"),
             }
         )
+
+    # ------------------------------------------------------
+    # Derivados hsecscan para GUI futura
+    # ------------------------------------------------------
+    hsecscan_observed_checks = [
+        item for item in hsecscan_checks_rows
+        if str(item.get("record_type") or "").lower() == "observed"
+    ]
+
+    hsecscan_missing_checks = [
+        item for item in hsecscan_checks_rows
+        if str(item.get("record_type") or "").lower() == "missing"
+    ]
 
     # ------------------------------------------------------
     # 1) Enriquecer hallazgos individuales con IA cuando aplique
@@ -1404,6 +1648,10 @@ def get_execution_detail(
     detail["cookie_checks"] = cookie_rows_raw
     detail["cookies_flags_json"] = cookies_flags_json
     detail["http_tests"] = http_tests_rows
+
+    detail["hsecscan_checks"] = hsecscan_checks_rows
+    detail["hsecscan_observed_checks"] = hsecscan_observed_checks
+    detail["hsecscan_missing_checks"] = hsecscan_missing_checks
 
     detail["xss_findings"] = enriched_xss_findings_rows
     detail["xss_ai_groups"] = xss_ai_groups_rows

@@ -12,6 +12,7 @@
      * tabs Pretty / Raw / Artifacts
      * detalle de ejecuciones
      * tabla XSS con columnas separadas de interpretación
+     * tabla hsecscan con resultados estructurados
    ========================================================== */
 
 /* ----------------------------------------------------------
@@ -351,6 +352,7 @@ button:active,
     border: 1px solid var(--danger-border);
     color: var(--danger-text);
 }
+
 /* ----------------------------------------------------------
    Tabs Bootstrap personalizadas
    ---------------------------------------------------------- */
@@ -385,7 +387,6 @@ button:active,
 .tab-content > .tab-pane {
     padding-top: 0.25rem;
 }
-
 /* ----------------------------------------------------------
    Tablas propias y de Bootstrap
    ---------------------------------------------------------- */
@@ -639,6 +640,131 @@ button:active,
 }
 
 /* ----------------------------------------------------------
+   Tabla hsecscan
+   - Se aplica únicamente a la tabla con clase hsecscan-results-table.
+   - Muestra la segunda capa de validación de cabeceras.
+   - Evita que descripción, recomendación y CWE queden comprimidos.
+   ---------------------------------------------------------- */
+.hsecscan-table-wrapper {
+    margin-top: 1rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel-soft);
+}
+
+.hsecscan-table-wrapper::-webkit-scrollbar {
+    height: 10px;
+}
+
+.hsecscan-table-wrapper::-webkit-scrollbar-track {
+    background: var(--bg-panel-soft);
+    border-radius: 999px;
+}
+
+.hsecscan-table-wrapper::-webkit-scrollbar-thumb {
+    background: var(--border-soft);
+    border-radius: 999px;
+}
+
+.hsecscan-table-wrapper::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+}
+
+.hsecscan-results-table {
+    min-width: 1450px;
+    table-layout: fixed;
+    font-size: 0.88rem;
+}
+
+.hsecscan-results-table th,
+.hsecscan-results-table td {
+    padding: 0.75rem 0.8rem;
+    line-height: 1.45;
+    vertical-align: top;
+}
+
+.hsecscan-results-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    white-space: nowrap;
+}
+
+/* 1 Estado */
+.hsecscan-results-table th:nth-child(1),
+.hsecscan-results-table td:nth-child(1) {
+    width: 105px;
+    min-width: 105px;
+    text-align: center;
+}
+
+/* 2 Cabecera */
+.hsecscan-results-table th:nth-child(2),
+.hsecscan-results-table td:nth-child(2) {
+    width: 255px;
+    min-width: 255px;
+}
+
+/* 3 Riesgo */
+.hsecscan-results-table th:nth-child(3),
+.hsecscan-results-table td:nth-child(3) {
+    width: 105px;
+    min-width: 105px;
+    text-align: center;
+}
+
+/* 4 Descripción */
+.hsecscan-results-table th:nth-child(4),
+.hsecscan-results-table td:nth-child(4) {
+    width: 360px;
+    min-width: 360px;
+}
+
+/* 5 Recomendación */
+.hsecscan-results-table th:nth-child(5),
+.hsecscan-results-table td:nth-child(5) {
+    width: 360px;
+    min-width: 360px;
+}
+
+/* 6 CWE */
+.hsecscan-results-table th:nth-child(6),
+.hsecscan-results-table td:nth-child(6) {
+    width: 265px;
+    min-width: 265px;
+}
+
+/* Celdas largas dentro de hsecscan */
+.hsecscan-results-table .break-cell {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* Valor técnico de cabecera */
+.hsecscan-results-table small {
+    display: block;
+    margin-top: 0.35rem;
+    color: var(--text-muted);
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+
+/* Separación visual antes de la descripción técnica */
+.hsecscan-results-table th:nth-child(4),
+.hsecscan-results-table td:nth-child(4) {
+    border-left: 1px solid var(--border-soft);
+}
+
+.hsecscan-results-table tbody tr:hover td {
+    background: #111b2e;
+}
+
+/* ----------------------------------------------------------
    Código y bloques preformateados
    ---------------------------------------------------------- */
 code {
@@ -701,6 +827,16 @@ button:focus,
     .xss-results-table td {
         padding: 0.68rem 0.72rem;
     }
+
+    .hsecscan-results-table {
+        min-width: 1350px;
+        font-size: 0.85rem;
+    }
+
+    .hsecscan-results-table th,
+    .hsecscan-results-table td {
+        padding: 0.68rem 0.72rem;
+    }
 }
 
 @media (max-width: 992px) {
@@ -710,6 +846,10 @@ button:focus,
 
     .xss-results-table {
         min-width: 1650px;
+    }
+
+    .hsecscan-results-table {
+        min-width: 1250px;
     }
 }
 
@@ -736,12 +876,18 @@ button:focus,
         font-size: 0.95rem;
     }
 
-    .xss-table-wrapper {
+    .xss-table-wrapper,
+    .hsecscan-table-wrapper {
         border-radius: var(--radius-sm);
     }
 
     .xss-results-table {
         min-width: 1500px;
+        font-size: 0.82rem;
+    }
+
+    .hsecscan-results-table {
+        min-width: 1150px;
         font-size: 0.82rem;
     }
 }

@@ -339,16 +339,25 @@
       <!-- HSECSCAN -->
       <!-- ================================================== -->
       {% if detail.enable_hsecscan %}
+      {% set hsec_summary = detail.hsecscan_summary_json or {} %}
+      {% set hsec_checks = detail.hsecscan_checks or [] %}
+      {% set hsec_observed = detail.hsecscan_observed_checks or [] %}
+      {% set hsec_missing = detail.hsecscan_missing_checks or [] %}
+
       <section class="card mb-3">
         <h2 class="mb-3">hsecscan</h2>
 
-        <div class="row g-3">
-          <div class="col-12 col-md-4">
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-md-6 col-xl-3">
             <div class="stat-card h-100">
-              <h3>Código técnico</h3>
+              <h3>Estado</h3>
               <p>
-                {% if detail.hsecscan_rc is not none %}
-                  {{ detail.hsecscan_rc }}
+                {% if detail.hsecscan_rc is none and detail.status in ["initiated", "running"] %}
+                  En proceso
+                {% elif detail.hsecscan_rc == 0 %}
+                  Completado
+                {% elif detail.hsecscan_rc is not none %}
+                  Revisar salida técnica
                 {% else %}
                   -
                 {% endif %}
@@ -356,28 +365,171 @@
             </div>
           </div>
 
-          <div class="col-12 col-md-8">
-            <div class="detail-item h-100">
-              <h3>Interpretación rápida</h3>
-              {% if detail.hsecscan_rc is none and detail.status in ["initiated", "running"] %}
-                <p class="mb-0">La revisión complementaria todavía no termina o no ha persistido sus resultados.</p>
-              {% elif detail.hsecscan_rc == 0 %}
-                <p class="mb-0">
-                  hsecscan completó la ejecución. En la pestaña <strong>Detalle técnico</strong>
-                  puedes consultar la evidencia técnica completa.
-                </p>
-              {% else %}
-                <p class="mb-0">
-                  hsecscan devolvió un código diferente de cero. Revisa la pestaña
-                  <strong>Detalle técnico</strong> para verificar la salida exacta.
-                </p>
-              {% endif %}
+          <div class="col-12 col-md-6 col-xl-3">
+            <div class="stat-card h-100">
+              <h3>Cabeceras faltantes</h3>
+              <p>
+                {% if hsec_summary.get("missing_security_headers_count") is not none %}
+                  {{ hsec_summary.get("missing_security_headers_count") }}
+                {% else %}
+                  {{ hsec_missing|length }}
+                {% endif %}
+              </p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6 col-xl-3">
+            <div class="stat-card h-100">
+              <h3>Observaciones</h3>
+              <p>
+                {% if hsec_summary.get("observed_security_headers_count") is not none %}
+                  {{ hsec_summary.get("observed_security_headers_count") }}
+                {% else %}
+                  {{ hsec_observed|length }}
+                {% endif %}
+              </p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6 col-xl-3">
+            <div class="stat-card h-100">
+              <h3>Registros</h3>
+              <p>
+                {% if hsec_summary.get("total_hsecscan_records") is not none %}
+                  {{ hsec_summary.get("total_hsecscan_records") }}
+                {% else %}
+                  {{ hsec_checks|length }}
+                {% endif %}
+              </p>
             </div>
           </div>
         </div>
+
+        {% if detail.hsecscan_rc is none and detail.status in ["initiated", "running"] %}
+          <div class="alert alert-warning border-0 mb-0" role="alert">
+            La revisión complementaria todavía no termina o sus resultados aún no se han persistido.
+          </div>
+        {% elif detail.hsecscan_rc is not none and detail.hsecscan_rc != 0 %}
+          <div class="alert alert-warning border-0 mb-3" role="alert">
+            hsecscan devolvió un estado técnico diferente de finalización correcta.
+            Revisa la pestaña <strong>Detalle técnico</strong> para consultar la salida completa.
+          </div>
+        {% endif %}
+
+        {% if hsec_checks %}
+          <div class="detail-item mb-3">
+            <h3>Cómo leer esta tabla</h3>
+            <p class="mb-1">
+              <strong>Estado:</strong> indica si hsecscan observó una cabecera con advertencia o si detectó una cabecera faltante.
+            </p>
+            <p class="mb-1">
+              <strong>Riesgo:</strong> clasificación orientativa generada por el parser para priorizar revisión.
+            </p>
+            <p class="mb-1">
+              <strong>Descripción:</strong> explicación técnica reportada por hsecscan sobre el impacto del hallazgo.
+            </p>
+            <p class="mb-1">
+              <strong>Recomendación:</strong> acción sugerida para revisar o corregir la configuración.
+            </p>
+            <p class="mb-0">
+              <strong>Nota:</strong> esta sección funciona como una segunda capa de contraste para complementar la verificación realizada con curl.
+            </p>
+          </div>
+
+          <div class="table-responsive hsecscan-table-wrapper">
+            <table class="table table-dark table-hover align-middle mb-0 hsecscan-results-table">
+              <thead>
+                <tr>
+                  <th>Estado</th>
+                  <th>Cabecera</th>
+                  <th>Riesgo</th>
+                  <th>Descripción</th>
+                  <th>Recomendación</th>
+                  <th>CWE</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in hsec_checks %}
+                  <tr>
+                    <td>
+                      {% if item.display_status %}
+                        {{ item.display_status }}
+                      {% elif item.record_type == "missing" %}
+                        Faltante
+                      {% elif item.record_type == "observed" %}
+                        Observada
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+
+                    <td class="break-cell">
+                      <strong>{{ item.header_name }}</strong>
+                      {% if item.header_value %}
+                        <br>
+                        <small>{{ item.header_value }}</small>
+                      {% endif %}
+                    </td>
+
+                    <td>
+                      {% if item.risk_level == "alta" %}
+                        <span class="badge badge-failed">alta</span>
+                      {% elif item.risk_level == "media" %}
+                        <span class="badge badge-initiated">media</span>
+                      {% elif item.risk_level == "baja" %}
+                        <span class="badge badge-running">baja</span>
+                      {% elif item.risk_level == "informativa" %}
+                        <span class="badge badge-finished">informativa</span>
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+
+                    <td class="break-cell">
+                      {% if item.security_description %}
+                        {{ item.security_description }}
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+
+                    <td class="break-cell">
+                      {% if item.recommendations %}
+                        {{ item.recommendations }}
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+
+                    <td class="break-cell">
+                      {% if item.cwe %}
+                        {{ item.cwe }}
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="detail-item">
+            <h3>Resultado complementario</h3>
+            {% if detail.hsecscan_rc == 0 %}
+              <p class="mb-0">
+                hsecscan completó la ejecución, pero no hay registros estructurados para mostrar.
+                Puedes revisar la salida completa en la pestaña <strong>Detalle técnico</strong>.
+              </p>
+            {% else %}
+              <p class="mb-0">
+                No hay información estructurada disponible para hsecscan en esta ejecución.
+              </p>
+            {% endif %}
+          </div>
+        {% endif %}
       </section>
       {% endif %}
-
       <!-- ================================================== -->
       <!-- XSS -->
       <!-- ================================================== -->
@@ -561,7 +713,7 @@
         {% endif %}
       </section>
     </div>
-     <div
+    <div
       class="tab-pane fade"
       id="raw-pane"
       role="tabpanel"
@@ -659,6 +811,12 @@
       <section class="card mb-3">
         <h2 class="mb-3">hsecscan (salida técnica)</h2>
 
+        {% if detail.hsecscan_summary_json %}
+          <h3>Resumen estructurado</h3>
+          <pre>{{ detail.hsecscan_summary_json }}</pre>
+        {% endif %}
+
+        <h3 class="mt-4">Salida original</h3>
         {% if detail.hsecscan_raw_output %}
           <pre>{{ detail.hsecscan_raw_output }}</pre>
         {% else %}
@@ -755,4 +913,4 @@
     </div>
   </div>
 </section>
-{% endblock %}   
+{% endblock %}

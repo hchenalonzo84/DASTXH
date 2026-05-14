@@ -1,11 +1,16 @@
 -- =========================================================
--- DASTXH - Schema base v6
+-- DASTXH - Schema base v7
 --
 -- Objetivo de esta versión:
 --   - conservar executions como entidad principal
 --   - persistir resultados HTTP normalizados
 --   - persistir XSS normalizado
---   - persistir agrupación XSS preparada para futura IA
+--   - persistir agrupación XSS preparada para IA
+--   - persistir hsecscan como segunda capa de validación:
+--       * salida cruda
+--       * salida estructurada JSON
+--       * checks normalizados observados/faltantes
+--       * artifact hsecscan.json
 -- =========================================================
 
 -- =========================================================
@@ -155,6 +160,8 @@ CREATE INDEX IF NOT EXISTS ix_http_tests_status
 
 CREATE INDEX IF NOT EXISTS ix_http_tests_category
   ON http_tests (category);
+
+
 -- =========================================================
 -- 6) RESULTADOS CAPA 2: HSECSCAN
 -- =========================================================
@@ -165,10 +172,74 @@ CREATE TABLE IF NOT EXISTS hsecscan_results (
   tool_rc              INT NOT NULL,
   raw_output           TEXT NOT NULL,
 
+  -- JSON completo generado por parse_hsecscan_output(...)
+  structured_json      JSONB NULL,
+
+  -- Resumen interno para consultas rápidas:
+  -- status_code, counts, missing_header_names, observed_header_names, etc.
+  summary_json         JSONB NULL,
+
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Compatibilidad si la tabla ya existía antes de v7.
+ALTER TABLE hsecscan_results
+  ADD COLUMN IF NOT EXISTS structured_json JSONB NULL;
 
+ALTER TABLE hsecscan_results
+  ADD COLUMN IF NOT EXISTS summary_json JSONB NULL;
+
+
+-- =========================================================
+-- 6.1) RESULTADOS CAPA 2: HSECSCAN NORMALIZADO
+--
+-- Guarda cada registro estructurado de hsecscan:
+--   - cabeceras observadas con advertencia
+--   - cabeceras faltantes
+-- =========================================================
+CREATE TABLE IF NOT EXISTS hsecscan_checks (
+  id                    BIGSERIAL PRIMARY KEY,
+
+  execution_id          BIGINT NOT NULL
+                        REFERENCES executions(id) ON DELETE CASCADE,
+
+  record_type           TEXT NOT NULL
+                        CHECK (record_type IN ('observed', 'missing')),
+
+  display_status        TEXT NULL,
+  header_name           TEXT NOT NULL,
+  header_value          TEXT NULL,
+
+  risk_level            TEXT NULL
+                        CHECK (
+                          risk_level IS NULL OR
+                          risk_level IN ('alta', 'media', 'baja', 'informativa')
+                        ),
+
+  reference_url         TEXT NULL,
+  security_description  TEXT NULL,
+  security_reference    TEXT NULL,
+  recommendations       TEXT NULL,
+  cwe                   TEXT NULL,
+  cwe_url               TEXT NULL,
+  https                 TEXT NULL,
+
+  raw_check_json        JSONB NULL,
+
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_hsecscan_checks_execution_id
+  ON hsecscan_checks (execution_id);
+
+CREATE INDEX IF NOT EXISTS ix_hsecscan_checks_record_type
+  ON hsecscan_checks (record_type);
+
+CREATE INDEX IF NOT EXISTS ix_hsecscan_checks_header_name
+  ON hsecscan_checks (header_name);
+
+CREATE INDEX IF NOT EXISTS ix_hsecscan_checks_risk_level
+  ON hsecscan_checks (risk_level);
 -- =========================================================
 -- 7) RESULTADOS CAPA 3: DALFOX / XSS (RESUMEN)
 -- =========================================================
@@ -261,6 +332,8 @@ CREATE INDEX IF NOT EXISTS ix_xss_ai_groups_entry_type
 
 CREATE INDEX IF NOT EXISTS ix_xss_ai_groups_severity_mode
   ON xss_ai_groups (severity_mode);
+
+
 -- =========================================================
 -- 10) ARTEFACTOS / REPORTES GENERADOS
 -- =========================================================
@@ -271,6 +344,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
                        REFERENCES executions(id) ON DELETE CASCADE,
 
   artifact_type        TEXT NOT NULL
+                       CONSTRAINT artifacts_artifact_type_check
                        CHECK (
                          artifact_type IN (
                            'report_md',
@@ -278,6 +352,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
                            'report_pdf',
                            'headers_json',
                            'hsecscan_txt',
+                           'hsecscan_json',
                            'dalfox_json',
                            'dalfox_txt',
                            'run_meta_json',
@@ -293,6 +368,37 @@ CREATE TABLE IF NOT EXISTS artifacts (
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Compatibilidad si la tabla artifacts ya existía con el CHECK anterior.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'artifacts_artifact_type_check'
+      AND conrelid = 'artifacts'::regclass
+  ) THEN
+    ALTER TABLE artifacts
+      DROP CONSTRAINT artifacts_artifact_type_check;
+  END IF;
+
+  ALTER TABLE artifacts
+    ADD CONSTRAINT artifacts_artifact_type_check
+    CHECK (
+      artifact_type IN (
+        'report_md',
+        'report_html',
+        'report_pdf',
+        'headers_json',
+        'hsecscan_txt',
+        'hsecscan_json',
+        'dalfox_json',
+        'dalfox_txt',
+        'run_meta_json',
+        'other'
+      )
+    );
+END $$;
+
 CREATE INDEX IF NOT EXISTS ix_artifacts_execution_id
   ON artifacts (execution_id);
 
@@ -301,8 +407,6 @@ CREATE INDEX IF NOT EXISTS ix_artifacts_artifact_type
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_artifacts_execution_relative_path
   ON artifacts (execution_id, relative_path);
-
-
 -- =========================================================
 -- 11) VISTA DE RESUMEN PARA HISTORIAL
 -- =========================================================
@@ -328,9 +432,25 @@ SELECT
 
   hs.tool_rc AS hsecscan_rc,
 
+  CASE
+    WHEN hs.summary_json IS NULL THEN NULL
+    ELSE NULLIF(hs.summary_json ->> 'missing_security_headers_count', '')::INT
+  END AS hsecscan_missing_headers_count,
+
+  CASE
+    WHEN hs.summary_json IS NULL THEN NULL
+    ELSE NULLIF(hs.summary_json ->> 'observed_security_headers_count', '')::INT
+  END AS hsecscan_observed_headers_count,
+
+  CASE
+    WHEN hs.summary_json IS NULL THEN NULL
+    ELSE NULLIF(hs.summary_json ->> 'total_hsecscan_records', '')::INT
+  END AS hsecscan_records_count,
+
   xr.tool_rc AS dalfox_rc,
   xr.findings_count AS xss_findings_count,
 
+  COUNT(DISTINCT hsc.id) AS hsecscan_checks_count,
   COUNT(DISTINCT xag.id) AS xss_ai_groups_count,
   COUNT(DISTINCT a.id) AS artifacts_count
 FROM executions e
@@ -338,6 +458,8 @@ LEFT JOIN header_results hr
   ON hr.execution_id = e.id
 LEFT JOIN hsecscan_results hs
   ON hs.execution_id = e.id
+LEFT JOIN hsecscan_checks hsc
+  ON hsc.execution_id = e.id
 LEFT JOIN xss_results xr
   ON xr.execution_id = e.id
 LEFT JOIN xss_ai_groups xag
@@ -362,5 +484,6 @@ GROUP BY
   hr.http_score,
   hr.http_grade,
   hs.tool_rc,
+  hs.summary_json,
   xr.tool_rc,
   xr.findings_count;
