@@ -13,6 +13,7 @@
      * detalle de ejecuciones
      * tabla XSS con columnas separadas de interpretación
      * tabla hsecscan con resultados estructurados
+     * tabla minimalista de comparación curl vs hsecscan
    ========================================================== */
 
 /* ----------------------------------------------------------
@@ -304,7 +305,6 @@ button:active,
     color: var(--warning-text);
     border-color: var(--warning-border);
 }
-
 /* ----------------------------------------------------------
    Notices heredados
    ---------------------------------------------------------- */
@@ -387,6 +387,7 @@ button:active,
 .tab-content > .tab-pane {
     padding-top: 0.25rem;
 }
+
 /* ----------------------------------------------------------
    Tablas propias y de Bootstrap
    ---------------------------------------------------------- */
@@ -461,12 +462,11 @@ button:active,
 }
 
 /* ----------------------------------------------------------
-   Tabla XSS
-   - Se aplica únicamente a la tabla con clase xss-results-table.
-   - Evita comprimir demasiado las columnas nuevas:
-     Interpretación, Riesgo, Causa probable, Revisar y Confianza.
+   Scrollbars para tablas especiales
    ---------------------------------------------------------- */
-.xss-table-wrapper {
+.xss-table-wrapper,
+.hsecscan-table-wrapper,
+.header-comparison-table-wrapper {
     margin-top: 1rem;
     overflow-x: auto;
     overflow-y: hidden;
@@ -475,24 +475,35 @@ button:active,
     background: var(--bg-panel-soft);
 }
 
-.xss-table-wrapper::-webkit-scrollbar {
+.xss-table-wrapper::-webkit-scrollbar,
+.hsecscan-table-wrapper::-webkit-scrollbar,
+.header-comparison-table-wrapper::-webkit-scrollbar {
     height: 10px;
 }
 
-.xss-table-wrapper::-webkit-scrollbar-track {
+.xss-table-wrapper::-webkit-scrollbar-track,
+.hsecscan-table-wrapper::-webkit-scrollbar-track,
+.header-comparison-table-wrapper::-webkit-scrollbar-track {
     background: var(--bg-panel-soft);
     border-radius: 999px;
 }
 
-.xss-table-wrapper::-webkit-scrollbar-thumb {
+.xss-table-wrapper::-webkit-scrollbar-thumb,
+.hsecscan-table-wrapper::-webkit-scrollbar-thumb,
+.header-comparison-table-wrapper::-webkit-scrollbar-thumb {
     background: var(--border-soft);
     border-radius: 999px;
 }
 
-.xss-table-wrapper::-webkit-scrollbar-thumb:hover {
+.xss-table-wrapper::-webkit-scrollbar-thumb:hover,
+.hsecscan-table-wrapper::-webkit-scrollbar-thumb:hover,
+.header-comparison-table-wrapper::-webkit-scrollbar-thumb:hover {
     background: #475569;
 }
 
+/* ----------------------------------------------------------
+   Tabla XSS
+   ---------------------------------------------------------- */
 .xss-results-table {
     min-width: 1850px;
     table-layout: fixed;
@@ -513,7 +524,6 @@ button:active,
     white-space: nowrap;
 }
 
-/* Columnas base */
 .xss-results-table th:nth-child(1),
 .xss-results-table td:nth-child(1) {
     width: 48px;
@@ -545,7 +555,6 @@ button:active,
     min-width: 100px;
 }
 
-/* Cuando existe la columna Ocurrencias, la tabla agrupada tiene 11 columnas. */
 .xss-results-table th:nth-child(6),
 .xss-results-table td:nth-child(6) {
     width: 105px;
@@ -553,8 +562,6 @@ button:active,
     text-align: center;
 }
 
-/* Columnas de IA en vista agrupada:
-   7 Interpretación, 8 Riesgo, 9 Causa, 10 Revisar, 11 Confianza */
 .xss-results-table th:nth-child(7),
 .xss-results-table td:nth-child(7) {
     width: 270px;
@@ -585,10 +592,6 @@ button:active,
     min-width: 115px;
     text-align: center;
 }
-
-/* En vista individual no aparece Ocurrencias.
-   La tabla tiene 10 columnas, pero estas reglas ayudan a mantener
-   legibles las columnas finales cuando no existe la columna 6 como ocurrencias. */
 .xss-results-table:not(:has(th:nth-child(11))) th:nth-child(6),
 .xss-results-table:not(:has(th:nth-child(11))) td:nth-child(6) {
     width: 280px;
@@ -614,7 +617,6 @@ button:active,
     text-align: center;
 }
 
-/* Celdas largas dentro de la tabla XSS */
 .xss-results-table .break-cell {
     max-width: none;
     white-space: normal;
@@ -622,14 +624,12 @@ button:active,
     overflow-wrap: anywhere;
 }
 
-/* Payload y evidencia suelen ser técnicos: se leen mejor con fuente monoespaciada */
 .xss-results-table td:nth-child(3),
 .xss-results-table td:nth-child(4) {
     font-family: Consolas, "Courier New", monospace;
     font-size: 0.82rem;
 }
 
-/* Separación visual para columnas de IA */
 .xss-results-table th:nth-child(7),
 .xss-results-table td:nth-child(7) {
     border-left: 1px solid var(--border-soft);
@@ -641,37 +641,7 @@ button:active,
 
 /* ----------------------------------------------------------
    Tabla hsecscan
-   - Se aplica únicamente a la tabla con clase hsecscan-results-table.
-   - Muestra la segunda capa de validación de cabeceras.
-   - Evita que descripción, recomendación y CWE queden comprimidos.
    ---------------------------------------------------------- */
-.hsecscan-table-wrapper {
-    margin-top: 1rem;
-    overflow-x: auto;
-    overflow-y: hidden;
-    border: 1px solid var(--border-main);
-    border-radius: var(--radius-md);
-    background: var(--bg-panel-soft);
-}
-
-.hsecscan-table-wrapper::-webkit-scrollbar {
-    height: 10px;
-}
-
-.hsecscan-table-wrapper::-webkit-scrollbar-track {
-    background: var(--bg-panel-soft);
-    border-radius: 999px;
-}
-
-.hsecscan-table-wrapper::-webkit-scrollbar-thumb {
-    background: var(--border-soft);
-    border-radius: 999px;
-}
-
-.hsecscan-table-wrapper::-webkit-scrollbar-thumb:hover {
-    background: #475569;
-}
-
 .hsecscan-results-table {
     min-width: 1450px;
     table-layout: fixed;
@@ -692,7 +662,6 @@ button:active,
     white-space: nowrap;
 }
 
-/* 1 Estado */
 .hsecscan-results-table th:nth-child(1),
 .hsecscan-results-table td:nth-child(1) {
     width: 105px;
@@ -700,14 +669,12 @@ button:active,
     text-align: center;
 }
 
-/* 2 Cabecera */
 .hsecscan-results-table th:nth-child(2),
 .hsecscan-results-table td:nth-child(2) {
     width: 255px;
     min-width: 255px;
 }
 
-/* 3 Riesgo */
 .hsecscan-results-table th:nth-child(3),
 .hsecscan-results-table td:nth-child(3) {
     width: 105px;
@@ -715,28 +682,24 @@ button:active,
     text-align: center;
 }
 
-/* 4 Descripción */
 .hsecscan-results-table th:nth-child(4),
 .hsecscan-results-table td:nth-child(4) {
     width: 360px;
     min-width: 360px;
 }
 
-/* 5 Recomendación */
 .hsecscan-results-table th:nth-child(5),
 .hsecscan-results-table td:nth-child(5) {
     width: 360px;
     min-width: 360px;
 }
 
-/* 6 CWE */
 .hsecscan-results-table th:nth-child(6),
 .hsecscan-results-table td:nth-child(6) {
     width: 265px;
     min-width: 265px;
 }
 
-/* Celdas largas dentro de hsecscan */
 .hsecscan-results-table .break-cell {
     max-width: none;
     white-space: normal;
@@ -744,7 +707,6 @@ button:active,
     overflow-wrap: anywhere;
 }
 
-/* Valor técnico de cabecera */
 .hsecscan-results-table small {
     display: block;
     margin-top: 0.35rem;
@@ -754,13 +716,89 @@ button:active,
     line-height: 1.35;
 }
 
-/* Separación visual antes de la descripción técnica */
 .hsecscan-results-table th:nth-child(4),
 .hsecscan-results-table td:nth-child(4) {
     border-left: 1px solid var(--border-soft);
 }
 
 .hsecscan-results-table tbody tr:hover td {
+    background: #111b2e;
+}
+
+/* ----------------------------------------------------------
+   Tabla minimalista: comparación curl vs hsecscan
+   ---------------------------------------------------------- */
+.header-comparison-results-table {
+    min-width: 980px;
+    table-layout: fixed;
+    font-size: 0.88rem;
+}
+
+.header-comparison-results-table th,
+.header-comparison-results-table td {
+    padding: 0.75rem 0.8rem;
+    line-height: 1.45;
+    vertical-align: top;
+}
+
+.header-comparison-results-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    white-space: nowrap;
+}
+
+/* 1 Cabecera */
+.header-comparison-results-table th:nth-child(1),
+.header-comparison-results-table td:nth-child(1) {
+    width: 260px;
+    min-width: 260px;
+}
+
+/* 2 curl */
+.header-comparison-results-table th:nth-child(2),
+.header-comparison-results-table td:nth-child(2) {
+    width: 135px;
+    min-width: 135px;
+    text-align: center;
+}
+
+/* 3 hsecscan */
+.header-comparison-results-table th:nth-child(3),
+.header-comparison-results-table td:nth-child(3) {
+    width: 150px;
+    min-width: 150px;
+    text-align: center;
+}
+
+/* 4 Resultado */
+.header-comparison-results-table th:nth-child(4),
+.header-comparison-results-table td:nth-child(4) {
+    width: 310px;
+    min-width: 310px;
+}
+
+/* 5 Prioridad */
+.header-comparison-results-table th:nth-child(5),
+.header-comparison-results-table td:nth-child(5) {
+    width: 125px;
+    min-width: 125px;
+    text-align: center;
+}
+
+.header-comparison-results-table .break-cell {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.header-comparison-results-table th:nth-child(4),
+.header-comparison-results-table td:nth-child(4) {
+    border-left: 1px solid var(--border-soft);
+}
+
+.header-comparison-results-table tbody tr:hover td {
     background: #111b2e;
 }
 
@@ -837,6 +875,16 @@ button:focus,
     .hsecscan-results-table td {
         padding: 0.68rem 0.72rem;
     }
+
+    .header-comparison-results-table {
+        min-width: 920px;
+        font-size: 0.84rem;
+    }
+
+    .header-comparison-results-table th,
+    .header-comparison-results-table td {
+        padding: 0.68rem 0.72rem;
+    }
 }
 
 @media (max-width: 992px) {
@@ -850,6 +898,10 @@ button:focus,
 
     .hsecscan-results-table {
         min-width: 1250px;
+    }
+
+    .header-comparison-results-table {
+        min-width: 900px;
     }
 }
 
@@ -877,7 +929,8 @@ button:focus,
     }
 
     .xss-table-wrapper,
-    .hsecscan-table-wrapper {
+    .hsecscan-table-wrapper,
+    .header-comparison-table-wrapper {
         border-radius: var(--radius-sm);
     }
 
@@ -890,6 +943,11 @@ button:focus,
         min-width: 1150px;
         font-size: 0.82rem;
     }
+
+    .header-comparison-results-table {
+        min-width: 860px;
+        font-size: 0.80rem;
+    }
 }
 
 /* ==========================================================
@@ -898,7 +956,6 @@ button:focus,
    - Usa selectores más específicos para ganarle a Bootstrap.
    ========================================================== */
 
-/* Texto general dentro del contenido principal */
 main.container,
 main.container p,
 main.container li,
@@ -914,7 +971,6 @@ main.container th {
     color: #e5e7eb !important;
 }
 
-/* Títulos */
 main.container h1,
 main.container h2,
 main.container h3,
@@ -924,7 +980,6 @@ main.container h6 {
     color: #f9fafb !important;
 }
 
-/* Card y todo su contenido textual */
 main.container .card,
 main.container .card p,
 main.container .card li,
@@ -938,7 +993,6 @@ main.container .card strong {
     color: #e5e7eb !important;
 }
 
-/* Notices propias */
 main.container .notice,
 main.container .notice p,
 main.container .notice li,
@@ -948,7 +1002,6 @@ main.container .notice strong {
     color: #e5e7eb !important;
 }
 
-/* Alerts de Bootstrap */
 main.container .alert,
 main.container .alert p,
 main.container .alert li,
@@ -958,7 +1011,6 @@ main.container .alert strong {
     color: #e5e7eb !important;
 }
 
-/* Bloques de detalle y stats */
 main.container .detail-item,
 main.container .detail-item p,
 main.container .detail-item li,
@@ -974,7 +1026,6 @@ main.container .stat-card strong {
     color: #e5e7eb !important;
 }
 
-/* Tabs */
 main.container .tab-content,
 main.container .tab-content p,
 main.container .tab-content li,
@@ -984,7 +1035,6 @@ main.container .tab-content strong {
     color: #e5e7eb !important;
 }
 
-/* Tablas Bootstrap */
 main.container .table,
 main.container .table td,
 main.container .table th,
@@ -994,7 +1044,6 @@ main.container .table tbody {
     color: #e5e7eb !important;
 }
 
-/* Formularios */
 main.container input,
 main.container select,
 main.container textarea {
@@ -1006,7 +1055,6 @@ main.container textarea::placeholder {
     color: #94a3b8 !important;
 }
 
-/* Mantener colores especiales en badges y botones */
 main.container .badge-finished {
     color: #86efac !important;
 }

@@ -230,7 +230,7 @@
       tabindex="0"
     >
       <!-- ================================================== -->
-      <!-- VERIFICACIÓN DE CABECERAS -->
+      <!-- 1. VERIFICACIÓN DE CABECERAS -->
       <!-- ================================================== -->
       <section class="card mb-3">
         <h2 class="mb-3">verificación de cabeceras</h2>
@@ -280,63 +280,8 @@
           <p class="mb-0">Todavía no hay pruebas HTTP detalladas registradas para esta ejecución.</p>
         {% endif %}
       </section>
-
       <!-- ================================================== -->
-      <!-- COOKIES -->
-      <!-- ================================================== -->
-      <section class="card mb-3">
-        <h2 class="mb-3">Cookies observadas</h2>
-
-        {% if detail.cookies_flags_json %}
-          <div class="table-responsive">
-            <table class="table table-dark table-hover align-middle mb-0">
-              <thead>
-                <tr>
-                  <th>Cookie</th>
-                  <th>Secure</th>
-                  <th>HttpOnly</th>
-                  <th>SameSite</th>
-                  <th>Valor SameSite</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for cookie in detail.cookies_flags_json %}
-                  <tr>
-                    <td class="break-cell">
-                      {% if cookie.cookie_name %}
-                        {{ cookie.cookie_name }}
-                      {% else %}
-                        {{ cookie.cookie_raw or cookie.cookie }}
-                      {% endif %}
-                    </td>
-                    <td>{{ "Sí" if cookie.secure else "No" }}</td>
-                    <td>{{ "Sí" if cookie.httponly else "No" }}</td>
-                    <td>
-                      {% if cookie.samesite_present is defined %}
-                        {{ "Sí" if cookie.samesite_present else "No" }}
-                      {% else %}
-                        {{ "Sí" if cookie.samesite else "No" }}
-                      {% endif %}
-                    </td>
-                    <td>
-                      {% if cookie.samesite_value %}
-                        {{ cookie.samesite_value }}
-                      {% else %}
-                        -
-                      {% endif %}
-                    </td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% else %}
-          <p class="mb-0">No se detectaron cookies evaluables en la respuesta final.</p>
-        {% endif %}
-      </section>
-
-      <!-- ================================================== -->
-      <!-- HSECSCAN -->
+      <!-- 2. HSECSCAN -->
       <!-- ================================================== -->
       {% if detail.enable_hsecscan %}
       {% set hsec_summary = detail.hsecscan_summary_json or {} %}
@@ -530,8 +475,181 @@
         {% endif %}
       </section>
       {% endif %}
+
       <!-- ================================================== -->
-      <!-- XSS -->
+      <!-- 3. COOKIES -->
+      <!-- ================================================== -->
+      <section class="card mb-3">
+        <h2 class="mb-3">Cookies observadas</h2>
+
+        {% if detail.cookies_flags_json %}
+          <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Cookie</th>
+                  <th>Secure</th>
+                  <th>HttpOnly</th>
+                  <th>SameSite</th>
+                  <th>Valor SameSite</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for cookie in detail.cookies_flags_json %}
+                  <tr>
+                    <td class="break-cell">
+                      {% if cookie.cookie_name %}
+                        {{ cookie.cookie_name }}
+                      {% else %}
+                        {{ cookie.cookie_raw or cookie.cookie }}
+                      {% endif %}
+                    </td>
+                    <td>{{ "Sí" if cookie.secure else "No" }}</td>
+                    <td>{{ "Sí" if cookie.httponly else "No" }}</td>
+                    <td>
+                      {% if cookie.samesite_present is defined %}
+                        {{ "Sí" if cookie.samesite_present else "No" }}
+                      {% else %}
+                        {{ "Sí" if cookie.samesite else "No" }}
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if cookie.samesite_value %}
+                        {{ cookie.samesite_value }}
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="mb-0">No se detectaron cookies evaluables en la respuesta final.</p>
+        {% endif %}
+      </section>
+      <!-- ================================================== -->
+      <!-- 4. COMPARACIÓN CURL VS HSECSCAN -->
+      <!-- ================================================== -->
+      {% if detail.enable_hsecscan %}
+      {% set comparison_rows = detail.header_layer_comparison or [] %}
+      {% set comparison_summary = detail.header_layer_comparison_summary or {} %}
+
+      <section class="card mb-3">
+        <h2 class="mb-3">Comparación curl vs hsecscan</h2>
+
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-md-6 col-xl">
+            <div class="stat-card h-100">
+              <h3>Total comparado</h3>
+              <p>{{ comparison_summary.get("total", comparison_rows|length) }}</p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6 col-xl">
+            <div class="stat-card h-100">
+              <h3>Confirmadas</h3>
+              <p>{{ comparison_summary.get("confirmed", 0) }}</p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6 col-xl">
+            <div class="stat-card h-100">
+              <h3>Solo curl</h3>
+              <p>{{ comparison_summary.get("only_curl", 0) }}</p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6 col-xl">
+            <div class="stat-card h-100">
+              <h3>Solo hsecscan</h3>
+              <p>{{ comparison_summary.get("only_hsecscan", 0) }}</p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6 col-xl">
+            <div class="stat-card h-100">
+              <h3>Prioridad alta</h3>
+              <p>{{ comparison_summary.get("high_priority", 0) }}</p>
+            </div>
+          </div>
+        </div>
+
+        {% if comparison_rows %}
+          <div class="detail-item mb-3">
+            <h3>Cómo leer esta tabla</h3>
+            <p class="mb-1">
+              <strong>curl:</strong> verificación principal de cabeceras realizada por el prototipo.
+            </p>
+            <p class="mb-1">
+              <strong>hsecscan:</strong> segunda capa de contraste usada en el análisis profundo.
+            </p>
+            <p class="mb-0">
+              <strong>Resultado:</strong> resume si la debilidad fue confirmada por ambas capas o detectada solo por una.
+            </p>
+          </div>
+
+          <div class="table-responsive header-comparison-table-wrapper">
+            <table class="table table-dark table-hover align-middle mb-0 header-comparison-results-table">
+              <thead>
+                <tr>
+                  <th>Cabecera</th>
+                  <th>curl</th>
+                  <th>hsecscan</th>
+                  <th>Resultado</th>
+                  <th>Prioridad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in comparison_rows %}
+                  <tr>
+                    <td class="break-cell">
+                      <strong>{{ item.header_name }}</strong>
+                    </td>
+
+                    <td>
+                      {{ item.curl_status }}
+                    </td>
+
+                    <td>
+                      {{ item.hsecscan_status }}
+                    </td>
+
+                    <td class="break-cell">
+                      {{ item.comparison_result }}
+                    </td>
+
+                    <td>
+                      {% if item.priority == "alta" %}
+                        <span class="badge badge-failed">alta</span>
+                      {% elif item.priority == "media" %}
+                        <span class="badge badge-initiated">media</span>
+                      {% elif item.priority == "baja" %}
+                        <span class="badge badge-running">baja</span>
+                      {% else %}
+                        <span class="badge badge-finished">informativa</span>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="detail-item">
+            <h3>Comparación no disponible</h3>
+            <p class="mb-0">
+              No hay datos suficientes para comparar la verificación curl con hsecscan.
+              Esto puede ocurrir si la ejecución todavía está en proceso o si hsecscan no generó resultados estructurados.
+            </p>
+          </div>
+        {% endif %}
+      </section>
+      {% endif %}
+
+      <!-- ================================================== -->
+      <!-- 5. XSS -->
       <!-- ================================================== -->
       <section class="card mb-3">
         <h2 class="mb-3">XSS</h2>

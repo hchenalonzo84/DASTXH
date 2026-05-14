@@ -12,6 +12,15 @@ Responsabilidades:
 - guardar agrupación XSS preparada para IA
 - guardar interpretaciones generadas por IA
 - exponer consultas de historial y detalle
+
+Fase 3:
+- construir comparación derivada entre:
+  * curl custom / http_tests
+  * hsecscan / hsecscan_checks
+
+Nota:
+- La comparación curl vs hsecscan se arma en memoria al consultar el detalle.
+- No requiere cambios en schema.sql por ahora.
 """
 
 from __future__ import annotations
@@ -285,6 +294,383 @@ def _normalize_hsecscan_check_item(item: Dict[str, Any]) -> Optional[Dict[str, A
         "https": item.get("https"),
         "raw_check_json": item,
     }
+# ==========================================================
+# HELPERS PRIVADOS PARA COMPARACIÓN CURL VS HSECSCAN
+# ==========================================================
+
+def _normalize_header_key(value: Any) -> str:
+    """
+    Normaliza nombres de cabeceras para comparar resultados entre herramientas.
+
+    Ejemplo:
+    Content-Security-Policy -> content-security-policy
+    content_security_policy -> content-security-policy
+    """
+    text = str(value or "").strip().lower()
+    text = text.replace("_", "-")
+
+    while "--" in text:
+        text = text.replace("--", "-")
+
+    return text
+
+
+def _display_header_name(value: Any) -> str:
+    """
+    Devuelve un nombre de cabecera amigable para mostrar en GUI.
+    """
+    text = str(value or "").strip()
+
+    if not text:
+        return "-"
+
+    return text
+
+
+def _curl_status_label(status: Any) -> str:
+    """
+    Convierte el status interno de http_tests a una etiqueta amigable.
+    """
+    value = str(status or "").strip().lower()
+
+    if value == "passed":
+        return "Aprobada"
+
+    if value == "failed":
+        return "Falló"
+
+    if value == "warning":
+        return "Advertencia"
+
+    if value == "info":
+        return "Informativo"
+
+    return "No evaluada"
+
+
+def _hsecscan_status_label(item: Optional[Dict[str, Any]]) -> str:
+    """
+    Convierte el registro de hsecscan a una etiqueta amigable.
+    """
+    if not item:
+        return "No reportada"
+
+    display_status = item.get("display_status")
+
+    if display_status:
+        return str(display_status)
+
+    record_type = str(item.get("record_type") or "").strip().lower()
+
+    if record_type == "missing":
+        return "Faltante"
+
+    if record_type == "observed":
+        return "Observada"
+
+    return "Reportada"
+
+
+def _is_curl_weak(test: Optional[Dict[str, Any]]) -> bool:
+    """
+    Determina si curl detectó una debilidad.
+
+    En el prototipo:
+    - failed = debilidad clara
+    - warning = advertencia relevante
+    """
+    if not test:
+        return False
+
+    status = str(test.get("status") or "").strip().lower()
+    return status in ("failed", "warning")
+
+
+def _is_hsecscan_weak(item: Optional[Dict[str, Any]]) -> bool:
+    """
+    Determina si hsecscan detectó una debilidad.
+
+    hsecscan_checks solo guarda:
+    - missing: cabecera faltante
+    - observed: cabecera observada con advertencia o interés de seguridad
+    """
+    if not item:
+        return False
+
+    record_type = str(item.get("record_type") or "").strip().lower()
+    return record_type in ("missing", "observed")
+
+
+def _risk_rank(value: Any) -> int:
+    """
+    Rank numérico para ordenar riesgo.
+    Menor número = mayor prioridad.
+    """
+    risk = str(value or "").strip().lower()
+
+    if risk == "alta":
+        return 1
+
+    if risk == "media":
+        return 2
+
+    if risk == "baja":
+        return 3
+
+    if risk == "informativa":
+        return 4
+
+    return 5
+
+
+def _infer_curl_risk_from_score(score_delta: Any) -> str:
+    """
+    Deriva una prioridad orientativa desde el score_delta de curl.
+
+    Esto no cambia el scoring real; solo ayuda a ordenar la comparación.
+    """
+    try:
+        score = int(score_delta or 0)
+    except Exception:
+        score = 0
+
+    if score <= -20:
+        return "alta"
+
+    if score <= -10:
+        return "media"
+
+    if score < 0:
+        return "baja"
+
+    return "informativa"
+
+
+def _merge_priority(curl_test: Optional[Dict[str, Any]], hsec_item: Optional[Dict[str, Any]]) -> str:
+    """
+    Define la prioridad visual de la fila comparada.
+
+    Se toma el riesgo más alto entre:
+    - riesgo inferido desde curl
+    - risk_level de hsecscan
+    """
+    candidates: List[str] = []
+
+    if curl_test and _is_curl_weak(curl_test):
+        candidates.append(_infer_curl_risk_from_score(curl_test.get("score_delta")))
+
+    if hsec_item and _is_hsecscan_weak(hsec_item):
+        risk = hsec_item.get("risk_level")
+
+        if risk:
+            candidates.append(str(risk))
+
+    if not candidates:
+        return "informativa"
+
+    return sorted(candidates, key=_risk_rank)[0]
+
+
+def _comparison_result_label(
+    curl_test: Optional[Dict[str, Any]],
+    hsec_item: Optional[Dict[str, Any]],
+) -> str:
+    """
+    Construye el resultado de comparación entre herramientas.
+    """
+    curl_weak = _is_curl_weak(curl_test)
+    hsec_weak = _is_hsecscan_weak(hsec_item)
+
+    if curl_weak and hsec_weak:
+        return "Confirmado por curl y hsecscan"
+
+    if curl_weak and not hsec_weak:
+        return "Detectado por curl"
+
+    if hsec_weak and not curl_weak:
+        return "Detectado por hsecscan"
+
+    if curl_test and not hsec_item:
+        return "Sin contraste hsecscan"
+
+    if hsec_item and not curl_test:
+        return "No evaluado por curl"
+
+    return "Sin debilidad confirmada"
+
+
+def _build_curl_index(http_tests_rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Crea índice de pruebas curl por cabecera.
+
+    Usa header_name cuando existe.
+    Si no existe, usa name/test_id como respaldo para no perder pruebas.
+    """
+    result: Dict[str, Dict[str, Any]] = {}
+
+    for item in http_tests_rows:
+        header_name = item.get("header_name") or item.get("name") or item.get("test_id")
+        key = _normalize_header_key(header_name)
+
+        if not key:
+            continue
+
+        # Si hubiera duplicados, se conserva el más crítico.
+        current = result.get(key)
+
+        if not current:
+            result[key] = item
+            continue
+
+        current_is_weak = _is_curl_weak(current)
+        incoming_is_weak = _is_curl_weak(item)
+
+        if incoming_is_weak and not current_is_weak:
+            result[key] = item
+            continue
+
+        current_risk = _risk_rank(_infer_curl_risk_from_score(current.get("score_delta")))
+        incoming_risk = _risk_rank(_infer_curl_risk_from_score(item.get("score_delta")))
+
+        if incoming_risk < current_risk:
+            result[key] = item
+
+    return result
+
+
+def _build_hsecscan_index(hsecscan_checks_rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Crea índice de hsecscan por cabecera.
+    """
+    result: Dict[str, Dict[str, Any]] = {}
+
+    for item in hsecscan_checks_rows:
+        key = _normalize_header_key(item.get("header_name"))
+
+        if not key:
+            continue
+
+        current = result.get(key)
+
+        if not current:
+            result[key] = item
+            continue
+
+        # Si hubiera duplicados, se conserva el de mayor prioridad.
+        current_rank = _risk_rank(current.get("risk_level"))
+        incoming_rank = _risk_rank(item.get("risk_level"))
+
+        if incoming_rank < current_rank:
+            result[key] = item
+
+    return result
+
+
+def _build_header_layer_comparison(
+    http_tests_rows: List[Dict[str, Any]],
+    hsecscan_checks_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Construye la comparación curl vs hsecscan.
+
+    Resultado esperado por fila:
+    - header_name
+    - curl_status
+    - hsecscan_status
+    - comparison_result
+    - priority
+    - reason/recommendation de curl
+    - description/recommendation/CWE de hsecscan
+    """
+    curl_index = _build_curl_index(http_tests_rows)
+    hsecscan_index = _build_hsecscan_index(hsecscan_checks_rows)
+
+    all_keys = sorted(set(curl_index.keys()) | set(hsecscan_index.keys()))
+
+    rows: List[Dict[str, Any]] = []
+
+    for key in all_keys:
+        curl_test = curl_index.get(key)
+        hsec_item = hsecscan_index.get(key)
+
+        display_name = None
+
+        if curl_test:
+            display_name = curl_test.get("header_name") or curl_test.get("name") or curl_test.get("test_id")
+
+        if not display_name and hsec_item:
+            display_name = hsec_item.get("header_name")
+
+        priority = _merge_priority(curl_test, hsec_item)
+
+        rows.append(
+            {
+                "header_key": key,
+                "header_name": _display_header_name(display_name),
+                "priority": priority,
+                "comparison_result": _comparison_result_label(curl_test, hsec_item),
+
+                "curl_status_raw": curl_test.get("status") if curl_test else None,
+                "curl_status": _curl_status_label(curl_test.get("status") if curl_test else None),
+                "curl_score_delta": curl_test.get("score_delta") if curl_test else None,
+                "curl_reason": curl_test.get("reason") if curl_test else None,
+                "curl_recommendation": curl_test.get("recommendation") if curl_test else None,
+
+                "hsecscan_record_type": hsec_item.get("record_type") if hsec_item else None,
+                "hsecscan_status": _hsecscan_status_label(hsec_item),
+                "hsecscan_risk_level": hsec_item.get("risk_level") if hsec_item else None,
+                "hsecscan_description": hsec_item.get("security_description") if hsec_item else None,
+                "hsecscan_recommendation": hsec_item.get("recommendations") if hsec_item else None,
+                "hsecscan_cwe": hsec_item.get("cwe") if hsec_item else None,
+            }
+        )
+
+    rows.sort(
+        key=lambda item: (
+            _risk_rank(item.get("priority")),
+            0 if item.get("comparison_result") == "Confirmado por curl y hsecscan" else 1,
+            str(item.get("header_name") or "").lower(),
+        )
+    )
+
+    return rows
+
+
+def _build_header_layer_comparison_summary(
+    comparison_rows: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Construye un resumen para tarjetas de la GUI.
+    """
+    confirmed = 0
+    only_curl = 0
+    only_hsecscan = 0
+    without_contrast = 0
+    high_priority = 0
+
+    for item in comparison_rows:
+        result = item.get("comparison_result")
+
+        if result == "Confirmado por curl y hsecscan":
+            confirmed += 1
+        elif result == "Detectado por curl":
+            only_curl += 1
+        elif result == "Detectado por hsecscan":
+            only_hsecscan += 1
+        elif result in ("Sin contraste hsecscan", "No evaluado por curl"):
+            without_contrast += 1
+
+        if item.get("priority") == "alta":
+            high_priority += 1
+
+    return {
+        "total": len(comparison_rows),
+        "confirmed": confirmed,
+        "only_curl": only_curl,
+        "only_hsecscan": only_hsecscan,
+        "without_contrast": without_contrast,
+        "high_priority": high_priority,
+    }
 
 
 # ==========================================================
@@ -356,19 +742,6 @@ def _first_non_empty_text(values: Any) -> Optional[str]:
 def _has_valid_xss_group_signal(group: Dict[str, Any]) -> bool:
     """
     Determina si un grupo XSS tiene suficiente señal para mostrarse.
-
-    Un grupo NO es válido para render cuando:
-    - severidad es Unknown o vacía
-    - firma es payload_desconocido o vacía
-    - parámetro es desconocido o vacío
-    - no tiene payloads de ejemplo
-    - no tiene evidencia de ejemplo
-
-    Esto corrige las filas tipo:
-    Parámetro: -
-    Payload: -
-    Evidencia: -
-    Severidad: Unknown
     """
     severity = _clean_display_text(group.get("severity_mode")).lower()
     signature = _clean_display_text(group.get("payload_signature")).lower()
@@ -384,11 +757,9 @@ def _has_valid_xss_group_signal(group: Dict[str, Any]) -> bool:
     signature_unknown = signature in ("", "-", "unknown", "payload_desconocido")
     parameter_unknown = parameter in ("", "-", "unknown", "desconocido")
 
-    # Caso claramente vacío/no útil.
     if severity_unknown and signature_unknown and parameter_unknown and not has_payload and not has_evidence:
         return False
 
-    # Para mostrarlo en la tabla debe existir al menos payload o evidencia.
     return has_payload or has_evidence
 
 
@@ -407,7 +778,6 @@ def _has_valid_xss_finding_signal(finding: Dict[str, Any]) -> bool:
     severity_unknown = _clean_display_text(severity).lower() in ("", "-", "unknown", "desconocido")
     parameter_unknown = _clean_display_text(parameter).lower() in ("", "-", "unknown", "desconocido")
 
-    # Si todo está vacío o desconocido, no debe renderizarse como hallazgo real.
     if not has_payload and not has_evidence and severity_unknown and parameter_unknown:
         return False
 
@@ -418,8 +788,6 @@ def _build_no_valid_xss_row(raw_count: int = 0) -> Dict[str, Any]:
     """
     Construye una fila informativa solo para el caso en que Dalfox haya producido
     registros no estructurados/vacíos, pero ningún hallazgo tenga payload/evidencia útil.
-
-    Esta fila NO debe aparecer cuando sí existen hallazgos XSS válidos.
     """
     return {
         "row_order": "-",
@@ -785,8 +1153,6 @@ def insert_hsecscan_results(
                 ),
             )
 
-            # Se reemplazan los checks de hsecscan de esta ejecución para que
-            # una re-ejecución o actualización no deje datos viejos duplicados.
             cur.execute(
                 """
                 DELETE FROM hsecscan_checks
@@ -1220,8 +1586,9 @@ def get_execution_detail(
     """
     Devuelve detalle enriquecido de una ejecución.
 
-    También prepara xss_display_rows para que la GUI decida
-    si mostrar hallazgos individuales o grupos interpretados.
+    También prepara:
+    - xss_display_rows para la tabla XSS.
+    - header_layer_comparison para comparar curl vs hsecscan.
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -1319,7 +1686,7 @@ def get_execution_detail(
             cookie_rows_raw = [dict(r) for r in cur.fetchall()]
 
             # --------------------------------------------------
-            # Pruebas HTTP detalladas (tabla de cabeceras/curl)
+            # Pruebas HTTP detalladas
             # --------------------------------------------------
             cur.execute(
                 """
@@ -1501,7 +1868,7 @@ def get_execution_detail(
         )
 
     # ------------------------------------------------------
-    # Derivados hsecscan para GUI futura
+    # Derivados hsecscan para GUI
     # ------------------------------------------------------
     hsecscan_observed_checks = [
         item for item in hsecscan_checks_rows
@@ -1512,6 +1879,18 @@ def get_execution_detail(
         item for item in hsecscan_checks_rows
         if str(item.get("record_type") or "").lower() == "missing"
     ]
+
+    # ------------------------------------------------------
+    # Fase 3: comparación curl vs hsecscan
+    # ------------------------------------------------------
+    header_layer_comparison = _build_header_layer_comparison(
+        http_tests_rows=http_tests_rows,
+        hsecscan_checks_rows=hsecscan_checks_rows,
+    )
+
+    header_layer_comparison_summary = _build_header_layer_comparison_summary(
+        header_layer_comparison
+    )
 
     # ------------------------------------------------------
     # 1) Enriquecer hallazgos individuales con IA cuando aplique
@@ -1557,12 +1936,6 @@ def get_execution_detail(
 
     # ------------------------------------------------------
     # 2) Preparar filas de visualización para Dalfox
-    #    - individual: pocos hallazgos válidos
-    #    - grouped: muchos hallazgos agrupados por IA
-    #
-    # Regla importante:
-    # Si existen hallazgos/grupos válidos, NO se renderizan filas vacías
-    # tipo Unknown + payload_desconocido + sin payload + sin evidencia.
     # ------------------------------------------------------
     valid_xss_ai_groups_rows = [
         group
@@ -1585,7 +1958,6 @@ def get_execution_detail(
     xss_display_rows: List[Dict[str, Any]] = []
 
     if has_real_groups:
-        # Mostrar únicamente grupos con payload/evidencia útil.
         for group in valid_xss_ai_groups_rows:
             sample_payloads = group.get("sample_payloads") or []
             sample_evidence = group.get("sample_evidence") or []
@@ -1611,7 +1983,6 @@ def get_execution_detail(
             )
 
     else:
-        # Mostrar únicamente hallazgos individuales con payload/evidencia útil.
         for finding in valid_enriched_xss_findings_rows:
             xss_display_rows.append(
                 {
@@ -1630,9 +2001,6 @@ def get_execution_detail(
                 }
             )
 
-    # Si no quedó ninguna fila válida, solo entonces se permite mostrar una fila
-    # informativa. Esto evita que el falso positivo visual aparezca mezclado con
-    # hallazgos reales.
     if not xss_display_rows and (xss_ai_groups_rows or enriched_xss_findings_rows):
         xss_display_rows.append(
             _build_no_valid_xss_row(
@@ -1653,11 +2021,13 @@ def get_execution_detail(
     detail["hsecscan_observed_checks"] = hsecscan_observed_checks
     detail["hsecscan_missing_checks"] = hsecscan_missing_checks
 
+    # Fase 3: datos derivados para GUI.
+    detail["header_layer_comparison"] = header_layer_comparison
+    detail["header_layer_comparison_summary"] = header_layer_comparison_summary
+
     detail["xss_findings"] = enriched_xss_findings_rows
     detail["xss_ai_groups"] = xss_ai_groups_rows
 
-    # IMPORTANTE:
-    # Esta es la colección que debe usar la GUI de Dalfox.
     detail["xss_display_mode"] = xss_display_mode
     detail["xss_display_rows"] = xss_display_rows
 
