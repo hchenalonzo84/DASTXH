@@ -1,12 +1,17 @@
 """
 scanner_service.py
 - Servicio reutilizable para ejecutar una evaluación completa DASTXH.
-- Esta versión queda adaptada al esquema normalizado v8.
+- Esta versión queda adaptada al esquema normalizado v9.
 
 Objetivos de esta versión:
 - conservar flujo síncrono y background
 - respetar scan_profile superficial/profundo
 - habilitar hsecscan automáticamente solo cuando corresponda
+- persistir cookies observadas y ejecutar análisis por reglas + IA:
+  * risk_level
+  * cwe_mappings
+  * interpretation_humana
+  * recommended_action
 - persistir hsecscan como segunda capa:
   * salida cruda en hsecscan.txt
   * salida estructurada en hsecscan.json
@@ -21,13 +26,14 @@ Objetivos de esta versión:
 - preparar agrupación XSS para IA
 - intentar interpretación XSS con backend compatible con OpenAI
 - registrar claramente en run_meta.json:
+  * estado de interpretación IA de cookies
   * resumen estructurado de hsecscan
   * estado de traducción IA de hsecscan
   * total de hallazgos XSS estructurados
   * total de hallazgos válidos para IA
   * hallazgos excluidos por estar vacíos/no útiles
   * modo individual o agrupado
-  * estado de interpretación IA
+  * estado de interpretación IA XSS
   * error o éxito parcial cuando aplique
 """
 
@@ -61,6 +67,7 @@ from config import (
     RUN_META_JSON,
 )
 from report import build_report_html, build_report_md
+from services.cookie_ai_service import interpret_cookie_checks_with_ai
 from services.hsecscan_ai_translation_service import translate_hsecscan_checks_with_ai
 from services.xss_ai_service import build_xss_ai_input_payload
 from services.xss_model_runner_service import (
@@ -78,7 +85,7 @@ from utils import ensure_dir, safe_read_text, ts_folder, utc_now, write_json
 # ==========================================================
 
 # Se deja local por ahora para no depender de config.py.
-# Ya está permitido en schema.sql v8 dentro de artifacts.artifact_type.
+# Ya está permitido en schema.sql v9 dentro de artifacts.artifact_type.
 HSECSCAN_JSON = "hsecscan.json"
 ARTIFACT_TYPE_HSECSCAN_JSON = "hsecscan_json"
 
@@ -259,6 +266,10 @@ def _build_skipped_ai_result(model_name: Optional[str], reason: str) -> Dict[str
         "groups": [],
         "error": reason,
     }
+# ==========================================================
+# HELPERS HSECSCAN
+# ==========================================================
+
 def _safe_parse_hsecscan_output(raw_output: str) -> Dict[str, Any]:
     """
     Ejecuta el parser de hsecscan sin permitir que un error de parseo
@@ -397,6 +408,95 @@ def _run_hsecscan_ai_translation(
         return _build_hsecscan_translation_failure_meta(str(exc))
 
 
+# ==========================================================
+# HELPERS COOKIES
+# ==========================================================
+
+def _build_cookie_ai_failure_meta(error: str) -> Dict[str, Any]:
+    """
+    Construye metadata cuando falla la interpretación IA/reglas de cookies.
+
+    Importante:
+    - El análisis de cookies es una capa de explicación.
+    - Si falla, el escaneo principal no debe fallar.
+    """
+    return {
+        "enabled": True,
+        "ok": False,
+        "skipped": False,
+        "requested_cookies": 0,
+        "candidate_cookies": 0,
+        "interpreted_cookies": 0,
+        "interpreted_by_ai": 0,
+        "persisted_interpretations": 0,
+        "rules_fallback_used": False,
+        "errors": [
+            {
+                "cookie_check_id": None,
+                "error": error,
+            }
+        ],
+    }
+
+
+def _run_cookie_ai_interpretation(
+    dsn: str,
+    execution_id: int,
+) -> Dict[str, Any]:
+    """
+    Ejecuta análisis de cookies con reglas + IA.
+
+    Flujo:
+    1. Lee cookies observadas desde cookie_checks.
+    2. Aplica reglas internas alineadas con OWASP + mapeo CWE.
+    3. Usa IA para redactar interpretación y recomendación breve.
+    4. Persiste risk_level, cwe_mappings, interpretation_humana y recommended_action.
+    5. Devuelve metadata para run_meta.json.
+
+    Si la IA falla, cookie_ai_service.py devuelve fallback por reglas.
+    Si algo falla aquí, no se interrumpe el escaneo.
+    """
+    try:
+        cookies_for_interpretation = db_layer.list_cookie_checks_for_interpretation(
+            dsn=dsn,
+            execution_id=execution_id,
+        )
+
+        interpretations, cookie_meta = interpret_cookie_checks_with_ai(
+            cookies_for_interpretation
+        )
+
+        if interpretations:
+            db_layer.update_cookie_check_interpretations(
+                dsn=dsn,
+                execution_id=execution_id,
+                interpretations=interpretations,
+                model_name=cookie_meta.get("model_name"),
+            )
+
+        cookie_meta["persisted_interpretations"] = len(interpretations or [])
+
+        if interpretations and not cookie_meta.get("errors"):
+            cookie_meta["ok"] = True
+        elif interpretations and cookie_meta.get("errors"):
+            cookie_meta["ok"] = False
+            cookie_meta["partial_success"] = True
+        else:
+            cookie_meta["ok"] = False
+
+        if not interpretations and not cookie_meta.get("errors"):
+            cookie_meta.setdefault("skipped", True)
+
+        return cookie_meta
+
+    except Exception as exc:
+        return _build_cookie_ai_failure_meta(str(exc))
+
+
+# ==========================================================
+# PREPARACIÓN DE CONTEXTO
+# ==========================================================
+
 def _prepare_scan_context(
     dsn: str,
     workdir: Path,
@@ -464,8 +564,6 @@ def _prepare_scan_context(
     write_json(context.run_meta_path, run_meta)
 
     return context, run_meta
-
-
 # ==========================================================
 # PIPELINE PRINCIPAL
 # ==========================================================
@@ -522,6 +620,21 @@ def _run_scan_pipeline(
         )
 
         # --------------------------------------------------
+        # INTERPRETACIÓN DE COOKIES CON REGLAS + IA
+        # --------------------------------------------------
+        # Esta capa usa como base las cookies ya persistidas por curl.
+        # La clasificación de riesgo y CWE se calcula por reglas internas
+        # alineadas con OWASP + mapeo CWE; la IA solo redacta explicación
+        # y recomendación breve.
+        cookie_ai_interpretation_meta = _run_cookie_ai_interpretation(
+            dsn=dsn,
+            execution_id=execution_id,
+        )
+
+        run_meta["cookie_ai_interpretation"] = cookie_ai_interpretation_meta
+        write_json(run_meta_path, run_meta)
+
+        # --------------------------------------------------
         # CAPA 2: hsecscan
         # --------------------------------------------------
         hsecscan_txt_path = report_dir / HSECSCAN_TXT
@@ -556,7 +669,7 @@ def _run_scan_pipeline(
                 hsecscan_json_document,
             )
 
-            # Persistencia v8:
+            # Persistencia v9:
             # - raw_output queda igual que antes
             # - structured_json guarda el documento completo
             # - summary_json guarda el resumen útil
@@ -578,6 +691,7 @@ def _run_scan_pipeline(
                     else []
                 ),
             )
+
             run_meta["hsecscan_structured"] = _build_hsecscan_meta(
                 hsecscan_rc=hsecscan_rc,
                 hsecscan_structured=hsecscan_structured,
@@ -727,7 +841,6 @@ def _run_scan_pipeline(
 
         report_html_path = report_dir / REPORT_HTML
         report_html_path.write_text(report_html, encoding="utf-8", errors="replace")
-
         # --------------------------------------------------
         # Registrar artifacts
         # --------------------------------------------------
@@ -781,6 +894,7 @@ def _run_scan_pipeline(
         run_meta["cumplimiento_pct"] = hdr_eval.get("cumplimiento_pct")
         run_meta["http_score"] = hdr_eval.get("http_score")
         run_meta["http_grade"] = hdr_eval.get("http_grade")
+        run_meta["cookie_ai_interpretation"] = cookie_ai_interpretation_meta
         run_meta["hsecscan_rc"] = hsecscan_rc
         run_meta["hsecscan_structured"] = _build_hsecscan_meta(
             hsecscan_rc=hsecscan_rc,
@@ -824,6 +938,7 @@ def _run_scan_pipeline(
             "compliance_pct": hdr_eval.get("cumplimiento_pct"),
             "http_score": hdr_eval.get("http_score"),
             "http_grade": hdr_eval.get("http_grade"),
+            "cookie_ai_interpretation": cookie_ai_interpretation_meta,
             "hsecscan_rc": hsecscan_rc,
             "hsecscan_structured_summary": (
                 hsecscan_structured.get("summary")
@@ -841,6 +956,7 @@ def _run_scan_pipeline(
             "xss_ai_interpretation_error": ai_result.get("error"),
             "artifacts": run_meta["artifacts"],
         }
+
     except Exception as exc:
         err = str(exc)
         finished = utc_now()

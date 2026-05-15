@@ -1,11 +1,12 @@
 """
 db.py
 - Acceso a PostgreSQL usando psycopg (psycopg3).
-- Adaptado al esquema normalizado v8.
+- Adaptado al esquema normalizado v9.
 
 Responsabilidades:
 - ejecutar operaciones CRUD de persistencia
 - guardar resultados HTTP
+- guardar cookies observadas y su interpretación
 - guardar resultados hsecscan crudos y estructurados
 - guardar checks normalizados de hsecscan
 - guardar traducciones IA de hsecscan
@@ -19,6 +20,8 @@ Ajustes actuales:
   que realmente se muestran en la tabla XSS.
 - hsecscan puede guardar traducciones IA para Descripción, Recomendación
   y CWE, manteniendo el texto original como evidencia técnica.
+- cookie_checks puede guardar análisis por reglas + IA:
+  riesgo, mapeo CWE, interpretación y recomendación.
 """
 
 from __future__ import annotations
@@ -95,10 +98,37 @@ def _build_header_details_if_missing(hdr_eval: Dict[str, Any]) -> List[Dict[str,
     return result
 
 
+def _normalize_risk_level(value: Any) -> Optional[str]:
+    """
+    Normaliza un nivel de riesgo usado en varias tablas.
+
+    Valores válidos:
+    - alta
+    - media
+    - baja
+    - informativa
+    """
+    if value is None:
+        return None
+
+    text = str(value).strip().lower()
+
+    if text in ("alta", "media", "baja", "informativa"):
+        return text
+
+    return None
+
+
 def _normalize_cookie_item(item: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normaliza un registro de cookie para aceptar tanto la forma vieja
     como la nueva.
+
+    En v9 también acepta campos de interpretación si ya vienen
+    calculados por un servicio anterior, aunque el flujo normal será:
+    1. insertar cookies técnicas;
+    2. analizarlas por reglas + IA;
+    3. actualizar columnas de interpretación.
     """
     cookie_raw = item.get("cookie_raw")
 
@@ -117,6 +147,12 @@ def _normalize_cookie_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "httponly": bool(item.get("httponly")),
         "samesite_present": bool(samesite_present),
         "samesite_value": item.get("samesite_value"),
+        "risk_level": _normalize_risk_level(item.get("risk_level")),
+        "cwe_mappings": item.get("cwe_mappings"),
+        "interpretation_humana": item.get("interpretation_humana"),
+        "recommended_action": item.get("recommended_action"),
+        "model_name": item.get("model_name"),
+        "interpreted_at": item.get("interpreted_at"),
     }
 
 
@@ -250,10 +286,6 @@ def _extract_hsecscan_checks(structured_json: Any) -> List[Dict[str, Any]]:
 def _normalize_hsecscan_check_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Normaliza un registro de hsecscan para insertarlo en hsecscan_checks.
-
-    También acepta columnas traducidas si ya vienen preparadas desde otro
-    servicio, aunque el flujo normal será insertarlas vacías y actualizarlas
-    después por id.
     """
     header_name = str(item.get("header_name") or "").strip()
 
@@ -265,13 +297,7 @@ def _normalize_hsecscan_check_item(item: Dict[str, Any]) -> Optional[Dict[str, A
     if record_type not in ("observed", "missing"):
         record_type = "missing" if item.get("value") is None else "observed"
 
-    risk_level = item.get("risk_level")
-
-    if risk_level is not None:
-        risk_level = str(risk_level).strip().lower()
-
-    if risk_level not in ("alta", "media", "baja", "informativa"):
-        risk_level = None
+    risk_level = _normalize_risk_level(item.get("risk_level"))
 
     return {
         "record_type": record_type,
@@ -293,8 +319,6 @@ def _normalize_hsecscan_check_item(item: Dict[str, Any]) -> Optional[Dict[str, A
         "translated_at": item.get("translated_at"),
         "raw_check_json": item,
     }
-
-
 # ==========================================================
 # HELPERS PRIVADOS PARA COMPARACIÓN CURL VS HSECSCAN
 # ==========================================================
@@ -753,8 +777,6 @@ def _build_no_valid_xss_row(raw_count: int = 0) -> Dict[str, Any]:
         "model_name": None,
         "is_placeholder": True,
     }
-
-
 # ==========================================================
 # EJECUCIONES
 # ==========================================================
@@ -899,6 +921,9 @@ def insert_header_results(
 ) -> None:
     """
     Inserta los resultados HTTP en forma normalizada.
+
+    En v9, cookie_checks ya queda preparada para recibir interpretación
+    posterior, pero aquí se inserta primero la evidencia técnica base.
     """
     _ = raw_headers_json
     header_details = _build_header_details_if_missing(hdr_eval)
@@ -962,9 +987,18 @@ def insert_header_results(
                         secure,
                         httponly,
                         samesite_present,
-                        samesite_value
+                        samesite_value,
+                        risk_level,
+                        cwe_mappings,
+                        interpretation_humana,
+                        recommended_action,
+                        model_name,
+                        interpreted_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s);
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s::jsonb, %s, %s, %s, %s
+                    );
                     """,
                     (
                         execution_id,
@@ -974,6 +1008,12 @@ def insert_header_results(
                         item.get("httponly"),
                         item.get("samesite_present"),
                         item.get("samesite_value"),
+                        item.get("risk_level"),
+                        _json_or_none(item.get("cwe_mappings")),
+                        item.get("interpretation_humana"),
+                        item.get("recommended_action"),
+                        item.get("model_name"),
+                        item.get("interpreted_at"),
                     ),
                 )
 
@@ -1024,6 +1064,118 @@ def insert_header_results(
         conn.commit()
 
 
+# ==========================================================
+# RESULTADOS HTTP: INTERPRETACIÓN DE COOKIES
+# ==========================================================
+
+def list_cookie_checks_for_interpretation(
+    dsn: str,
+    execution_id: int,
+) -> List[Dict[str, Any]]:
+    """
+    Devuelve cookies observadas para análisis por reglas + IA.
+
+    Se omiten cookies que ya tienen interpretación guardada para evitar
+    llamadas repetidas al modelo.
+    """
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    execution_id,
+                    cookie_name,
+                    cookie_raw,
+                    secure,
+                    httponly,
+                    samesite_present,
+                    samesite_value,
+                    risk_level,
+                    cwe_mappings,
+                    interpretation_humana,
+                    recommended_action,
+                    model_name,
+                    interpreted_at,
+                    created_at
+                FROM cookie_checks
+                WHERE execution_id = %s
+                  AND (
+                    interpretation_humana IS NULL
+                    OR recommended_action IS NULL
+                    OR risk_level IS NULL
+                    OR cwe_mappings IS NULL
+                  )
+                ORDER BY id ASC;
+                """,
+                (execution_id,),
+            )
+            rows = cur.fetchall()
+
+        conn.commit()
+
+    return [dict(r) for r in rows]
+
+
+def update_cookie_check_interpretations(
+    dsn: str,
+    execution_id: int,
+    interpretations: List[Dict[str, Any]],
+    model_name: Optional[str] = None,
+) -> None:
+    """
+    Actualiza cookies con:
+    - risk_level
+    - cwe_mappings
+    - interpretation_humana
+    - recommended_action
+    - model_name
+    - interpreted_at
+
+    Se actualiza por id de cookie_checks.
+    """
+    now = utc_now()
+
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            for item in interpretations:
+                raw_cookie_id = item.get("cookie_check_id", item.get("check_id", item.get("id")))
+
+                try:
+                    cookie_check_id = int(raw_cookie_id)
+                except Exception:
+                    continue
+
+                if cookie_check_id <= 0:
+                    continue
+
+                risk_level = _normalize_risk_level(item.get("risk_level"))
+
+                cur.execute(
+                    """
+                    UPDATE cookie_checks
+                    SET risk_level = %s,
+                        cwe_mappings = %s::jsonb,
+                        interpretation_humana = %s,
+                        recommended_action = %s,
+                        model_name = %s,
+                        interpreted_at = %s
+                    WHERE id = %s
+                      AND execution_id = %s;
+                    """,
+                    (
+                        risk_level,
+                        _json_or_none(item.get("cwe_mappings")),
+                        item.get("interpretation_humana"),
+                        item.get("recommended_action"),
+                        item.get("model_name") or model_name,
+                        item.get("interpreted_at") or now,
+                        cookie_check_id,
+                        execution_id,
+                    ),
+                )
+
+        conn.commit()
 # ==========================================================
 # RESULTADOS CAPA 2: HSECSCAN
 # ==========================================================
@@ -1517,8 +1669,6 @@ def list_artifacts(dsn: str, execution_id: int) -> List[Dict[str, Any]]:
         conn.commit()
 
     return [dict(r) for r in rows]
-
-
 # ==========================================================
 # CONSULTAS DE HISTORIAL Y DETALLE
 # ==========================================================
@@ -1558,6 +1708,8 @@ def list_execution_summaries(
                     hsecscan_records_count,
                     dalfox_rc,
                     xss_findings_count,
+                    cookie_checks_count,
+                    cookie_interpreted_checks_count,
                     hsecscan_checks_count,
                     hsecscan_translated_checks_count,
                     xss_ai_groups_count,
@@ -1609,6 +1761,8 @@ def get_execution_summary(
                     hsecscan_records_count,
                     dalfox_rc,
                     xss_findings_count,
+                    cookie_checks_count,
+                    cookie_interpreted_checks_count,
                     hsecscan_checks_count,
                     hsecscan_translated_checks_count,
                     xss_ai_groups_count,
@@ -1709,10 +1863,24 @@ def get_execution_detail(
                     httponly,
                     samesite_present,
                     samesite_value,
+                    risk_level,
+                    cwe_mappings,
+                    interpretation_humana,
+                    recommended_action,
+                    model_name,
+                    interpreted_at,
                     created_at
                 FROM cookie_checks
                 WHERE execution_id = %s
-                ORDER BY id ASC;
+                ORDER BY
+                    CASE
+                        WHEN risk_level = 'alta' THEN 1
+                        WHEN risk_level = 'media' THEN 2
+                        WHEN risk_level = 'baja' THEN 3
+                        WHEN risk_level = 'informativa' THEN 4
+                        ELSE 5
+                    END,
+                    id ASC;
                 """,
                 (execution_id,),
             )
@@ -1879,6 +2047,7 @@ def get_execution_detail(
     for row in cookie_rows_raw:
         cookies_flags_json.append(
             {
+                "id": row.get("id"),
                 "cookie": row.get("cookie_raw"),
                 "secure": row.get("secure"),
                 "httponly": row.get("httponly"),
@@ -1887,6 +2056,12 @@ def get_execution_detail(
                 "cookie_raw": row.get("cookie_raw"),
                 "samesite_present": row.get("samesite_present"),
                 "samesite_value": row.get("samesite_value"),
+                "risk_level": row.get("risk_level"),
+                "cwe_mappings": row.get("cwe_mappings"),
+                "interpretation_humana": row.get("interpretation_humana"),
+                "recommended_action": row.get("recommended_action"),
+                "model_name": row.get("model_name"),
+                "interpreted_at": row.get("interpreted_at"),
             }
         )
 

@@ -494,9 +494,27 @@
         <h2 class="mb-3">Cookies observadas</h2>
 
         {% if detail.cookies_flags_json %}
-          <div class="table-responsive">
+          <div class="detail-item info-box-compact mb-3">
+            <h3>Cómo se clasifica el riesgo de cookies</h3>
+
+            <div class="info-two-columns">
+              <div class="info-two-columns__col">
+                <p><strong>Base técnica:</strong> la clasificación se basa en reglas internas de DASTXH alineadas con recomendaciones OWASP y mapeo CWE para atributos de cookies.</p>
+                <p><strong>Riesgo alto:</strong> cookie sensible probable por nombre, como session, token, auth, jwt, csrf o sid, cuando falta HttpOnly o Secure; también aplica si usa SameSite=None sin Secure.</p>
+                <p><strong>Riesgo medio:</strong> cookie funcional, como cart_id, user_id o account_id, con ausencia de Secure, HttpOnly o SameSite.</p>
+              </div>
+
+              <div class="info-two-columns__col">
+                <p><strong>Riesgo bajo:</strong> cookie de preferencia, como theme, lang o prefs, con atributos faltantes pero sin señal clara de sesión o datos sensibles.</p>
+                <p><strong>Informativa:</strong> cookie sin señales de sensibilidad o con atributos principales razonables.</p>
+                <p><strong>CWE asociado:</strong> se muestra como referencia técnica de debilidad, por ejemplo CWE-1004 para ausencia de HttpOnly, CWE-614 para ausencia de Secure y CWE-1275 para SameSite ausente o inadecuado.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-responsive cookie-table-wrapper">
             <table
-              class="table table-dark table-hover align-middle mb-0 js-paginated-table"
+              class="table table-dark table-hover align-middle mb-0 cookie-results-table js-paginated-table"
               data-page-size="10"
             >
               <thead>
@@ -506,6 +524,10 @@
                   <th>HttpOnly</th>
                   <th>SameSite</th>
                   <th>Valor SameSite</th>
+                  <th>Riesgo</th>
+                  <th>CWE asociado</th>
+                  <th>Interpretación</th>
+                  <th>Recomendación</th>
                 </tr>
               </thead>
               <tbody>
@@ -513,13 +535,15 @@
                   <tr>
                     <td class="break-cell">
                       {% if cookie.cookie_name %}
-                        {{ cookie.cookie_name }}
+                        <strong>{{ cookie.cookie_name }}</strong>
                       {% else %}
-                        {{ cookie.cookie_raw or cookie.cookie }}
+                        <strong>{{ cookie.cookie_raw or cookie.cookie }}</strong>
                       {% endif %}
                     </td>
+
                     <td>{{ "Sí" if cookie.secure else "No" }}</td>
                     <td>{{ "Sí" if cookie.httponly else "No" }}</td>
+
                     <td>
                       {% if cookie.samesite_present is defined %}
                         {{ "Sí" if cookie.samesite_present else "No" }}
@@ -527,9 +551,56 @@
                         {{ "Sí" if cookie.samesite else "No" }}
                       {% endif %}
                     </td>
+
                     <td>
                       {% if cookie.samesite_value %}
                         {{ cookie.samesite_value }}
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+
+                    <td>
+                      {% if cookie.risk_level == "alta" %}
+                        <span class="badge badge-failed">alta</span>
+                      {% elif cookie.risk_level == "media" %}
+                        <span class="badge badge-initiated">media</span>
+                      {% elif cookie.risk_level == "baja" %}
+                        <span class="badge badge-running">baja</span>
+                      {% elif cookie.risk_level == "informativa" %}
+                        <span class="badge badge-finished">informativa</span>
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+
+                    <td class="break-cell">
+                      {% if cookie.cwe_mappings %}
+                        {% for cwe in cookie.cwe_mappings %}
+                          <div class="mb-2">
+                            <strong>{{ cwe.cwe_id }}</strong>
+                            {% if cwe.name %}
+                              <br>
+                              <small>{{ cwe.name }}</small>
+                            {% endif %}
+                          </div>
+                        {% endfor %}
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+
+                    <td class="break-cell">
+                      {% if cookie.interpretation_humana %}
+                        {{ cookie.interpretation_humana }}
+                      {% else %}
+                        <span class="text-warning">Interpretación no disponible.</span>
+                      {% endif %}
+                    </td>
+
+                    <td class="break-cell">
+                      {% if cookie.recommended_action %}
+                        {{ cookie.recommended_action }}
                       {% else %}
                         -
                       {% endif %}
@@ -901,6 +972,10 @@
                     <th>HttpOnly</th>
                     <th>SameSite</th>
                     <th>Valor SameSite</th>
+                    <th>Riesgo</th>
+                    <th>CWE asociado</th>
+                    <th>Interpretación</th>
+                    <th>Recomendación</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -913,8 +988,10 @@
                           {{ cookie.cookie_raw or cookie.cookie }}
                         {% endif %}
                       </td>
+
                       <td>{{ "Sí" if cookie.secure else "No" }}</td>
                       <td>{{ "Sí" if cookie.httponly else "No" }}</td>
+
                       <td>
                         {% if cookie.samesite_present is defined %}
                           {{ "Sí" if cookie.samesite_present else "No" }}
@@ -922,9 +999,56 @@
                           {{ "Sí" if cookie.samesite else "No" }}
                         {% endif %}
                       </td>
+
                       <td>
                         {% if cookie.samesite_value %}
                           {{ cookie.samesite_value }}
+                        {% else %}
+                          -
+                        {% endif %}
+                      </td>
+
+                      <td>
+                        {% if cookie.risk_level == "alta" %}
+                          <span class="badge badge-failed">alta</span>
+                        {% elif cookie.risk_level == "media" %}
+                          <span class="badge badge-initiated">media</span>
+                        {% elif cookie.risk_level == "baja" %}
+                          <span class="badge badge-running">baja</span>
+                        {% elif cookie.risk_level == "informativa" %}
+                          <span class="badge badge-finished">informativa</span>
+                        {% else %}
+                          -
+                        {% endif %}
+                      </td>
+
+                      <td class="break-cell">
+                        {% if cookie.cwe_mappings %}
+                          {% for cwe in cookie.cwe_mappings %}
+                            <div class="mb-2">
+                              <strong>{{ cwe.cwe_id }}</strong>
+                              {% if cwe.name %}
+                                <br>
+                                <small>{{ cwe.name }}</small>
+                              {% endif %}
+                            </div>
+                          {% endfor %}
+                        {% else %}
+                          -
+                        {% endif %}
+                      </td>
+
+                      <td class="break-cell">
+                        {% if cookie.interpretation_humana %}
+                          {{ cookie.interpretation_humana }}
+                        {% else %}
+                          -
+                        {% endif %}
+                      </td>
+
+                      <td class="break-cell">
+                        {% if cookie.recommended_action %}
+                          {{ cookie.recommended_action }}
                         {% else %}
                           -
                         {% endif %}

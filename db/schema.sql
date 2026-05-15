@@ -1,5 +1,5 @@
 -- =========================================================
--- DASTXH - Schema base v8
+-- DASTXH - Schema base v9
 --
 -- Objetivo de esta versión:
 --   - conservar executions como entidad principal
@@ -17,11 +17,18 @@
 --       * cwe_es
 --       * translation_model_name
 --       * translated_at
+--   - persistir análisis de cookies con reglas + IA:
+--       * risk_level
+--       * cwe_mappings
+--       * interpretation_humana
+--       * recommended_action
+--       * model_name
+--       * interpreted_at
 --
 -- Nota:
---   Las traducciones IA son apoyo lingüístico para la GUI.
---   La evidencia original en inglés se conserva en las columnas originales
---   y en raw_output / structured_json.
+--   Las traducciones IA de hsecscan son apoyo lingüístico para la GUI.
+--   La interpretación IA de cookies se apoya en reglas internas de DASTXH
+--   alineadas con recomendaciones OWASP y mapeo CWE.
 -- =========================================================
 
 
@@ -114,6 +121,35 @@ CREATE INDEX IF NOT EXISTS ix_header_checks_present
 
 -- =========================================================
 -- 4) RESULTADOS HTTP: DETALLE POR COOKIE
+--
+-- Campos técnicos originales:
+--   cookie_name
+--   cookie_raw
+--   secure
+--   httponly
+--   samesite_present
+--   samesite_value
+--
+-- Campos de análisis DASTXH:
+--   risk_level:
+--     alta, media, baja, informativa
+--
+--   cwe_mappings:
+--     JSONB con debilidades asociadas, por ejemplo:
+--       CWE-1004: Sensitive Cookie Without 'HttpOnly' Flag
+--       CWE-614: Sensitive Cookie in HTTPS Session Without 'Secure' Attribute
+--       CWE-1275: Sensitive Cookie with Improper SameSite Attribute
+--
+--   interpretation_humana:
+--     explicación breve en español latino generada por IA,
+--     basada en reglas internas y evidencia técnica.
+--
+--   recommended_action:
+--     recomendación breve para revisar o corregir atributos de cookie.
+--
+-- Nota:
+--   La clasificación se basa en reglas internas de DASTXH alineadas
+--   con recomendaciones OWASP y mapeo CWE.
 -- =========================================================
 CREATE TABLE IF NOT EXISTS cookie_checks (
   id                   BIGSERIAL PRIMARY KEY,
@@ -129,13 +165,67 @@ CREATE TABLE IF NOT EXISTS cookie_checks (
   samesite_present     BOOLEAN NOT NULL DEFAULT FALSE,
   samesite_value       TEXT NULL,
 
+  risk_level           TEXT NULL
+                       CHECK (
+                         risk_level IS NULL OR
+                         risk_level IN ('alta', 'media', 'baja', 'informativa')
+                       ),
+
+  cwe_mappings         JSONB NULL,
+
+  interpretation_humana TEXT NULL,
+  recommended_action    TEXT NULL,
+  model_name            TEXT NULL,
+  interpreted_at        TIMESTAMPTZ NULL,
+
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Compatibilidad si la tabla cookie_checks ya existía antes de v9.
+ALTER TABLE cookie_checks
+  ADD COLUMN IF NOT EXISTS risk_level TEXT NULL;
+
+ALTER TABLE cookie_checks
+  ADD COLUMN IF NOT EXISTS cwe_mappings JSONB NULL;
+
+ALTER TABLE cookie_checks
+  ADD COLUMN IF NOT EXISTS interpretation_humana TEXT NULL;
+
+ALTER TABLE cookie_checks
+  ADD COLUMN IF NOT EXISTS recommended_action TEXT NULL;
+
+ALTER TABLE cookie_checks
+  ADD COLUMN IF NOT EXISTS model_name TEXT NULL;
+
+ALTER TABLE cookie_checks
+  ADD COLUMN IF NOT EXISTS interpreted_at TIMESTAMPTZ NULL;
+
+-- Compatibilidad para agregar CHECK de risk_level si la tabla venía de versión anterior.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'cookie_checks_risk_level_check'
+      AND conrelid = 'cookie_checks'::regclass
+  ) THEN
+    ALTER TABLE cookie_checks
+      ADD CONSTRAINT cookie_checks_risk_level_check
+      CHECK (
+        risk_level IS NULL OR
+        risk_level IN ('alta', 'media', 'baja', 'informativa')
+      );
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS ix_cookie_checks_execution_id
   ON cookie_checks (execution_id);
 
+CREATE INDEX IF NOT EXISTS ix_cookie_checks_risk_level
+  ON cookie_checks (risk_level);
 
+CREATE INDEX IF NOT EXISTS ix_cookie_checks_interpreted_at
+  ON cookie_checks (interpreted_at);
 -- =========================================================
 -- 5) RESULTADOS HTTP: PRUEBAS DETALLADAS
 -- =========================================================
@@ -172,6 +262,8 @@ CREATE INDEX IF NOT EXISTS ix_http_tests_status
 
 CREATE INDEX IF NOT EXISTS ix_http_tests_category
   ON http_tests (category);
+
+
 -- =========================================================
 -- 6) RESULTADOS CAPA 2: HSECSCAN
 -- =========================================================
@@ -459,7 +551,7 @@ CREATE INDEX IF NOT EXISTS ix_artifacts_artifact_type
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_artifacts_execution_relative_path
   ON artifacts (execution_id, relative_path);
--- =========================================================
+ -- =========================================================
 -- 11) VISTA DE RESUMEN PARA HISTORIAL
 -- =========================================================
 CREATE OR REPLACE VIEW vw_execution_summary AS
@@ -502,6 +594,18 @@ SELECT
   xr.tool_rc AS dalfox_rc,
   xr.findings_count AS xss_findings_count,
 
+  COUNT(DISTINCT cc.id) AS cookie_checks_count,
+
+  COUNT(
+    DISTINCT cc.id
+  ) FILTER (
+    WHERE
+      cc.interpretation_humana IS NOT NULL
+      OR cc.recommended_action IS NOT NULL
+      OR cc.cwe_mappings IS NOT NULL
+      OR cc.risk_level IS NOT NULL
+  ) AS cookie_interpreted_checks_count,
+
   COUNT(DISTINCT hsc.id) AS hsecscan_checks_count,
 
   COUNT(
@@ -518,6 +622,8 @@ SELECT
 FROM executions e
 LEFT JOIN header_results hr
   ON hr.execution_id = e.id
+LEFT JOIN cookie_checks cc
+  ON cc.execution_id = e.id
 LEFT JOIN hsecscan_results hs
   ON hs.execution_id = e.id
 LEFT JOIN hsecscan_checks hsc
@@ -548,4 +654,4 @@ GROUP BY
   hs.tool_rc,
   hs.summary_json,
   xr.tool_rc,
-  xr.findings_count;
+  xr.findings_count; 
