@@ -1,7 +1,7 @@
 """
 scanner_service.py
 - Servicio reutilizable para ejecutar una evaluación completa DASTXH.
-- Esta versión queda adaptada al esquema normalizado v7.
+- Esta versión queda adaptada al esquema normalizado v8.
 
 Objetivos de esta versión:
 - conservar flujo síncrono y background
@@ -13,11 +13,16 @@ Objetivos de esta versión:
   * salida estructurada en hsecscan_results.structured_json
   * resumen en hsecscan_results.summary_json
   * checks normalizados en hsecscan_checks
+- traducir con IA campos específicos de hsecscan:
+  * security_description -> security_description_es
+  * recommendations      -> recommendations_es
+  * cwe                  -> cwe_es
 - persistir hallazgos XSS estructurados
 - preparar agrupación XSS para IA
-- intentar interpretación con backend compatible con OpenAI
+- intentar interpretación XSS con backend compatible con OpenAI
 - registrar claramente en run_meta.json:
   * resumen estructurado de hsecscan
+  * estado de traducción IA de hsecscan
   * total de hallazgos XSS estructurados
   * total de hallazgos válidos para IA
   * hallazgos excluidos por estar vacíos/no útiles
@@ -56,6 +61,7 @@ from config import (
     RUN_META_JSON,
 )
 from report import build_report_html, build_report_md
+from services.hsecscan_ai_translation_service import translate_hsecscan_checks_with_ai
 from services.xss_ai_service import build_xss_ai_input_payload
 from services.xss_model_runner_service import (
     interpret_xss_groups_with_ai,
@@ -72,7 +78,7 @@ from utils import ensure_dir, safe_read_text, ts_folder, utc_now, write_json
 # ==========================================================
 
 # Se deja local por ahora para no depender de config.py.
-# Ya está permitido en schema.sql v7 dentro de artifacts.artifact_type.
+# Ya está permitido en schema.sql v8 dentro de artifacts.artifact_type.
 HSECSCAN_JSON = "hsecscan.json"
 ARTIFACT_TYPE_HSECSCAN_JSON = "hsecscan_json"
 
@@ -253,8 +259,6 @@ def _build_skipped_ai_result(model_name: Optional[str], reason: str) -> Dict[str
         "groups": [],
         "error": reason,
     }
-
-
 def _safe_parse_hsecscan_output(raw_output: str) -> Dict[str, Any]:
     """
     Ejecuta el parser de hsecscan sin permitir que un error de parseo
@@ -318,6 +322,79 @@ def _build_hsecscan_meta(
         "summary": hsecscan_structured.get("summary"),
         "parse_warnings": hsecscan_structured.get("parse_warnings", []),
     }
+
+
+def _build_hsecscan_translation_failure_meta(error: str) -> Dict[str, Any]:
+    """
+    Construye metadata cuando la traducción IA de hsecscan falla.
+
+    Importante:
+    - La traducción es apoyo visual.
+    - Si falla, el escaneo principal no debe fallar.
+    """
+    return {
+        "enabled": True,
+        "ok": False,
+        "skipped": False,
+        "requested_checks": 0,
+        "candidate_checks": 0,
+        "translated_checks": 0,
+        "persisted_translations": 0,
+        "errors": [
+            {
+                "batch_index": None,
+                "items": 0,
+                "translated_items": 0,
+                "error": error,
+            }
+        ],
+    }
+
+
+def _run_hsecscan_ai_translation(
+    dsn: str,
+    execution_id: int,
+) -> Dict[str, Any]:
+    """
+    Ejecuta la traducción IA sobre checks de hsecscan ya guardados en BD.
+
+    Flujo:
+    1. Lee hsecscan_checks persistidos.
+    2. Envía los campos traducibles al modelo.
+    3. Actualiza columnas *_es en hsecscan_checks.
+    4. Devuelve metadata para run_meta.json.
+
+    Si algo falla, no interrumpe el escaneo.
+    """
+    try:
+        checks_for_translation = db_layer.list_hsecscan_checks_for_translation(
+            dsn=dsn,
+            execution_id=execution_id,
+        )
+
+        translations, translation_meta = translate_hsecscan_checks_with_ai(
+            checks_for_translation
+        )
+
+        if translations:
+            db_layer.update_hsecscan_check_translations(
+                dsn=dsn,
+                execution_id=execution_id,
+                translations=translations,
+                model_name=translation_meta.get("model_name"),
+            )
+
+        translation_meta["ok"] = bool(translations) and not bool(translation_meta.get("errors"))
+        translation_meta["persisted_translations"] = len(translations or [])
+
+        if not translations and not translation_meta.get("errors"):
+            translation_meta["ok"] = False
+            translation_meta.setdefault("skipped", True)
+
+        return translation_meta
+
+    except Exception as exc:
+        return _build_hsecscan_translation_failure_meta(str(exc))
 
 
 def _prepare_scan_context(
@@ -387,6 +464,8 @@ def _prepare_scan_context(
     write_json(context.run_meta_path, run_meta)
 
     return context, run_meta
+
+
 # ==========================================================
 # PIPELINE PRINCIPAL
 # ==========================================================
@@ -450,6 +529,7 @@ def _run_scan_pipeline(
         hsecscan_rc: Optional[int] = None
         hsecscan_structured: Optional[Dict[str, Any]] = None
         hsecscan_json_document: Optional[Dict[str, Any]] = None
+        hsecscan_ai_translation_meta: Optional[Dict[str, Any]] = None
 
         if enable_hsecscan:
             hsecscan_rc, hsecscan_out = run_hsecscan(url)
@@ -461,8 +541,7 @@ def _run_scan_pipeline(
                 errors="replace",
             )
 
-            # Nueva evidencia estructurada.
-            # Primero se parsea, luego se persiste en BD con el nuevo schema v7.
+            # Evidencia estructurada.
             hsecscan_structured = _safe_parse_hsecscan_output(hsecscan_out)
 
             hsecscan_json_document = {
@@ -477,11 +556,12 @@ def _run_scan_pipeline(
                 hsecscan_json_document,
             )
 
-            # Persistencia v7:
+            # Persistencia v8:
             # - raw_output queda igual que antes
             # - structured_json guarda el documento completo
             # - summary_json guarda el resumen útil
             # - hsecscan_checks se llena desde observed_headers + missing_headers
+            # - columnas *_es quedan disponibles para traducción IA posterior
             db_layer.insert_hsecscan_results(
                 dsn=dsn,
                 execution_id=execution_id,
@@ -498,12 +578,24 @@ def _run_scan_pipeline(
                     else []
                 ),
             )
-
             run_meta["hsecscan_structured"] = _build_hsecscan_meta(
                 hsecscan_rc=hsecscan_rc,
                 hsecscan_structured=hsecscan_structured,
             )
 
+            write_json(run_meta_path, run_meta)
+
+            # --------------------------------------------------
+            # TRADUCCIÓN IA DE HSECSCAN
+            # --------------------------------------------------
+            # Esta traducción es solo apoyo lingüístico para GUI.
+            # Si falla, no debe detener el escaneo ni afectar la evidencia.
+            hsecscan_ai_translation_meta = _run_hsecscan_ai_translation(
+                dsn=dsn,
+                execution_id=execution_id,
+            )
+
+            run_meta["hsecscan_ai_translation"] = hsecscan_ai_translation_meta
             write_json(run_meta_path, run_meta)
 
         # --------------------------------------------------
@@ -568,7 +660,7 @@ def _run_scan_pipeline(
         write_json(run_meta_path, run_meta)
 
         # --------------------------------------------------
-        # INTERPRETACIÓN IA
+        # INTERPRETACIÓN IA XSS
         # --------------------------------------------------
         if prepared_entries:
             ai_result = interpret_xss_groups_with_ai(xss_ai_input_payload)
@@ -606,6 +698,7 @@ def _run_scan_pipeline(
         run_meta["xss_ai_interpretation"] = _build_xss_ai_interpretation_meta(ai_result)
 
         write_json(run_meta_path, run_meta)
+
         # --------------------------------------------------
         # REPORTES
         # --------------------------------------------------
@@ -693,6 +786,10 @@ def _run_scan_pipeline(
             hsecscan_rc=hsecscan_rc,
             hsecscan_structured=hsecscan_structured,
         )
+
+        if enable_hsecscan:
+            run_meta["hsecscan_ai_translation"] = hsecscan_ai_translation_meta
+
         run_meta["dalfox_rc"] = dalfox_rc
         run_meta["findings_count"] = effective_findings_count
         run_meta["xss_findings_structured_count"] = len(structured_findings)
@@ -733,6 +830,7 @@ def _run_scan_pipeline(
                 if isinstance(hsecscan_structured, dict)
                 else None
             ),
+            "hsecscan_ai_translation": hsecscan_ai_translation_meta,
             "dalfox_rc": dalfox_rc,
             "findings_count": effective_findings_count,
             "xss_ai_mode": xss_ai_input_payload.get("mode"),
@@ -743,7 +841,6 @@ def _run_scan_pipeline(
             "xss_ai_interpretation_error": ai_result.get("error"),
             "artifacts": run_meta["artifacts"],
         }
-
     except Exception as exc:
         err = str(exc)
         finished = utc_now()
@@ -789,6 +886,8 @@ def _run_scan_pipeline(
             "error": err,
             "artifacts": run_meta.get("artifacts", []),
         }
+
+
 def _background_scan_worker(
     dsn: str,
     context: ScanContext,

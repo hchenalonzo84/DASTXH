@@ -372,11 +372,12 @@
               <div class="info-two-columns__col">
                 <p><strong>Estado:</strong> indica si hsecscan observó una cabecera con advertencia o si detectó una cabecera faltante.</p>
                 <p><strong>Riesgo:</strong> clasificación orientativa generada por el parser para priorizar revisión.</p>
-                <p><strong>Descripción:</strong> explicación técnica reportada por hsecscan sobre el impacto del hallazgo.</p>
+                <p><strong>Descripción:</strong> muestra la traducción al español cuando está disponible; si no existe, muestra el texto original de hsecscan.</p>
               </div>
 
               <div class="info-two-columns__col">
-                <p><strong>Recomendación:</strong> acción sugerida para revisar o corregir la configuración.</p>
+                <p><strong>Recomendación:</strong> muestra la acción sugerida traducida cuando está disponible, sin reemplazar la evidencia original.</p>
+                <p><strong>CWE:</strong> conserva la referencia técnica de debilidad y muestra apoyo en español si la traducción existe.</p>
                 <p><strong>Nota:</strong> esta sección funciona como una segunda capa de contraste para complementar la verificación realizada con curl.</p>
               </div>
             </div>
@@ -435,7 +436,9 @@
                     </td>
 
                     <td class="break-cell">
-                      {% if item.security_description %}
+                      {% if item.security_description_es %}
+                        {{ item.security_description_es }}
+                      {% elif item.security_description %}
                         {{ item.security_description }}
                       {% else %}
                         -
@@ -443,7 +446,9 @@
                     </td>
 
                     <td class="break-cell">
-                      {% if item.recommendations %}
+                      {% if item.recommendations_es %}
+                        {{ item.recommendations_es }}
+                      {% elif item.recommendations %}
                         {{ item.recommendations }}
                       {% else %}
                         -
@@ -451,7 +456,9 @@
                     </td>
 
                     <td class="break-cell">
-                      {% if item.cwe %}
+                      {% if item.cwe_es %}
+                        {{ item.cwe_es }}
+                      {% elif item.cwe %}
                         {{ item.cwe }}
                       {% else %}
                         -

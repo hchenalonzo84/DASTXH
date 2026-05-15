@@ -1,26 +1,24 @@
 """
 db.py
 - Acceso a PostgreSQL usando psycopg (psycopg3).
-- Adaptado al esquema normalizado v7.
+- Adaptado al esquema normalizado v8.
 
 Responsabilidades:
 - ejecutar operaciones CRUD de persistencia
 - guardar resultados HTTP
 - guardar resultados hsecscan crudos y estructurados
 - guardar checks normalizados de hsecscan
+- guardar traducciones IA de hsecscan
 - guardar resultados XSS
 - guardar agrupación XSS preparada para IA
 - guardar interpretaciones generadas por IA
 - exponer consultas de historial y detalle
 
-Fase 3:
-- construir comparación derivada entre:
-  * curl custom / http_tests
-  * hsecscan / hsecscan_checks
-
-Ajuste actual:
-- el conteo visual de Hallazgos XSS ahora usa únicamente las filas válidas
+Ajustes actuales:
+- el conteo visual de Hallazgos XSS usa únicamente las filas válidas
   que realmente se muestran en la tabla XSS.
+- hsecscan puede guardar traducciones IA para Descripción, Recomendación
+  y CWE, manteniendo el texto original como evidencia técnica.
 """
 
 from __future__ import annotations
@@ -81,7 +79,6 @@ def _build_header_details_if_missing(hdr_eval: Dict[str, Any]) -> List[Dict[str,
 
     present = set(hdr_eval.get("present", []) or [])
     missing = set(hdr_eval.get("missing", []) or [])
-
     combined = list(present) + [h for h in missing if h not in present]
 
     result: List[Dict[str, Any]] = []
@@ -108,15 +105,13 @@ def _normalize_cookie_item(item: Dict[str, Any]) -> Dict[str, Any]:
     if cookie_raw is None:
         cookie_raw = item.get("cookie", "")
 
-    cookie_name = item.get("cookie_name")
-
     samesite_present = item.get("samesite_present")
 
     if samesite_present is None:
         samesite_present = bool(item.get("samesite"))
 
     return {
-        "cookie_name": cookie_name,
+        "cookie_name": item.get("cookie_name"),
         "cookie_raw": str(cookie_raw or ""),
         "secure": bool(item.get("secure")),
         "httponly": bool(item.get("httponly")),
@@ -147,7 +142,6 @@ def _normalize_xss_ai_group_item(item: Dict[str, Any]) -> Dict[str, Any]:
     Normaliza una entrada agrupada XSS antes de persistirla.
     """
     entry_type = str(item.get("entry_type", "group") or "group").strip()
-
     finding_orders = item.get("finding_orders")
 
     if not isinstance(finding_orders, list):
@@ -205,11 +199,8 @@ def _normalize_xss_ai_group_item(item: Dict[str, Any]) -> Dict[str, Any]:
 def _unwrap_hsecscan_structured_payload(value: Any) -> Dict[str, Any]:
     """
     Acepta dos formas:
-    1. El objeto interno devuelto por parse_hsecscan_output(...):
-       { ok, response_info, observed_headers, missing_headers, summary, ... }
-
-    2. El wrapper escrito en hsecscan.json:
-       { target_url, tool_rc, parsed_at, structured: {...} }
+    1. El objeto interno devuelto por parse_hsecscan_output(...).
+    2. El wrapper escrito en hsecscan.json.
 
     Devuelve siempre el objeto estructurado interno.
     """
@@ -242,7 +233,6 @@ def _extract_hsecscan_checks(structured_json: Any) -> List[Dict[str, Any]]:
     Extrae observed_headers + missing_headers desde el JSON estructurado.
     """
     structured = _unwrap_hsecscan_structured_payload(structured_json)
-
     observed = structured.get("observed_headers") or []
     missing = structured.get("missing_headers") or []
 
@@ -260,6 +250,10 @@ def _extract_hsecscan_checks(structured_json: Any) -> List[Dict[str, Any]]:
 def _normalize_hsecscan_check_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Normaliza un registro de hsecscan para insertarlo en hsecscan_checks.
+
+    También acepta columnas traducidas si ya vienen preparadas desde otro
+    servicio, aunque el flujo normal será insertarlas vacías y actualizarlas
+    después por id.
     """
     header_name = str(item.get("header_name") or "").strip()
 
@@ -292,8 +286,15 @@ def _normalize_hsecscan_check_item(item: Dict[str, Any]) -> Optional[Dict[str, A
         "cwe": item.get("cwe"),
         "cwe_url": item.get("cwe_url"),
         "https": item.get("https"),
+        "security_description_es": item.get("security_description_es"),
+        "recommendations_es": item.get("recommendations_es"),
+        "cwe_es": item.get("cwe_es"),
+        "translation_model_name": item.get("translation_model_name"),
+        "translated_at": item.get("translated_at"),
         "raw_check_json": item,
     }
+
+
 # ==========================================================
 # HELPERS PRIVADOS PARA COMPARACIÓN CURL VS HSECSCAN
 # ==========================================================
@@ -301,10 +302,6 @@ def _normalize_hsecscan_check_item(item: Dict[str, Any]) -> Optional[Dict[str, A
 def _normalize_header_key(value: Any) -> str:
     """
     Normaliza nombres de cabeceras para comparar resultados entre herramientas.
-
-    Ejemplo:
-    Content-Security-Policy -> content-security-policy
-    content_security_policy -> content-security-policy
     """
     text = str(value or "").strip().lower()
     text = text.replace("_", "-")
@@ -374,10 +371,6 @@ def _hsecscan_status_label(item: Optional[Dict[str, Any]]) -> str:
 def _is_curl_weak(test: Optional[Dict[str, Any]]) -> bool:
     """
     Determina si curl detectó una debilidad.
-
-    En el prototipo:
-    - failed = debilidad clara
-    - warning = advertencia relevante
     """
     if not test:
         return False
@@ -389,10 +382,6 @@ def _is_curl_weak(test: Optional[Dict[str, Any]]) -> bool:
 def _is_hsecscan_weak(item: Optional[Dict[str, Any]]) -> bool:
     """
     Determina si hsecscan detectó una debilidad.
-
-    hsecscan_checks guarda:
-    - missing: cabecera faltante
-    - observed: cabecera observada con advertencia o interés de seguridad
     """
     if not item:
         return False
@@ -403,8 +392,7 @@ def _is_hsecscan_weak(item: Optional[Dict[str, Any]]) -> bool:
 
 def _risk_rank(value: Any) -> int:
     """
-    Rank numérico para ordenar riesgo.
-    Menor número = mayor prioridad.
+    Rank numérico para ordenar riesgo. Menor número = mayor prioridad.
     """
     risk = str(value or "").strip().lower()
 
@@ -426,8 +414,6 @@ def _risk_rank(value: Any) -> int:
 def _infer_curl_risk_from_score(score_delta: Any) -> str:
     """
     Deriva una prioridad orientativa desde el score_delta de curl.
-
-    Esto no cambia el scoring real; solo ayuda a ordenar la comparación.
     """
     try:
         score = int(score_delta or 0)
@@ -449,10 +435,6 @@ def _infer_curl_risk_from_score(score_delta: Any) -> str:
 def _merge_priority(curl_test: Optional[Dict[str, Any]], hsec_item: Optional[Dict[str, Any]]) -> str:
     """
     Define la prioridad visual de la fila comparada.
-
-    Se toma el riesgo más alto entre:
-    - riesgo inferido desde curl
-    - risk_level de hsecscan
     """
     candidates: List[str] = []
 
@@ -502,9 +484,6 @@ def _comparison_result_label(
 def _build_curl_index(http_tests_rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
     Crea índice de pruebas curl por cabecera.
-
-    Usa header_name cuando existe.
-    Si no existe, usa name/test_id como respaldo para no perder pruebas.
     """
     result: Dict[str, Dict[str, Any]] = {}
 
@@ -521,10 +500,7 @@ def _build_curl_index(http_tests_rows: List[Dict[str, Any]]) -> Dict[str, Dict[s
             result[key] = item
             continue
 
-        current_is_weak = _is_curl_weak(current)
-        incoming_is_weak = _is_curl_weak(item)
-
-        if incoming_is_weak and not current_is_weak:
+        if _is_curl_weak(item) and not _is_curl_weak(current):
             result[key] = item
             continue
 
@@ -555,10 +531,7 @@ def _build_hsecscan_index(hsecscan_checks_rows: List[Dict[str, Any]]) -> Dict[st
             result[key] = item
             continue
 
-        current_rank = _risk_rank(current.get("risk_level"))
-        incoming_rank = _risk_rank(item.get("risk_level"))
-
-        if incoming_rank < current_rank:
+        if _risk_rank(item.get("risk_level")) < _risk_rank(current.get("risk_level")):
             result[key] = item
 
     return result
@@ -570,17 +543,9 @@ def _build_header_layer_comparison(
 ) -> List[Dict[str, Any]]:
     """
     Construye la comparación curl vs hsecscan.
-
-    Esta comparación se mantiene minimalista en GUI:
-    - Cabecera
-    - curl
-    - hsecscan
-    - Resultado
-    - Prioridad
     """
     curl_index = _build_curl_index(http_tests_rows)
     hsecscan_index = _build_hsecscan_index(hsecscan_checks_rows)
-
     all_keys = sorted(set(curl_index.keys()) | set(hsecscan_index.keys()))
 
     rows: List[Dict[str, Any]] = []
@@ -588,7 +553,6 @@ def _build_header_layer_comparison(
     for key in all_keys:
         curl_test = curl_index.get(key)
         hsec_item = hsecscan_index.get(key)
-
         display_name = None
 
         if curl_test:
@@ -597,27 +561,26 @@ def _build_header_layer_comparison(
         if not display_name and hsec_item:
             display_name = hsec_item.get("header_name")
 
-        priority = _merge_priority(curl_test, hsec_item)
-
         rows.append(
             {
                 "header_key": key,
                 "header_name": _display_header_name(display_name),
-                "priority": priority,
+                "priority": _merge_priority(curl_test, hsec_item),
                 "comparison_result": _comparison_result_label(curl_test, hsec_item),
-
                 "curl_status_raw": curl_test.get("status") if curl_test else None,
                 "curl_status": _curl_status_label(curl_test.get("status") if curl_test else None),
                 "curl_score_delta": curl_test.get("score_delta") if curl_test else None,
                 "curl_reason": curl_test.get("reason") if curl_test else None,
                 "curl_recommendation": curl_test.get("recommendation") if curl_test else None,
-
                 "hsecscan_record_type": hsec_item.get("record_type") if hsec_item else None,
                 "hsecscan_status": _hsecscan_status_label(hsec_item),
                 "hsecscan_risk_level": hsec_item.get("risk_level") if hsec_item else None,
                 "hsecscan_description": hsec_item.get("security_description") if hsec_item else None,
+                "hsecscan_description_es": hsec_item.get("security_description_es") if hsec_item else None,
                 "hsecscan_recommendation": hsec_item.get("recommendations") if hsec_item else None,
+                "hsecscan_recommendation_es": hsec_item.get("recommendations_es") if hsec_item else None,
                 "hsecscan_cwe": hsec_item.get("cwe") if hsec_item else None,
+                "hsecscan_cwe_es": hsec_item.get("cwe_es") if hsec_item else None,
             }
         )
 
@@ -632,9 +595,7 @@ def _build_header_layer_comparison(
     return rows
 
 
-def _build_header_layer_comparison_summary(
-    comparison_rows: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+def _build_header_layer_comparison_summary(comparison_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Construye un resumen para tarjetas de la GUI.
     """
@@ -667,6 +628,8 @@ def _build_header_layer_comparison_summary(
         "without_contrast": without_contrast,
         "high_priority": high_priority,
     }
+
+
 # ==========================================================
 # HELPERS PRIVADOS PARA RENDER XSS EN GUI
 # ==========================================================
@@ -674,9 +637,6 @@ def _build_header_layer_comparison_summary(
 def _clean_display_text(value: Any) -> str:
     """
     Normaliza texto para decidir si un valor es útil para mostrar en GUI.
-
-    Se usa para evitar que valores como None, "", "-" o "Unknown" sean tratados
-    como hallazgos reales cuando no tienen payload ni evidencia.
     """
     text = str(value or "").strip()
     return " ".join(text.replace("\n", " ").replace("\r", " ").split())
@@ -693,9 +653,6 @@ def _is_empty_visual_value(value: Any) -> bool:
 def _as_list(value: Any) -> List[Any]:
     """
     Normaliza campos jsonb que deberían venir como lista.
-
-    psycopg normalmente devuelve jsonb como list/dict, pero esta defensa permite
-    tolerar casos donde el valor llegue como string JSON.
     """
     if value is None:
         return []
@@ -740,7 +697,6 @@ def _has_valid_xss_group_signal(group: Dict[str, Any]) -> bool:
     severity = _clean_display_text(group.get("severity_mode")).lower()
     signature = _clean_display_text(group.get("payload_signature")).lower()
     parameter = _clean_display_text(group.get("parameter_probable")).lower()
-
     sample_payloads = _as_list(group.get("sample_payloads"))
     sample_evidence = _as_list(group.get("sample_evidence"))
 
@@ -768,7 +724,6 @@ def _has_valid_xss_finding_signal(finding: Dict[str, Any]) -> bool:
 
     has_payload = not _is_empty_visual_value(payload)
     has_evidence = not _is_empty_visual_value(evidence)
-
     severity_unknown = _clean_display_text(severity).lower() in ("", "-", "unknown", "desconocido")
     parameter_unknown = _clean_display_text(parameter).lower() in ("", "-", "unknown", "desconocido")
 
@@ -780,10 +735,8 @@ def _has_valid_xss_finding_signal(finding: Dict[str, Any]) -> bool:
 
 def _build_no_valid_xss_row(raw_count: int = 0) -> Dict[str, Any]:
     """
-    Construye una fila informativa solo para el caso en que Dalfox haya producido
-    registros no estructurados/vacíos, pero ningún hallazgo tenga payload/evidencia útil.
-
-    Esta fila es un placeholder informativo y NO cuenta como hallazgo XSS real.
+    Construye una fila informativa cuando no hay hallazgos XSS válidos.
+    Esta fila no cuenta como hallazgo real.
     """
     return {
         "row_order": "-",
@@ -882,13 +835,7 @@ def update_execution_status(
                         finished_at = CASE WHEN %s THEN %s ELSE finished_at END
                     WHERE id = %s;
                     """,
-                    (
-                        status,
-                        error_message,
-                        finished,
-                        utc_now(),
-                        execution_id,
-                    ),
+                    (status, error_message, finished, utc_now(), execution_id),
                 )
             else:
                 cur.execute(
@@ -900,14 +847,7 @@ def update_execution_status(
                         finished_at = CASE WHEN %s THEN %s ELSE finished_at END
                     WHERE id = %s;
                     """,
-                    (
-                        status,
-                        error_message,
-                        urls_evaluadas,
-                        finished,
-                        utc_now(),
-                        execution_id,
-                    ),
+                    (status, error_message, urls_evaluadas, finished, utc_now(), execution_id),
                 )
 
         conn.commit()
@@ -937,16 +877,16 @@ def update_execution_finished(
     """
     Marca la ejecución como finalizada o fallida.
     """
-    new_status = "finished" if ok else "failed"
-
     update_execution_status(
         dsn=dsn,
         execution_id=execution_id,
-        status=new_status,
+        status="finished" if ok else "failed",
         error_message=error_message,
         urls_evaluadas=urls_evaluadas,
         finished=True,
     )
+
+
 # ==========================================================
 # RESULTADOS HTTP: HEADERS + COOKIES + HTTP TESTS
 # ==========================================================
@@ -961,7 +901,6 @@ def insert_header_results(
     Inserta los resultados HTTP en forma normalizada.
     """
     _ = raw_headers_json
-
     header_details = _build_header_details_if_missing(hdr_eval)
     cookie_items = [_normalize_cookie_item(item) for item in (hdr_eval.get("cookies_flags", []) or [])]
     http_tests = [_normalize_http_test_item(item) for item in (hdr_eval.get("http_tests", []) or [])]
@@ -1099,7 +1038,7 @@ def insert_hsecscan_results(
     hsecscan_checks: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """
-    Inserta o actualiza los resultados de la Capa 2 (hsecscan).
+    Inserta o actualiza los resultados de hsecscan.
     """
     if summary_json is None and structured_json is not None:
         summary_json = _extract_hsecscan_summary(structured_json)
@@ -1168,9 +1107,15 @@ def insert_hsecscan_results(
                         cwe,
                         cwe_url,
                         https,
+                        security_description_es,
+                        recommendations_es,
+                        cwe_es,
+                        translation_model_name,
+                        translated_at,
                         raw_check_json
                     )
                     VALUES (
+                        %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s,
                         %s, %s, %s, %s::jsonb
@@ -1190,7 +1135,112 @@ def insert_hsecscan_results(
                         item["cwe"],
                         item["cwe_url"],
                         item["https"],
+                        item.get("security_description_es"),
+                        item.get("recommendations_es"),
+                        item.get("cwe_es"),
+                        item.get("translation_model_name"),
+                        item.get("translated_at"),
                         _json_or_none(item["raw_check_json"]),
+                    ),
+                )
+
+        conn.commit()
+
+
+def list_hsecscan_checks_for_translation(
+    dsn: str,
+    execution_id: int,
+) -> List[Dict[str, Any]]:
+    """
+    Devuelve los checks de hsecscan que pueden enviarse al servicio de
+    traducción IA.
+    """
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    execution_id,
+                    record_type,
+                    display_status,
+                    header_name,
+                    header_value,
+                    risk_level,
+                    security_description,
+                    recommendations,
+                    cwe,
+                    security_description_es,
+                    recommendations_es,
+                    cwe_es,
+                    translation_model_name,
+                    translated_at
+                FROM hsecscan_checks
+                WHERE execution_id = %s
+                ORDER BY
+                    CASE
+                        WHEN risk_level = 'alta' THEN 1
+                        WHEN risk_level = 'media' THEN 2
+                        WHEN risk_level = 'baja' THEN 3
+                        WHEN risk_level = 'informativa' THEN 4
+                        ELSE 5
+                    END,
+                    record_type ASC,
+                    header_name ASC,
+                    id ASC;
+                """,
+                (execution_id,),
+            )
+            rows = cur.fetchall()
+
+        conn.commit()
+
+    return [dict(r) for r in rows]
+
+
+def update_hsecscan_check_translations(
+    dsn: str,
+    execution_id: int,
+    translations: List[Dict[str, Any]],
+    model_name: Optional[str] = None,
+) -> None:
+    """
+    Actualiza traducciones IA de hsecscan por id de hsecscan_checks.
+    """
+    now = utc_now()
+
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            for item in translations:
+                raw_check_id = item.get("check_id", item.get("id"))
+
+                try:
+                    check_id = int(raw_check_id)
+                except Exception:
+                    continue
+
+                if check_id <= 0:
+                    continue
+
+                cur.execute(
+                    """
+                    UPDATE hsecscan_checks
+                    SET security_description_es = %s,
+                        recommendations_es = %s,
+                        cwe_es = %s,
+                        translation_model_name = %s,
+                        translated_at = %s
+                    WHERE id = %s
+                      AND execution_id = %s;
+                    """,
+                    (
+                        item.get("security_description_es"),
+                        item.get("recommendations_es"),
+                        item.get("cwe_es"),
+                        item.get("translation_model_name") or model_name,
+                        item.get("translated_at") or now,
+                        check_id,
+                        execution_id,
                     ),
                 )
 
@@ -1288,7 +1338,7 @@ def insert_xss_ai_groups(
     xss_ai_payload: Dict[str, Any],
 ) -> None:
     """
-    Persiste la agrupación XSS preparada para futura IA.
+    Persiste la agrupación XSS preparada para IA.
     """
     entries = xss_ai_payload.get("entries", []) or []
 
@@ -1388,6 +1438,8 @@ def update_xss_ai_group_interpretations(
                 )
 
         conn.commit()
+
+
 # ==========================================================
 # ARTIFACTS / EVIDENCIAS
 # ==========================================================
@@ -1507,6 +1559,7 @@ def list_execution_summaries(
                     dalfox_rc,
                     xss_findings_count,
                     hsecscan_checks_count,
+                    hsecscan_translated_checks_count,
                     xss_ai_groups_count,
                     artifacts_count
                 FROM vw_execution_summary
@@ -1557,6 +1610,7 @@ def get_execution_summary(
                     dalfox_rc,
                     xss_findings_count,
                     hsecscan_checks_count,
+                    hsecscan_translated_checks_count,
                     xss_ai_groups_count,
                     artifacts_count
                 FROM vw_execution_summary
@@ -1577,11 +1631,6 @@ def get_execution_detail(
 ) -> Optional[Dict[str, Any]]:
     """
     Devuelve detalle enriquecido de una ejecución.
-
-    También prepara:
-    - xss_display_rows para la tabla XSS.
-    - xss_display_count para que el conteo de la GUI coincida con la tabla.
-    - header_layer_comparison para comparar curl vs hsecscan.
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -1600,18 +1649,15 @@ def get_execution_detail(
                     e.urls_ingresadas,
                     e.urls_evaluadas,
                     e.report_dir,
-
                     hr.headers_evaluadas,
                     hr.headers_presentes,
                     hr.cumplimiento_pct,
                     hr.http_score,
                     hr.http_grade,
-
                     hs.tool_rc AS hsecscan_rc,
                     hs.raw_output AS hsecscan_raw_output,
                     hs.structured_json AS hsecscan_structured_json,
                     hs.summary_json AS hsecscan_summary_json,
-
                     xr.tool_rc AS dalfox_rc,
                     xr.findings_count,
                     xr.summary_json,
@@ -1712,6 +1758,11 @@ def get_execution_detail(
                     cwe,
                     cwe_url,
                     https,
+                    security_description_es,
+                    recommendations_es,
+                    cwe_es,
+                    translation_model_name,
+                    translated_at,
                     raw_check_json,
                     created_at
                 FROM hsecscan_checks
@@ -1895,7 +1946,6 @@ def get_execution_detail(
     for row in xss_findings_rows:
         current = dict(row)
         finding_order = int(current.get("finding_order", 0) or 0)
-
         ai_data = interpretation_by_finding_order.get(finding_order, {})
         current["interpretation_humana"] = ai_data.get("interpretation_humana")
         current["risk_summary"] = ai_data.get("risk_summary")
@@ -1903,7 +1953,6 @@ def get_execution_detail(
         current["recommended_review_area"] = ai_data.get("recommended_review_area")
         current["confidence"] = ai_data.get("confidence")
         current["model_name"] = ai_data.get("model_name")
-
         enriched_xss_findings_rows.append(current)
 
     # ------------------------------------------------------
@@ -1933,7 +1982,6 @@ def get_execution_detail(
         for group in valid_xss_ai_groups_rows:
             sample_payloads = group.get("sample_payloads") or []
             sample_evidence = group.get("sample_evidence") or []
-
             payload_example = _first_non_empty_text(sample_payloads)
             evidence_example = _first_non_empty_text(sample_evidence)
 
@@ -1975,8 +2023,6 @@ def get_execution_detail(
                 }
             )
 
-    # Si no quedó ninguna fila válida, solo entonces se permite mostrar una fila
-    # informativa. Esa fila no cuenta como hallazgo real.
     if not xss_display_rows and (xss_ai_groups_rows or enriched_xss_findings_rows):
         xss_display_rows.append(
             _build_no_valid_xss_row(
@@ -1984,38 +2030,27 @@ def get_execution_detail(
             )
         )
 
-    # Conteo real de hallazgos XSS que se muestran en la tabla.
-    # No incluye placeholders informativos.
     xss_display_count = len(
-        [
-            row for row in xss_display_rows
-            if not bool(row.get("is_placeholder"))
-        ]
+        [row for row in xss_display_rows if not bool(row.get("is_placeholder"))]
     )
 
     detail["present_json"] = present_headers
     detail["missing_json"] = missing_headers
     detail["raw_headers_json"] = raw_headers_derived
-
     detail["header_checks"] = header_rows
     detail["cookie_checks"] = cookie_rows_raw
     detail["cookies_flags_json"] = cookies_flags_json
     detail["http_tests"] = http_tests_rows
-
     detail["hsecscan_checks"] = hsecscan_checks_rows
     detail["hsecscan_observed_checks"] = hsecscan_observed_checks
     detail["hsecscan_missing_checks"] = hsecscan_missing_checks
-
     detail["header_layer_comparison"] = header_layer_comparison
     detail["header_layer_comparison_summary"] = header_layer_comparison_summary
-
     detail["xss_findings"] = enriched_xss_findings_rows
     detail["xss_ai_groups"] = xss_ai_groups_rows
-
     detail["xss_display_mode"] = xss_display_mode
     detail["xss_display_rows"] = xss_display_rows
     detail["xss_display_count"] = xss_display_count
-
     detail["artifacts"] = artifact_rows
 
     return detail

@@ -1,5 +1,5 @@
 -- =========================================================
--- DASTXH - Schema base v7
+-- DASTXH - Schema base v8
 --
 -- Objetivo de esta versión:
 --   - conservar executions como entidad principal
@@ -11,7 +11,19 @@
 --       * salida estructurada JSON
 --       * checks normalizados observados/faltantes
 --       * artifact hsecscan.json
+--   - persistir traducciones IA para hsecscan:
+--       * security_description_es
+--       * recommendations_es
+--       * cwe_es
+--       * translation_model_name
+--       * translated_at
+--
+-- Nota:
+--   Las traducciones IA son apoyo lingüístico para la GUI.
+--   La evidencia original en inglés se conserva en las columnas originales
+--   y en raw_output / structured_json.
 -- =========================================================
+
 
 -- =========================================================
 -- 1) EJECUCIONES
@@ -160,8 +172,6 @@ CREATE INDEX IF NOT EXISTS ix_http_tests_status
 
 CREATE INDEX IF NOT EXISTS ix_http_tests_category
   ON http_tests (category);
-
-
 -- =========================================================
 -- 6) RESULTADOS CAPA 2: HSECSCAN
 -- =========================================================
@@ -196,6 +206,20 @@ ALTER TABLE hsecscan_results
 -- Guarda cada registro estructurado de hsecscan:
 --   - cabeceras observadas con advertencia
 --   - cabeceras faltantes
+--
+-- Campos originales:
+--   security_description
+--   recommendations
+--   cwe
+--
+-- Campos traducidos por IA:
+--   security_description_es
+--   recommendations_es
+--   cwe_es
+--
+-- Las columnas traducidas no sustituyen la evidencia original.
+-- Solo se usan para mostrar una versión más legible en español latino
+-- dentro de la GUI.
 -- =========================================================
 CREATE TABLE IF NOT EXISTS hsecscan_checks (
   id                    BIGSERIAL PRIMARY KEY,
@@ -217,6 +241,8 @@ CREATE TABLE IF NOT EXISTS hsecscan_checks (
                         ),
 
   reference_url         TEXT NULL,
+
+  -- Texto original reportado por hsecscan.
   security_description  TEXT NULL,
   security_reference    TEXT NULL,
   recommendations       TEXT NULL,
@@ -224,10 +250,33 @@ CREATE TABLE IF NOT EXISTS hsecscan_checks (
   cwe_url               TEXT NULL,
   https                 TEXT NULL,
 
+  -- Traducciones generadas por IA local.
+  security_description_es TEXT NULL,
+  recommendations_es      TEXT NULL,
+  cwe_es                  TEXT NULL,
+  translation_model_name  TEXT NULL,
+  translated_at           TIMESTAMPTZ NULL,
+
   raw_check_json        JSONB NULL,
 
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Compatibilidad si la tabla hsecscan_checks ya existía antes de v8.
+ALTER TABLE hsecscan_checks
+  ADD COLUMN IF NOT EXISTS security_description_es TEXT NULL;
+
+ALTER TABLE hsecscan_checks
+  ADD COLUMN IF NOT EXISTS recommendations_es TEXT NULL;
+
+ALTER TABLE hsecscan_checks
+  ADD COLUMN IF NOT EXISTS cwe_es TEXT NULL;
+
+ALTER TABLE hsecscan_checks
+  ADD COLUMN IF NOT EXISTS translation_model_name TEXT NULL;
+
+ALTER TABLE hsecscan_checks
+  ADD COLUMN IF NOT EXISTS translated_at TIMESTAMPTZ NULL;
 
 CREATE INDEX IF NOT EXISTS ix_hsecscan_checks_execution_id
   ON hsecscan_checks (execution_id);
@@ -240,6 +289,11 @@ CREATE INDEX IF NOT EXISTS ix_hsecscan_checks_header_name
 
 CREATE INDEX IF NOT EXISTS ix_hsecscan_checks_risk_level
   ON hsecscan_checks (risk_level);
+
+CREATE INDEX IF NOT EXISTS ix_hsecscan_checks_translated_at
+  ON hsecscan_checks (translated_at);
+
+
 -- =========================================================
 -- 7) RESULTADOS CAPA 3: DALFOX / XSS (RESUMEN)
 -- =========================================================
@@ -285,8 +339,6 @@ CREATE INDEX IF NOT EXISTS ix_xss_findings_execution_id
 
 CREATE INDEX IF NOT EXISTS ix_xss_findings_severity
   ON xss_findings (severity);
-
-
 -- =========================================================
 -- 9) AGRUPACIÓN XSS PREPARADA PARA IA
 -- =========================================================
@@ -451,6 +503,16 @@ SELECT
   xr.findings_count AS xss_findings_count,
 
   COUNT(DISTINCT hsc.id) AS hsecscan_checks_count,
+
+  COUNT(
+    DISTINCT hsc.id
+  ) FILTER (
+    WHERE
+      hsc.security_description_es IS NOT NULL
+      OR hsc.recommendations_es IS NOT NULL
+      OR hsc.cwe_es IS NOT NULL
+  ) AS hsecscan_translated_checks_count,
+
   COUNT(DISTINCT xag.id) AS xss_ai_groups_count,
   COUNT(DISTINCT a.id) AS artifacts_count
 FROM executions e
