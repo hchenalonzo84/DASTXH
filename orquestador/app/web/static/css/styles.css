@@ -11,9 +11,11 @@
      * tablas
      * tabs Pretty / Raw / Artifacts
      * detalle de ejecuciones
-     * tabla XSS con columnas separadas de interpretación
+     * tarjetas amplias para secciones con tablas grandes
+     * tabla XSS sin columna Confianza
      * tabla hsecscan con resultados estructurados
      * tabla minimalista de comparación curl vs hsecscan
+     * paginación local para tablas largas
    ========================================================== */
 
 /* ----------------------------------------------------------
@@ -55,9 +57,6 @@
     box-sizing: border-box;
 }
 
-/* ----------------------------------------------------------
-   Documento global
-   ---------------------------------------------------------- */
 html {
     font-size: 16px;
 }
@@ -72,11 +71,9 @@ body {
 
 main.container {
     padding: 2rem 0;
+    overflow: visible;
 }
 
-/* ----------------------------------------------------------
-   Enlaces
-   ---------------------------------------------------------- */
 a {
     color: #93c5fd;
     text-decoration: none;
@@ -86,9 +83,6 @@ a:hover {
     text-decoration: underline;
 }
 
-/* ----------------------------------------------------------
-   Contenedor principal
-   ---------------------------------------------------------- */
 .container {
     width: min(1100px, 92%);
     margin: 0 auto;
@@ -154,6 +148,16 @@ a:hover {
 }
 
 /* ----------------------------------------------------------
+   Tarjetas amplias para secciones de análisis
+   ---------------------------------------------------------- */
+.analysis-wide-card {
+    width: min(1500px, calc(100vw - 48px));
+    max-width: calc(100vw - 48px);
+    margin-left: 50%;
+    transform: translateX(-50%);
+}
+
+/* ----------------------------------------------------------
    Bloques reutilizables de detalle y stats
    ---------------------------------------------------------- */
 .detail-item,
@@ -178,9 +182,6 @@ a:hover {
     color: var(--text-soft);
 }
 
-/* ----------------------------------------------------------
-   Listas y celdas largas
-   ---------------------------------------------------------- */
 .list {
     padding-left: 1.25rem;
 }
@@ -242,7 +243,6 @@ a:hover {
 .form-actions {
     margin-top: 1rem;
 }
-
 /* ----------------------------------------------------------
    Botones
    ---------------------------------------------------------- */
@@ -305,8 +305,9 @@ button:active,
     color: var(--warning-text);
     border-color: var(--warning-border);
 }
+
 /* ----------------------------------------------------------
-   Notices heredados
+   Notices y alerts
    ---------------------------------------------------------- */
 .notice {
     border-left: 4px solid #60a5fa;
@@ -326,9 +327,6 @@ button:active,
     background: rgba(239, 68, 68, 0.08);
 }
 
-/* ----------------------------------------------------------
-   Alerts de Bootstrap adaptadas al tema
-   ---------------------------------------------------------- */
 .alert {
     border-radius: var(--radius-md);
     color: var(--text-soft);
@@ -389,7 +387,7 @@ button:active,
 }
 
 /* ----------------------------------------------------------
-   Tablas propias y de Bootstrap
+   Tablas base
    ---------------------------------------------------------- */
 .table-wrapper,
 .table-responsive {
@@ -398,43 +396,6 @@ button:active,
     margin-top: 1rem;
 }
 
-.data-table {
-    width: 100%;
-    border-collapse: collapse;
-    min-width: 820px;
-    background: var(--bg-panel-soft);
-    border: 1px solid var(--border-main);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-}
-
-.data-table thead {
-    background: var(--bg-panel-alt);
-}
-
-.data-table th,
-.data-table td {
-    padding: 0.85rem 0.9rem;
-    border-bottom: 1px solid var(--border-main);
-    text-align: left;
-    vertical-align: top;
-}
-
-.data-table th {
-    color: var(--text-strong);
-    font-size: 0.92rem;
-}
-
-.data-table td {
-    color: var(--text-soft);
-    font-size: 0.93rem;
-}
-
-.data-table tbody tr:hover {
-    background: #111b2e;
-}
-
-/* Bootstrap tables en oscuro */
 .table {
     --bs-table-bg: var(--bg-panel-soft);
     --bs-table-color: var(--text-soft);
@@ -468,7 +429,7 @@ button:active,
 .hsecscan-table-wrapper,
 .header-comparison-table-wrapper {
     margin-top: 1rem;
-    overflow-x: auto;
+    overflow-x: visible;
     overflow-y: hidden;
     border: 1px solid var(--border-main);
     border-radius: var(--radius-md);
@@ -502,18 +463,117 @@ button:active,
 }
 
 /* ----------------------------------------------------------
+   Paginación local de tablas
+   ---------------------------------------------------------- */
+.table-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 0.75rem;
+    margin-bottom: 0.25rem;
+    padding: 0.75rem 0.9rem;
+    background: var(--bg-panel-soft);
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+}
+
+.table-pagination-summary {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.table-pagination-controls {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+}
+
+.table-pagination-page-indicator {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    padding: 0 0.25rem;
+    color: var(--text-soft);
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+
+main.container button.table-pagination-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    padding: 0.42rem 0.75rem;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+    background: var(--bg-panel-alt);
+    color: var(--text-strong) !important;
+    font-size: 0.88rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+main.container button.table-pagination-button:hover:not(:disabled) {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff !important;
+}
+
+main.container button.table-pagination-button:disabled {
+    opacity: 0.48;
+    cursor: not-allowed;
+    background: var(--bg-panel-soft);
+    border-color: var(--border-main);
+    color: var(--text-muted) !important;
+}
+/* ----------------------------------------------------------
+   Cajas explicativas compactas en dos columnas
+   ---------------------------------------------------------- */
+.info-box-compact {
+    padding-bottom: 0.85rem;
+}
+
+.info-two-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.85rem 2rem;
+    align-items: start;
+    margin-top: 0.75rem;
+}
+
+.info-two-columns__col {
+    min-width: 0;
+}
+
+.info-two-columns__col p {
+    margin-bottom: 0.55rem;
+    line-height: 1.45;
+}
+
+.info-two-columns__col p:last-child {
+    margin-bottom: 0;
+}
+
+/* ----------------------------------------------------------
    Tabla XSS
+   - Sin columna Confianza.
+   - Mantiene paginación porque conserva js-paginated-table.
+   - Evita scroll horizontal en pantallas grandes.
    ---------------------------------------------------------- */
 .xss-results-table {
-    min-width: 1850px;
+    width: 100%;
+    min-width: 0 !important;
     table-layout: fixed;
-    font-size: 0.88rem;
+    font-size: 0.80rem;
 }
 
 .xss-results-table th,
 .xss-results-table td {
-    padding: 0.75rem 0.8rem;
-    line-height: 1.45;
+    padding: 0.6rem 0.6rem;
+    line-height: 1.42;
     vertical-align: top;
 }
 
@@ -521,100 +581,107 @@ button:active,
     position: sticky;
     top: 0;
     z-index: 2;
-    white-space: nowrap;
+    white-space: normal;
 }
 
+/* Vista agrupada: 10 columnas */
 .xss-results-table th:nth-child(1),
 .xss-results-table td:nth-child(1) {
-    width: 48px;
-    min-width: 48px;
+    width: 3%;
     text-align: center;
 }
 
 .xss-results-table th:nth-child(2),
 .xss-results-table td:nth-child(2) {
-    width: 95px;
-    min-width: 95px;
+    width: 7%;
 }
 
 .xss-results-table th:nth-child(3),
 .xss-results-table td:nth-child(3) {
-    width: 250px;
-    min-width: 250px;
+    width: 13%;
 }
 
 .xss-results-table th:nth-child(4),
 .xss-results-table td:nth-child(4) {
-    width: 310px;
-    min-width: 310px;
+    width: 15%;
 }
 
 .xss-results-table th:nth-child(5),
 .xss-results-table td:nth-child(5) {
-    width: 100px;
-    min-width: 100px;
+    width: 7%;
 }
 
 .xss-results-table th:nth-child(6),
 .xss-results-table td:nth-child(6) {
-    width: 105px;
-    min-width: 105px;
+    width: 7%;
     text-align: center;
 }
 
 .xss-results-table th:nth-child(7),
 .xss-results-table td:nth-child(7) {
-    width: 270px;
-    min-width: 270px;
+    width: 20%;
 }
 
 .xss-results-table th:nth-child(8),
 .xss-results-table td:nth-child(8) {
-    width: 260px;
-    min-width: 260px;
+    width: 10%;
 }
 
 .xss-results-table th:nth-child(9),
 .xss-results-table td:nth-child(9) {
-    width: 260px;
-    min-width: 260px;
+    width: 10%;
 }
 
 .xss-results-table th:nth-child(10),
 .xss-results-table td:nth-child(10) {
-    width: 260px;
-    min-width: 260px;
+    width: 8%;
 }
 
-.xss-results-table th:nth-child(11),
-.xss-results-table td:nth-child(11) {
-    width: 115px;
-    min-width: 115px;
-    text-align: center;
+/* Vista individual: 9 columnas */
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(1),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(1) {
+    width: 3%;
 }
-.xss-results-table:not(:has(th:nth-child(11))) th:nth-child(6),
-.xss-results-table:not(:has(th:nth-child(11))) td:nth-child(6) {
-    width: 280px;
-    min-width: 280px;
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(2),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(2) {
+    width: 7%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(3),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(3) {
+    width: 14%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(4),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(4) {
+    width: 16%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(5),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(5) {
+    width: 7%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(6),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(6) {
+    width: 21%;
     text-align: left;
 }
 
-.xss-results-table:not(:has(th:nth-child(11))) th:nth-child(7),
-.xss-results-table:not(:has(th:nth-child(11))) td:nth-child(7),
-.xss-results-table:not(:has(th:nth-child(11))) th:nth-child(8),
-.xss-results-table:not(:has(th:nth-child(11))) td:nth-child(8),
-.xss-results-table:not(:has(th:nth-child(11))) th:nth-child(9),
-.xss-results-table:not(:has(th:nth-child(11))) td:nth-child(9) {
-    width: 260px;
-    min-width: 260px;
-    text-align: left;
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(7),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(7) {
+    width: 12%;
 }
 
-.xss-results-table:not(:has(th:nth-child(11))) th:nth-child(10),
-.xss-results-table:not(:has(th:nth-child(11))) td:nth-child(10) {
-    width: 115px;
-    min-width: 115px;
-    text-align: center;
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(8),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(8) {
+    width: 10%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(9),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(9) {
+    width: 10%;
 }
 
 .xss-results-table .break-cell {
@@ -627,7 +694,7 @@ button:active,
 .xss-results-table td:nth-child(3),
 .xss-results-table td:nth-child(4) {
     font-family: Consolas, "Courier New", monospace;
-    font-size: 0.82rem;
+    font-size: 0.76rem;
 }
 
 .xss-results-table th:nth-child(7),
@@ -641,17 +708,21 @@ button:active,
 
 /* ----------------------------------------------------------
    Tabla hsecscan
+   - Mantiene security_description y recommendations.
+   - Mantiene paginación.
+   - Evita scroll horizontal en pantallas grandes.
    ---------------------------------------------------------- */
 .hsecscan-results-table {
-    min-width: 1450px;
+    width: 100%;
+    min-width: 0 !important;
     table-layout: fixed;
-    font-size: 0.88rem;
+    font-size: 0.82rem;
 }
 
 .hsecscan-results-table th,
 .hsecscan-results-table td {
-    padding: 0.75rem 0.8rem;
-    line-height: 1.45;
+    padding: 0.65rem 0.65rem;
+    line-height: 1.42;
     vertical-align: top;
 }
 
@@ -659,45 +730,38 @@ button:active,
     position: sticky;
     top: 0;
     z-index: 2;
-    white-space: nowrap;
+    white-space: normal;
 }
 
 .hsecscan-results-table th:nth-child(1),
 .hsecscan-results-table td:nth-child(1) {
-    width: 105px;
-    min-width: 105px;
-    text-align: center;
+    width: 9%;
 }
 
 .hsecscan-results-table th:nth-child(2),
 .hsecscan-results-table td:nth-child(2) {
-    width: 255px;
-    min-width: 255px;
+    width: 17%;
 }
 
 .hsecscan-results-table th:nth-child(3),
 .hsecscan-results-table td:nth-child(3) {
-    width: 105px;
-    min-width: 105px;
+    width: 8%;
     text-align: center;
 }
 
 .hsecscan-results-table th:nth-child(4),
 .hsecscan-results-table td:nth-child(4) {
-    width: 360px;
-    min-width: 360px;
+    width: 27%;
 }
 
 .hsecscan-results-table th:nth-child(5),
 .hsecscan-results-table td:nth-child(5) {
-    width: 360px;
-    min-width: 360px;
+    width: 25%;
 }
 
 .hsecscan-results-table th:nth-child(6),
 .hsecscan-results-table td:nth-child(6) {
-    width: 265px;
-    min-width: 265px;
+    width: 14%;
 }
 
 .hsecscan-results-table .break-cell {
@@ -712,7 +776,7 @@ button:active,
     margin-top: 0.35rem;
     color: var(--text-muted);
     font-family: Consolas, "Courier New", monospace;
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     line-height: 1.35;
 }
 
@@ -724,7 +788,6 @@ button:active,
 .hsecscan-results-table tbody tr:hover td {
     background: #111b2e;
 }
-
 /* ----------------------------------------------------------
    Tabla minimalista: comparación curl vs hsecscan
    ---------------------------------------------------------- */
@@ -748,14 +811,12 @@ button:active,
     white-space: nowrap;
 }
 
-/* 1 Cabecera */
 .header-comparison-results-table th:nth-child(1),
 .header-comparison-results-table td:nth-child(1) {
     width: 260px;
     min-width: 260px;
 }
 
-/* 2 curl */
 .header-comparison-results-table th:nth-child(2),
 .header-comparison-results-table td:nth-child(2) {
     width: 135px;
@@ -763,7 +824,6 @@ button:active,
     text-align: center;
 }
 
-/* 3 hsecscan */
 .header-comparison-results-table th:nth-child(3),
 .header-comparison-results-table td:nth-child(3) {
     width: 150px;
@@ -771,14 +831,12 @@ button:active,
     text-align: center;
 }
 
-/* 4 Resultado */
 .header-comparison-results-table th:nth-child(4),
 .header-comparison-results-table td:nth-child(4) {
     width: 310px;
     min-width: 310px;
 }
 
-/* 5 Prioridad */
 .header-comparison-results-table th:nth-child(5),
 .header-comparison-results-table td:nth-child(5) {
     width: 125px;
@@ -826,78 +884,54 @@ pre {
 }
 
 /* ----------------------------------------------------------
-   Ajustes visuales Bootstrap generales
-   ---------------------------------------------------------- */
-.nav-link:focus,
-.btn:focus,
-button:focus,
-.form-control:focus,
-.form-select:focus {
-    box-shadow: 0 0 0 0.2rem rgba(96, 165, 250, 0.18) !important;
-}
-
-.form-control,
-.form-select {
-    background: var(--bg-panel-soft);
-    color: var(--text-main);
-    border-color: var(--border-soft);
-}
-
-.form-control::placeholder {
-    color: var(--text-muted);
-}
-
-.form-control:disabled,
-.form-select:disabled {
-    background: rgba(255, 255, 255, 0.03);
-    color: var(--text-muted);
-}
-/* ----------------------------------------------------------
    Responsive
    ---------------------------------------------------------- */
 @media (max-width: 1200px) {
-    .xss-results-table {
-        min-width: 1750px;
-        font-size: 0.85rem;
+    .analysis-wide-card {
+        width: min(1280px, calc(100vw - 32px));
+        max-width: calc(100vw - 32px);
     }
 
-    .xss-results-table th,
-    .xss-results-table td {
-        padding: 0.68rem 0.72rem;
+    .xss-results-table {
+        font-size: 0.78rem;
     }
 
     .hsecscan-results-table {
-        min-width: 1350px;
-        font-size: 0.85rem;
-    }
-
-    .hsecscan-results-table th,
-    .hsecscan-results-table td {
-        padding: 0.68rem 0.72rem;
+        font-size: 0.80rem;
     }
 
     .header-comparison-results-table {
         min-width: 920px;
         font-size: 0.84rem;
     }
-
-    .header-comparison-results-table th,
-    .header-comparison-results-table td {
-        padding: 0.68rem 0.72rem;
-    }
 }
 
 @media (max-width: 992px) {
+    .analysis-wide-card {
+        width: calc(100vw - 24px);
+        max-width: calc(100vw - 24px);
+    }
+
     .break-cell {
         max-width: 100%;
     }
 
+    .info-two-columns {
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+    }
+
+    .hsecscan-table-wrapper,
+    .xss-table-wrapper {
+        overflow-x: auto;
+    }
+
     .xss-results-table {
-        min-width: 1650px;
+        min-width: 1250px !important;
     }
 
     .hsecscan-results-table {
-        min-width: 1250px;
+        min-width: 1150px !important;
     }
 
     .header-comparison-results-table {
@@ -919,41 +953,45 @@ button:focus,
         padding: 1rem;
     }
 
-    .data-table {
-        min-width: 700px;
-    }
-
-    .custom-tabs .nav-link {
-        padding: 0.6rem 0.8rem;
-        font-size: 0.95rem;
-    }
-
-    .xss-table-wrapper,
-    .hsecscan-table-wrapper,
-    .header-comparison-table-wrapper {
-        border-radius: var(--radius-sm);
+    .analysis-wide-card {
+        width: 100%;
+        max-width: 100%;
+        margin-left: 0;
+        transform: none;
     }
 
     .xss-results-table {
-        min-width: 1500px;
-        font-size: 0.82rem;
+        min-width: 1150px !important;
+        font-size: 0.76rem;
     }
 
     .hsecscan-results-table {
-        min-width: 1150px;
-        font-size: 0.82rem;
+        min-width: 1100px !important;
+        font-size: 0.78rem;
     }
 
     .header-comparison-results-table {
         min-width: 860px;
         font-size: 0.80rem;
     }
+
+    .table-pagination {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .table-pagination-summary {
+        text-align: center;
+    }
+
+    .table-pagination-controls {
+        justify-content: center;
+    }
 }
 
 /* ==========================================================
    FIX FUERTE DE TEXTO OSCURO
    - Este bloque debe ir al FINAL del archivo.
-   - Usa selectores más específicos para ganarle a Bootstrap.
    ========================================================== */
 
 main.container,

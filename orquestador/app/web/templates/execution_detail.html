@@ -145,10 +145,10 @@
       <div class="stat-card h-100">
         <h3>Hallazgos XSS</h3>
         <p>
-          {% if detail.findings_count is not none %}
-            {{ detail.findings_count }}
-          {% else %}
+          {% if detail.status in ["initiated", "running"] and detail.dalfox_rc is none %}
             -
+          {% else %}
+            {{ detail.xss_display_count if detail.xss_display_count is defined else 0 }}
           {% endif %}
         </p>
       </div>
@@ -232,12 +232,15 @@
       <!-- ================================================== -->
       <!-- 1. VERIFICACIÓN DE CABECERAS -->
       <!-- ================================================== -->
-      <section class="card mb-3">
+      <section class="card mb-3 analysis-wide-card">
         <h2 class="mb-3">verificación de cabeceras</h2>
 
         {% if detail.http_tests %}
           <div class="table-responsive">
-            <table class="table table-dark table-hover align-middle mb-0">
+            <table
+              class="table table-dark table-hover align-middle mb-0 js-paginated-table"
+              data-page-size="10"
+            >
               <thead>
                 <tr>
                   <th>Prueba</th>
@@ -289,7 +292,7 @@
       {% set hsec_observed = detail.hsecscan_observed_checks or [] %}
       {% set hsec_missing = detail.hsecscan_missing_checks or [] %}
 
-      <section class="card mb-3">
+      <section class="card mb-3 analysis-wide-card">
         <h2 class="mb-3">hsecscan</h2>
 
         <div class="row g-3 mb-3">
@@ -362,27 +365,28 @@
         {% endif %}
 
         {% if hsec_checks %}
-          <div class="detail-item mb-3">
+          <div class="detail-item info-box-compact mb-3">
             <h3>Cómo leer esta tabla</h3>
-            <p class="mb-1">
-              <strong>Estado:</strong> indica si hsecscan observó una cabecera con advertencia o si detectó una cabecera faltante.
-            </p>
-            <p class="mb-1">
-              <strong>Riesgo:</strong> clasificación orientativa generada por el parser para priorizar revisión.
-            </p>
-            <p class="mb-1">
-              <strong>Descripción:</strong> explicación técnica reportada por hsecscan sobre el impacto del hallazgo.
-            </p>
-            <p class="mb-1">
-              <strong>Recomendación:</strong> acción sugerida para revisar o corregir la configuración.
-            </p>
-            <p class="mb-0">
-              <strong>Nota:</strong> esta sección funciona como una segunda capa de contraste para complementar la verificación realizada con curl.
-            </p>
+
+            <div class="info-two-columns">
+              <div class="info-two-columns__col">
+                <p><strong>Estado:</strong> indica si hsecscan observó una cabecera con advertencia o si detectó una cabecera faltante.</p>
+                <p><strong>Riesgo:</strong> clasificación orientativa generada por el parser para priorizar revisión.</p>
+                <p><strong>Descripción:</strong> explicación técnica reportada por hsecscan sobre el impacto del hallazgo.</p>
+              </div>
+
+              <div class="info-two-columns__col">
+                <p><strong>Recomendación:</strong> acción sugerida para revisar o corregir la configuración.</p>
+                <p><strong>Nota:</strong> esta sección funciona como una segunda capa de contraste para complementar la verificación realizada con curl.</p>
+              </div>
+            </div>
           </div>
 
           <div class="table-responsive hsecscan-table-wrapper">
-            <table class="table table-dark table-hover align-middle mb-0 hsecscan-results-table">
+            <table
+              class="table table-dark table-hover align-middle mb-0 hsecscan-results-table js-paginated-table"
+              data-page-size="10"
+            >
               <thead>
                 <tr>
                   <th>Estado</th>
@@ -409,7 +413,7 @@
                     </td>
 
                     <td class="break-cell">
-                      <strong>{{ item.header_name }}</strong>
+                      <strong>{{ item.header_name or "-" }}</strong>
                       {% if item.header_value %}
                         <br>
                         <small>{{ item.header_value }}</small>
@@ -479,12 +483,15 @@
       <!-- ================================================== -->
       <!-- 3. COOKIES -->
       <!-- ================================================== -->
-      <section class="card mb-3">
+      <section class="card mb-3 analysis-wide-card">
         <h2 class="mb-3">Cookies observadas</h2>
 
         {% if detail.cookies_flags_json %}
           <div class="table-responsive">
-            <table class="table table-dark table-hover align-middle mb-0">
+            <table
+              class="table table-dark table-hover align-middle mb-0 js-paginated-table"
+              data-page-size="10"
+            >
               <thead>
                 <tr>
                   <th>Cookie</th>
@@ -536,7 +543,7 @@
       {% set comparison_rows = detail.header_layer_comparison or [] %}
       {% set comparison_summary = detail.header_layer_comparison_summary or {} %}
 
-      <section class="card mb-3">
+      <section class="card mb-3 analysis-wide-card">
         <h2 class="mb-3">Comparación curl vs hsecscan</h2>
 
         <div class="row g-3 mb-3">
@@ -591,7 +598,10 @@
           </div>
 
           <div class="table-responsive header-comparison-table-wrapper">
-            <table class="table table-dark table-hover align-middle mb-0 header-comparison-results-table">
+            <table
+              class="table table-dark table-hover align-middle mb-0 header-comparison-results-table js-paginated-table"
+              data-page-size="10"
+            >
               <thead>
                 <tr>
                   <th>Cabecera</th>
@@ -651,18 +661,18 @@
       <!-- ================================================== -->
       <!-- 5. XSS -->
       <!-- ================================================== -->
-      <section class="card mb-3">
+      <section class="card mb-3 analysis-wide-card">
         <h2 class="mb-3">XSS</h2>
 
         <div class="row g-3 mb-3">
           <div class="col-12 col-md-4">
             <div class="stat-card h-100">
-              <h3>Hallazgos detectados</h3>
+              <h3>Hallazgos XSS</h3>
               <p>
-                {% if detail.findings_count is not none %}
-                  {{ detail.findings_count }}
-                {% else %}
+                {% if detail.status in ["initiated", "running"] and detail.dalfox_rc is none %}
                   -
+                {% else %}
+                  {{ detail.xss_display_count if detail.xss_display_count is defined else 0 }}
                 {% endif %}
               </p>
             </div>
@@ -696,28 +706,30 @@
             La revisión XSS todavía no ha terminado o sus resultados aún no se han persistido.
           </div>
         {% elif detail.xss_display_rows %}
-          <div class="detail-item mb-3">
+          <div class="detail-item info-box-compact mb-3">
             <h3>Cómo leer esta tabla</h3>
-            <p class="mb-1"><strong>Parámetro:</strong> nombre del parámetro o parámetro probable asociado al patrón detectado.</p>
-            <p class="mb-1"><strong>Payload:</strong> carga útil usada por Dalfox o ejemplo representativo del grupo.</p>
-            <p class="mb-1"><strong>Evidencia:</strong> fragmento de la respuesta donde la carga apareció reflejada.</p>
-            <p class="mb-1"><strong>Severidad:</strong> clasificación del hallazgo o del grupo.</p>
-            <p class="mb-1"><strong>Interpretación:</strong> explicación principal generada por IA.</p>
-            <p class="mb-1"><strong>Riesgo:</strong> posible impacto asociado al patrón detectado.</p>
-            <p class="mb-1"><strong>Causa probable:</strong> debilidad técnica que pudo permitir la reflexión.</p>
-            <p class="mb-1"><strong>Revisar:</strong> área sugerida para validación manual o corrección.</p>
-            <p class="mb-1"><strong>Confianza:</strong> nivel estimado de certeza de la interpretación.</p>
 
-            {% if detail.xss_display_mode == "grouped" %}
-              <p class="mb-0">
-                <strong>Nota:</strong> por el volumen de hallazgos, se muestra una vista agrupada con ejemplos representativos.
-                La interpretación corresponde al patrón del grupo, no a cada payload individual.
-              </p>
-            {% else %}
-              <p class="mb-0">
-                <strong>Nota:</strong> se muestra una vista individual porque el volumen de hallazgos es pequeño.
-              </p>
-            {% endif %}
+            <div class="info-two-columns">
+              <div class="info-two-columns__col">
+                <p><strong>Parámetro:</strong> nombre del parámetro o parámetro probable asociado al patrón detectado.</p>
+                <p><strong>Payload:</strong> carga útil usada por Dalfox o ejemplo representativo del grupo.</p>
+                <p><strong>Evidencia:</strong> fragmento de la respuesta donde la carga apareció reflejada.</p>
+                <p><strong>Severidad:</strong> clasificación del hallazgo o del grupo.</p>
+                <p><strong>Interpretación:</strong> explicación principal generada por IA.</p>
+              </div>
+
+              <div class="info-two-columns__col">
+                <p><strong>Riesgo:</strong> posible impacto asociado al patrón detectado.</p>
+                <p><strong>Causa probable:</strong> debilidad técnica que pudo permitir la reflexión.</p>
+                <p><strong>Revisar:</strong> área sugerida para validación manual o corrección.</p>
+
+                {% if detail.xss_display_mode == "grouped" %}
+                  <p><strong>Nota:</strong> por el volumen de hallazgos, se muestra una vista agrupada con ejemplos representativos. La interpretación corresponde al patrón del grupo, no a cada payload individual.</p>
+                {% else %}
+                  <p><strong>Nota:</strong> se muestra una vista individual porque el volumen de hallazgos es pequeño.</p>
+                {% endif %}
+              </div>
+            </div>
           </div>
 
           {% set interpreted_count = namespace(value=0) %}
@@ -743,7 +755,11 @@
           {% endif %}
 
           <div class="table-responsive xss-table-wrapper">
-            <table class="table table-dark table-hover align-middle mb-0 xss-results-table">
+            <table
+              class="table table-dark table-hover align-middle mb-0 xss-results-table js-paginated-table"
+              data-page-size="10"
+              data-always-paginate="true"
+            >
               <thead>
                 <tr>
                   <th>#</th>
@@ -758,7 +774,6 @@
                   <th>Riesgo</th>
                   <th>Causa probable</th>
                   <th>Revisar</th>
-                  <th>Confianza</th>
                 </tr>
               </thead>
               <tbody>
@@ -801,16 +816,6 @@
                     <td class="break-cell">
                       {% if item.recommended_review_area %}
                         {{ item.recommended_review_area }}
-                      {% else %}
-                        -
-                      {% endif %}
-                    </td>
-
-                    <td>
-                      {% if item.confidence %}
-                        <span class="badge badge-running">
-                          {{ item.confidence }}
-                        </span>
                       {% else %}
                         -
                       {% endif %}
@@ -878,7 +883,10 @@
 
           {% if detail.cookies_flags_json %}
             <div class="table-responsive">
-              <table class="table table-dark table-hover align-middle mb-0">
+              <table
+                class="table table-dark table-hover align-middle mb-0 js-paginated-table"
+                data-page-size="10"
+              >
                 <thead>
                   <tr>
                     <th>Cookie</th>
@@ -974,7 +982,10 @@
 
         {% if artifacts %}
           <div class="table-responsive">
-            <table class="table table-dark table-hover align-middle mb-0">
+            <table
+              class="table table-dark table-hover align-middle mb-0 js-paginated-table"
+              data-page-size="10"
+            >
               <thead>
                 <tr>
                   <th>Tipo</th>

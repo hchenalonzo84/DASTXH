@@ -18,9 +18,9 @@ Fase 3:
   * curl custom / http_tests
   * hsecscan / hsecscan_checks
 
-Nota:
-- La comparación curl vs hsecscan se arma en memoria al consultar el detalle.
-- No requiere cambios en schema.sql por ahora.
+Ajuste actual:
+- el conteo visual de Hallazgos XSS ahora usa únicamente las filas válidas
+  que realmente se muestran en la tabla XSS.
 """
 
 from __future__ import annotations
@@ -390,7 +390,7 @@ def _is_hsecscan_weak(item: Optional[Dict[str, Any]]) -> bool:
     """
     Determina si hsecscan detectó una debilidad.
 
-    hsecscan_checks solo guarda:
+    hsecscan_checks guarda:
     - missing: cabecera faltante
     - observed: cabecera observada con advertencia o interés de seguridad
     """
@@ -515,7 +515,6 @@ def _build_curl_index(http_tests_rows: List[Dict[str, Any]]) -> Dict[str, Dict[s
         if not key:
             continue
 
-        # Si hubiera duplicados, se conserva el más crítico.
         current = result.get(key)
 
         if not current:
@@ -556,7 +555,6 @@ def _build_hsecscan_index(hsecscan_checks_rows: List[Dict[str, Any]]) -> Dict[st
             result[key] = item
             continue
 
-        # Si hubiera duplicados, se conserva el de mayor prioridad.
         current_rank = _risk_rank(current.get("risk_level"))
         incoming_rank = _risk_rank(item.get("risk_level"))
 
@@ -573,14 +571,12 @@ def _build_header_layer_comparison(
     """
     Construye la comparación curl vs hsecscan.
 
-    Resultado esperado por fila:
-    - header_name
-    - curl_status
-    - hsecscan_status
-    - comparison_result
-    - priority
-    - reason/recommendation de curl
-    - description/recommendation/CWE de hsecscan
+    Esta comparación se mantiene minimalista en GUI:
+    - Cabecera
+    - curl
+    - hsecscan
+    - Resultado
+    - Prioridad
     """
     curl_index = _build_curl_index(http_tests_rows)
     hsecscan_index = _build_hsecscan_index(hsecscan_checks_rows)
@@ -671,8 +667,6 @@ def _build_header_layer_comparison_summary(
         "without_contrast": without_contrast,
         "high_priority": high_priority,
     }
-
-
 # ==========================================================
 # HELPERS PRIVADOS PARA RENDER XSS EN GUI
 # ==========================================================
@@ -788,6 +782,8 @@ def _build_no_valid_xss_row(raw_count: int = 0) -> Dict[str, Any]:
     """
     Construye una fila informativa solo para el caso en que Dalfox haya producido
     registros no estructurados/vacíos, pero ningún hallazgo tenga payload/evidencia útil.
+
+    Esta fila es un placeholder informativo y NO cuenta como hallazgo XSS real.
     """
     return {
         "row_order": "-",
@@ -802,7 +798,10 @@ def _build_no_valid_xss_row(raw_count: int = 0) -> Dict[str, Any]:
         "recommended_review_area": None,
         "confidence": None,
         "model_name": None,
+        "is_placeholder": True,
     }
+
+
 # ==========================================================
 # EJECUCIONES
 # ==========================================================
@@ -948,8 +947,6 @@ def update_execution_finished(
         urls_evaluadas=urls_evaluadas,
         finished=True,
     )
-
-
 # ==========================================================
 # RESULTADOS HTTP: HEADERS + COOKIES + HTTP TESTS
 # ==========================================================
@@ -1103,13 +1100,6 @@ def insert_hsecscan_results(
 ) -> None:
     """
     Inserta o actualiza los resultados de la Capa 2 (hsecscan).
-
-    Compatibilidad:
-    - Si solo se envía tool_rc + raw_output, funciona como antes.
-    - Si se envía structured_json, guarda:
-      * hsecscan_results.structured_json
-      * hsecscan_results.summary_json
-      * hsecscan_checks normalizados
     """
     if summary_json is None and structured_json is not None:
         summary_json = _extract_hsecscan_summary(structured_json)
@@ -1205,6 +1195,8 @@ def insert_hsecscan_results(
                 )
 
         conn.commit()
+
+
 # ==========================================================
 # RESULTADOS CAPA 3: DALFOX / XSS
 # ==========================================================
@@ -1396,8 +1388,6 @@ def update_xss_ai_group_interpretations(
                 )
 
         conn.commit()
-
-
 # ==========================================================
 # ARTIFACTS / EVIDENCIAS
 # ==========================================================
@@ -1579,6 +1569,8 @@ def get_execution_summary(
         conn.commit()
 
     return dict(row) if row else None
+
+
 def get_execution_detail(
     dsn: str,
     execution_id: int,
@@ -1588,6 +1580,7 @@ def get_execution_detail(
 
     También prepara:
     - xss_display_rows para la tabla XSS.
+    - xss_display_count para que el conteo de la GUI coincida con la tabla.
     - header_layer_comparison para comparar curl vs hsecscan.
     """
     with connect(dsn) as conn:
@@ -1642,9 +1635,6 @@ def get_execution_detail(
 
             detail = dict(row)
 
-            # --------------------------------------------------
-            # Cabeceras observadas
-            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -1662,9 +1652,6 @@ def get_execution_detail(
             )
             header_rows = [dict(r) for r in cur.fetchall()]
 
-            # --------------------------------------------------
-            # Cookies observadas
-            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -1685,9 +1672,6 @@ def get_execution_detail(
             )
             cookie_rows_raw = [dict(r) for r in cur.fetchall()]
 
-            # --------------------------------------------------
-            # Pruebas HTTP detalladas
-            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -1711,9 +1695,6 @@ def get_execution_detail(
             )
             http_tests_rows = [dict(r) for r in cur.fetchall()]
 
-            # --------------------------------------------------
-            # Checks hsecscan normalizados
-            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -1751,9 +1732,6 @@ def get_execution_detail(
             )
             hsecscan_checks_rows = [dict(r) for r in cur.fetchall()]
 
-            # --------------------------------------------------
-            # Hallazgos XSS crudos estructurados
-            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -1776,9 +1754,6 @@ def get_execution_detail(
             )
             xss_findings_rows = [dict(r) for r in cur.fetchall()]
 
-            # --------------------------------------------------
-            # Grupos XSS interpretados por IA
-            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -1810,9 +1785,6 @@ def get_execution_detail(
             )
             xss_ai_groups_rows = [dict(r) for r in cur.fetchall()]
 
-            # --------------------------------------------------
-            # Artifacts
-            # --------------------------------------------------
             cur.execute(
                 """
                 SELECT
@@ -1881,7 +1853,7 @@ def get_execution_detail(
     ]
 
     # ------------------------------------------------------
-    # Fase 3: comparación curl vs hsecscan
+    # Comparación curl vs hsecscan
     # ------------------------------------------------------
     header_layer_comparison = _build_header_layer_comparison(
         http_tests_rows=http_tests_rows,
@@ -1893,7 +1865,7 @@ def get_execution_detail(
     )
 
     # ------------------------------------------------------
-    # 1) Enriquecer hallazgos individuales con IA cuando aplique
+    # Enriquecer hallazgos individuales con IA cuando aplique
     # ------------------------------------------------------
     interpretation_by_finding_order: Dict[int, Dict[str, Any]] = {}
 
@@ -1935,7 +1907,7 @@ def get_execution_detail(
         enriched_xss_findings_rows.append(current)
 
     # ------------------------------------------------------
-    # 2) Preparar filas de visualización para Dalfox
+    # Preparar filas de visualización XSS
     # ------------------------------------------------------
     valid_xss_ai_groups_rows = [
         group
@@ -1979,6 +1951,7 @@ def get_execution_detail(
                     "recommended_review_area": group.get("recommended_review_area"),
                     "confidence": group.get("confidence"),
                     "model_name": group.get("model_name"),
+                    "is_placeholder": False,
                 }
             )
 
@@ -1998,15 +1971,27 @@ def get_execution_detail(
                     "recommended_review_area": finding.get("recommended_review_area"),
                     "confidence": finding.get("confidence"),
                     "model_name": finding.get("model_name"),
+                    "is_placeholder": False,
                 }
             )
 
+    # Si no quedó ninguna fila válida, solo entonces se permite mostrar una fila
+    # informativa. Esa fila no cuenta como hallazgo real.
     if not xss_display_rows and (xss_ai_groups_rows or enriched_xss_findings_rows):
         xss_display_rows.append(
             _build_no_valid_xss_row(
                 raw_count=len(xss_ai_groups_rows) or len(enriched_xss_findings_rows)
             )
         )
+
+    # Conteo real de hallazgos XSS que se muestran en la tabla.
+    # No incluye placeholders informativos.
+    xss_display_count = len(
+        [
+            row for row in xss_display_rows
+            if not bool(row.get("is_placeholder"))
+        ]
+    )
 
     detail["present_json"] = present_headers
     detail["missing_json"] = missing_headers
@@ -2021,7 +2006,6 @@ def get_execution_detail(
     detail["hsecscan_observed_checks"] = hsecscan_observed_checks
     detail["hsecscan_missing_checks"] = hsecscan_missing_checks
 
-    # Fase 3: datos derivados para GUI.
     detail["header_layer_comparison"] = header_layer_comparison
     detail["header_layer_comparison_summary"] = header_layer_comparison_summary
 
@@ -2030,6 +2014,7 @@ def get_execution_detail(
 
     detail["xss_display_mode"] = xss_display_mode
     detail["xss_display_rows"] = xss_display_rows
+    detail["xss_display_count"] = xss_display_count
 
     detail["artifacts"] = artifact_rows
 
