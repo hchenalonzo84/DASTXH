@@ -5,8 +5,10 @@ scanner_service.py
 
 Objetivos de esta versión:
 - conservar flujo síncrono y background
-- respetar scan_profile superficial/profundo
-- habilitar hsecscan automáticamente solo cuando corresponda
+- usar un flujo estándar único: evaluación profunda controlada
+- mantener scan_profile="profundo" como dato técnico fijo en BD
+- habilitar hsecscan como parte del flujo estándar
+- ejecutar primero las herramientas de escaneo y después las tareas IA
 - persistir cookies observadas y ejecutar análisis por reglas + IA:
   * risk_level
   * cwe_mappings
@@ -26,6 +28,7 @@ Objetivos de esta versión:
 - preparar agrupación XSS para IA
 - intentar interpretación XSS con backend compatible con OpenAI
 - registrar claramente en run_meta.json:
+  * estado de Dalfox
   * estado de interpretación IA de cookies
   * resumen estructurado de hsecscan
   * estado de traducción IA de hsecscan
@@ -50,6 +53,7 @@ from config import (
     ARTIFACT_TYPE_DALFOX_JSON,
     ARTIFACT_TYPE_DALFOX_TXT,
     ARTIFACT_TYPE_HEADERS_JSON,
+    ARTIFACT_TYPE_HSECSCAN_JSON,
     ARTIFACT_TYPE_HSECSCAN_TXT,
     ARTIFACT_TYPE_REPORT_HTML,
     ARTIFACT_TYPE_REPORT_MD,
@@ -57,6 +61,7 @@ from config import (
     DALFOX_JSON,
     DALFOX_TXT,
     HEADERS_JSON,
+    HSECSCAN_JSON,
     HSECSCAN_TXT,
     MIME_APPLICATION_JSON,
     MIME_TEXT_HTML,
@@ -81,13 +86,12 @@ from utils import ensure_dir, safe_read_text, ts_folder, utc_now, write_json
 
 
 # ==========================================================
-# CONSTANTES LOCALES PARA HSECSCAN ESTRUCTURADO
+# FLUJO ESTÁNDAR DASTXH
 # ==========================================================
 
-# Se deja local por ahora para no depender de config.py.
-# Ya está permitido en schema.sql v9 dentro de artifacts.artifact_type.
-HSECSCAN_JSON = "hsecscan.json"
-ARTIFACT_TYPE_HSECSCAN_JSON = "hsecscan_json"
+STANDARD_SCAN_PROFILE = "profundo"
+STANDARD_ENABLE_HSECSCAN = True
+STANDARD_FLOW_LABEL = "evaluacion_profunda_controlada"
 
 
 # ==========================================================
@@ -185,17 +189,33 @@ def _build_unique_run_id(reports_root: Path, started: datetime) -> str:
     return candidate
 
 
-def _resolve_enable_hsecscan(scan_profile: str, enable_hsecscan: Optional[bool]) -> bool:
+def _resolve_standard_scan_profile(scan_profile: Optional[str]) -> str:
     """
-    Resuelve si hsecscan debe ejecutarse.
+    Devuelve el perfil técnico estándar usado por DASTXH.
 
-    - Si enable_hsecscan viene explícito, se respeta.
-    - Si viene None, se activa automáticamente solo en perfil profundo.
+    Decisión actual:
+    - ya no se expone perfil al usuario;
+    - el flujo del prototipo es profundo controlado;
+    - se conserva el campo scan_profile en BD con valor fijo "profundo"
+      para no romper historial, vistas ni consultas existentes.
     """
-    if enable_hsecscan is not None:
-        return bool(enable_hsecscan)
+    return STANDARD_SCAN_PROFILE
 
-    return scan_profile == "profundo"
+
+def _resolve_enable_hsecscan(
+    scan_profile: str,
+    enable_hsecscan: Optional[bool],
+) -> bool:
+    """
+    Define si hsecscan debe ejecutarse.
+
+    Decisión actual:
+    - hsecscan forma parte del flujo estándar profundo controlado;
+    - se habilita siempre desde el backend;
+    - enable_hsecscan se conserva como parámetro por compatibilidad,
+      pero ya no gobierna la experiencia del usuario.
+    """
+    return STANDARD_ENABLE_HSECSCAN
 
 
 def _assign_stable_group_order(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -507,6 +527,10 @@ def _prepare_scan_context(
 ) -> Tuple[ScanContext, Dict[str, Any]]:
     """
     Prepara la estructura mínima de una nueva ejecución.
+
+    Aunque el parámetro scan_profile se conserva para compatibilidad con
+    llamadas internas anteriores, el valor efectivo se normaliza siempre
+    a "profundo".
     """
     started = utc_now()
 
@@ -520,7 +544,12 @@ def _prepare_scan_context(
     ensure_dir(report_dir)
 
     report_dir_logical = f"/work/reports/{run_id}"
-    enable_hsecscan_resolved = _resolve_enable_hsecscan(scan_profile, enable_hsecscan)
+
+    resolved_scan_profile = _resolve_standard_scan_profile(scan_profile)
+    enable_hsecscan_resolved = _resolve_enable_hsecscan(
+        scan_profile=resolved_scan_profile,
+        enable_hsecscan=enable_hsecscan,
+    )
 
     execution_id = db_layer.insert_execution(
         dsn=dsn,
@@ -528,7 +557,7 @@ def _prepare_scan_context(
         request_source=request_source,
         report_dir=report_dir_logical,
         status="initiated",
-        scan_profile=scan_profile,
+        scan_profile=resolved_scan_profile,
         enable_hsecscan=enable_hsecscan_resolved,
         urls_ingresadas=1,
         urls_evaluadas=0,
@@ -538,7 +567,7 @@ def _prepare_scan_context(
         execution_id=execution_id,
         target_url=url,
         request_source=request_source,
-        scan_profile=scan_profile,
+        scan_profile=resolved_scan_profile,
         enable_hsecscan=enable_hsecscan_resolved,
         started_at=started,
         reports_root=reports_root,
@@ -554,7 +583,8 @@ def _prepare_scan_context(
         "status": "initiated",
         "execution_id": execution_id,
         "request_source": request_source,
-        "scan_profile": scan_profile,
+        "scan_profile": resolved_scan_profile,
+        "flow_mode": STANDARD_FLOW_LABEL,
         "enable_hsecscan": enable_hsecscan_resolved,
         "errors": [],
         "report_dir": report_dir_logical,
@@ -620,19 +650,13 @@ def _run_scan_pipeline(
         )
 
         # --------------------------------------------------
-        # INTERPRETACIÓN DE COOKIES CON REGLAS + IA
+        # IA DE COOKIES
         # --------------------------------------------------
-        # Esta capa usa como base las cookies ya persistidas por curl.
-        # La clasificación de riesgo y CWE se calcula por reglas internas
-        # alineadas con OWASP + mapeo CWE; la IA solo redacta explicación
-        # y recomendación breve.
-        cookie_ai_interpretation_meta = _run_cookie_ai_interpretation(
-            dsn=dsn,
-            execution_id=execution_id,
-        )
-
-        run_meta["cookie_ai_interpretation"] = cookie_ai_interpretation_meta
-        write_json(run_meta_path, run_meta)
+        # Se pospone hasta después de Dalfox.
+        # Motivo:
+        # - primero se cierran las herramientas de escaneo;
+        # - después se ejecutan las capas de enriquecimiento con IA.
+        cookie_ai_interpretation_meta: Optional[Dict[str, Any]] = None
 
         # --------------------------------------------------
         # CAPA 2: hsecscan
@@ -702,20 +726,26 @@ def _run_scan_pipeline(
             # --------------------------------------------------
             # TRADUCCIÓN IA DE HSECSCAN
             # --------------------------------------------------
-            # Esta traducción es solo apoyo lingüístico para GUI.
-            # Si falla, no debe detener el escaneo ni afectar la evidencia.
-            hsecscan_ai_translation_meta = _run_hsecscan_ai_translation(
-                dsn=dsn,
-                execution_id=execution_id,
-            )
-
-            run_meta["hsecscan_ai_translation"] = hsecscan_ai_translation_meta
-            write_json(run_meta_path, run_meta)
+            # Se pospone hasta después de Dalfox.
+            # Motivo:
+            # - hsecscan ya queda persistido como evidencia técnica;
+            # - Dalfox no debe esperar a que termine la traducción IA.
+            hsecscan_ai_translation_meta = None
 
         # --------------------------------------------------
-        # CAPA 3: Dalfox
+        # CAPA 3: Dalfox / XSS
         # --------------------------------------------------
         dalfox_json_path = report_dir / DALFOX_JSON
+        dalfox_txt_path = report_dir / DALFOX_TXT
+
+        run_meta["dalfox_status"] = {
+            "status": "running",
+            "started_at": utc_now().isoformat(),
+            "profile": scan_profile,
+            "flow_mode": STANDARD_FLOW_LABEL,
+        }
+        write_json(run_meta_path, run_meta)
+
         dalfox_rc, dalfox_raw = run_dalfox(
             url=url,
             timeout_s=timeout_s,
@@ -723,20 +753,27 @@ def _run_scan_pipeline(
             scan_profile=scan_profile,
         )
 
-        dalfox_txt_path = report_dir / DALFOX_TXT
         dalfox_txt_path.write_text(dalfox_raw, encoding="utf-8", errors="replace")
 
-        _raw_findings_count, summary_json = read_summary(dalfox_json_path)
+        raw_findings_count, summary_json = read_summary(dalfox_json_path)
+
+        run_meta["dalfox_status"] = {
+            "status": "finished",
+            "finished_at": utc_now().isoformat(),
+            "tool_rc": dalfox_rc,
+            "raw_findings_count": raw_findings_count,
+            "profile": scan_profile,
+            "flow_mode": STANDARD_FLOW_LABEL,
+        }
 
         structured_findings = extract_structured_findings(
             summary_json=summary_json,
             fallback_target_url=url,
         )
 
-        # Este conteo representa lo que se logró estructurar desde Dalfox.
-        # Puede incluir elementos que luego xss_ai_service.py excluya para IA
-        # por estar vacíos/no útiles.
         effective_findings_count = len(structured_findings)
+        run_meta["dalfox_status"]["structured_findings_count"] = effective_findings_count
+        write_json(run_meta_path, run_meta)
 
         db_layer.insert_xss_results(
             dsn=dsn,
@@ -772,6 +809,34 @@ def _run_scan_pipeline(
             entries=prepared_entries,
         )
         write_json(run_meta_path, run_meta)
+
+        # --------------------------------------------------
+        # INTERPRETACIÓN DE COOKIES CON REGLAS + IA
+        # --------------------------------------------------
+        # Esta capa usa como base las cookies ya persistidas por curl.
+        # Se ejecuta después de Dalfox para no retrasar la fase XSS.
+        cookie_ai_interpretation_meta = _run_cookie_ai_interpretation(
+            dsn=dsn,
+            execution_id=execution_id,
+        )
+
+        run_meta["cookie_ai_interpretation"] = cookie_ai_interpretation_meta
+        write_json(run_meta_path, run_meta)
+
+        # --------------------------------------------------
+        # TRADUCCIÓN IA DE HSECSCAN
+        # --------------------------------------------------
+        # Esta traducción es solo apoyo lingüístico para GUI.
+        # Se ejecuta después de Dalfox para que la fase XSS no quede
+        # bloqueada por traducciones largas o respuestas JSON inválidas.
+        if enable_hsecscan:
+            hsecscan_ai_translation_meta = _run_hsecscan_ai_translation(
+                dsn=dsn,
+                execution_id=execution_id,
+            )
+
+            run_meta["hsecscan_ai_translation"] = hsecscan_ai_translation_meta
+            write_json(run_meta_path, run_meta)
 
         # --------------------------------------------------
         # INTERPRETACIÓN IA XSS
@@ -814,7 +879,7 @@ def _run_scan_pipeline(
         write_json(run_meta_path, run_meta)
 
         # --------------------------------------------------
-        # REPORTES
+        # REPORTES / ARTIFACTS ACTUALES
         # --------------------------------------------------
         report_md = build_report_md(
             target_url=url,
@@ -891,6 +956,7 @@ def _run_scan_pipeline(
         finished = utc_now()
         run_meta["finished_at"] = finished.isoformat()
         run_meta["status"] = "finished"
+        run_meta["flow_mode"] = STANDARD_FLOW_LABEL
         run_meta["cumplimiento_pct"] = hdr_eval.get("cumplimiento_pct")
         run_meta["http_score"] = hdr_eval.get("http_score")
         run_meta["http_grade"] = hdr_eval.get("http_grade")
@@ -931,6 +997,7 @@ def _run_scan_pipeline(
             "target_url": url,
             "request_source": request_source,
             "scan_profile": scan_profile,
+            "flow_mode": STANDARD_FLOW_LABEL,
             "enable_hsecscan": enable_hsecscan,
             "report_dir": report_dir_logical,
             "report_md": f"{report_dir_logical}/{REPORT_MD}",
@@ -963,6 +1030,7 @@ def _run_scan_pipeline(
 
         run_meta["status"] = "failed"
         run_meta["finished_at"] = finished.isoformat()
+        run_meta["flow_mode"] = STANDARD_FLOW_LABEL
         run_meta["errors"].append(err)
 
         write_json(run_meta_path, run_meta)
@@ -997,6 +1065,7 @@ def _run_scan_pipeline(
             "target_url": url,
             "request_source": request_source,
             "scan_profile": scan_profile,
+            "flow_mode": STANDARD_FLOW_LABEL,
             "enable_hsecscan": enable_hsecscan,
             "report_dir": report_dir_logical,
             "error": err,
@@ -1031,11 +1100,16 @@ def execute_scan(
     url: str,
     timeout_s: int,
     request_source: str = "cli",
-    scan_profile: str = "superficial",
-    enable_hsecscan: Optional[bool] = None,
+    scan_profile: str = STANDARD_SCAN_PROFILE,
+    enable_hsecscan: Optional[bool] = STANDARD_ENABLE_HSECSCAN,
 ) -> Dict[str, Any]:
     """
     Ejecuta una evaluación completa de forma síncrona.
+
+    Nota:
+    - scan_profile y enable_hsecscan se conservan como parámetros para
+      compatibilidad, pero el flujo efectivo se normaliza internamente
+      a evaluación profunda controlada.
     """
     context, run_meta = _prepare_scan_context(
         dsn=dsn,
@@ -1064,12 +1138,16 @@ def start_scan_in_background(
     url: str,
     timeout_s: int,
     request_source: str = "web",
-    scan_profile: str = "superficial",
-    enable_hsecscan: Optional[bool] = None,
+    scan_profile: str = STANDARD_SCAN_PROFILE,
+    enable_hsecscan: Optional[bool] = STANDARD_ENABLE_HSECSCAN,
 ) -> Dict[str, Any]:
     """
     Inicia un escaneo en segundo plano y devuelve inmediatamente
     los datos mínimos de seguimiento.
+
+    Nota:
+    - desde la GUI ya no existe selector de perfil;
+    - el backend mantiene scan_profile="profundo" como valor técnico fijo.
     """
     context, run_meta = _prepare_scan_context(
         dsn=dsn,
@@ -1101,6 +1179,7 @@ def start_scan_in_background(
         "target_url": context.target_url,
         "request_source": context.request_source,
         "scan_profile": context.scan_profile,
+        "flow_mode": STANDARD_FLOW_LABEL,
         "enable_hsecscan": context.enable_hsecscan,
         "report_dir": context.report_dir_logical,
     }

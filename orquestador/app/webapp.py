@@ -5,8 +5,9 @@ webapp.py
 Esta versión:
 - mantiene una GUI minimalista
 - usa una sola URL objetivo
-- permite elegir solo el perfil de análisis
-- resuelve internamente el uso de hsecscan según el perfil
+- elimina la selección manual de perfil desde la GUI
+- fuerza internamente un flujo profundo controlado
+- habilita hsecscan como parte del flujo estándar
 """
 
 from __future__ import annotations
@@ -29,6 +30,14 @@ from utils import ensure_dir, wait_for_db
 
 
 # ==========================================================
+# CONFIGURACIÓN FUNCIONAL DEL FLUJO WEB
+# ==========================================================
+
+STANDARD_SCAN_PROFILE = "profundo"
+STANDARD_ENABLE_HSECSCAN = True
+
+
+# ==========================================================
 # RUTAS BASE DEL PROYECTO
 # ==========================================================
 
@@ -46,8 +55,8 @@ REPORTS_DIR = WORKDIR / "reports"
 
 app = FastAPI(
     title="DASTXH Web",
-    version="0.2.0",
-    description="GUI web inicial para DASTXH",
+    version="0.3.0",
+    description="GUI web para DASTXH con flujo profundo controlado",
 )
 
 
@@ -112,6 +121,7 @@ def get_report_folder_name(report_dir: Optional[str]) -> str:
     """
     if not report_dir:
         return ""
+
     return Path(report_dir).name
 
 
@@ -133,19 +143,27 @@ def validate_target_url(value: str) -> str:
     return target_url
 
 
-def validate_scan_profile(value: str) -> str:
+def get_standard_scan_profile() -> str:
     """
-    Valida el perfil de análisis permitido por la GUI.
+    Devuelve el perfil estándar usado por DASTXH.
+
+    Decisión de diseño:
+    - El usuario ya no elige entre superficial/profundo.
+    - La GUI ejecuta siempre el flujo profundo controlado.
+    - El campo scan_profile se conserva en BD como dato técnico
+      para no romper historial ni consultas existentes.
     """
-    profile = (value or "").strip().lower()
+    return STANDARD_SCAN_PROFILE
 
-    if profile not in ("superficial", "profundo"):
-        raise HTTPException(
-            status_code=400,
-            detail="El perfil de análisis debe ser superficial o profundo.",
-        )
 
-    return profile
+def get_standard_hsecscan_enabled() -> bool:
+    """
+    Devuelve si hsecscan debe ejecutarse en el flujo estándar.
+
+    En el flujo profundo controlado, hsecscan queda habilitado
+    como segunda capa de contraste para cabeceras HTTP.
+    """
+    return STANDARD_ENABLE_HSECSCAN
 
 
 def wait_until_db_ready(timeout_s: int = 20) -> str:
@@ -195,17 +213,16 @@ def start_scan(
     request: Request,
     url: str = Form(...),
     timeout: Optional[int] = Form(default=None),
-    scan_profile: str = Form(default="superficial"),
 ):
     """
     Inicia un escaneo desde la GUI web.
 
-    Regla importante:
-    - el usuario solo elige el perfil
-    - hsecscan se resuelve internamente según ese perfil
+    Regla actual:
+    - el usuario solo ingresa la URL y timeout base;
+    - DASTXH ejecuta internamente el flujo profundo controlado;
+    - hsecscan queda habilitado como parte del flujo estándar.
     """
     target_url = validate_target_url(url)
-    resolved_scan_profile = validate_scan_profile(scan_profile)
     timeout_s = timeout if timeout is not None else get_default_timeout()
 
     ensure_work_paths()
@@ -217,8 +234,8 @@ def start_scan(
         url=target_url,
         timeout_s=timeout_s,
         request_source="web",
-        scan_profile=resolved_scan_profile,
-        enable_hsecscan=None,
+        scan_profile=get_standard_scan_profile(),
+        enable_hsecscan=get_standard_hsecscan_enabled(),
     )
 
     execution_id = result.get("execution_id")
@@ -305,4 +322,6 @@ def health() -> Dict[str, Any]:
         "ok": True,
         "app": "dastxh-web",
         "db_ok": db_ok,
+        "standard_scan_profile": STANDARD_SCAN_PROFILE,
+        "standard_hsecscan_enabled": STANDARD_ENABLE_HSECSCAN,
     }

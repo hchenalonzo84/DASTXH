@@ -5,8 +5,8 @@
   <h2>Historial de ejecuciones</h2>
   <p>
     Aquí puedes consultar las evaluaciones registradas en PostgreSQL,
-    incluyendo estado, origen, perfil, puntaje HTTP, hallazgos XSS,
-    grupos preparados para IA y acceso al detalle de cada ejecución.
+    incluyendo estado, origen, cumplimiento de cabeceras, hallazgos XSS,
+    grupos preparados para IA, archivos generados y acceso al detalle de cada ejecución.
   </p>
 
   <div class="notice" style="margin-top: 1rem; margin-bottom: 1rem;">
@@ -24,10 +24,7 @@
             <th>Target</th>
             <th>Estado</th>
             <th>Origen</th>
-            <th>Perfil</th>
-            <th>Puntaje HTTP</th>
-            <th>Nota HTTP</th>
-            <th>Cumplimiento</th>
+            <th>Cumplimiento cabeceras</th>
             <th>XSS</th>
             <th>Grupos IA</th>
             <th>Archivos</th>
@@ -51,31 +48,6 @@
               </td>
 
               <td>{{ item.request_source }}</td>
-              <td>{{ item.scan_profile }}</td>
-
-              <td>
-                {% if item.http_score is not none %}
-                  {{ item.http_score }}/100
-                {% else %}
-                  {% if item.status in ["initiated", "running"] %}
-                    En proceso
-                  {% else %}
-                    -
-                  {% endif %}
-                {% endif %}
-              </td>
-
-              <td>
-                {% if item.http_grade %}
-                  {{ item.http_grade }}
-                {% else %}
-                  {% if item.status in ["initiated", "running"] %}
-                    En proceso
-                  {% else %}
-                    -
-                  {% endif %}
-                {% endif %}
-              </td>
 
               <td>
                 {% if item.cumplimiento_pct is not none %}

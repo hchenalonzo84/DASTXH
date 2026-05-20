@@ -5,9 +5,9 @@
   <h2>Iniciar evaluación</h2>
   <p>
     Desde esta interfaz puedes ejecutar una evaluación DASTXH sobre una URL objetivo.
-    El flujo analizará cabeceras HTTP de seguridad, cookies de seguridad y posibles
-    hallazgos XSS reflejados, aplicando internamente la estrategia que corresponda
-    según el perfil seleccionado.
+    El prototipo aplica internamente un flujo de evaluación profunda controlada,
+    incluyendo verificación de cabeceras HTTP de seguridad, revisión de cookies,
+    contraste con hsecscan y análisis XSS con Dalfox.
   </p>
 
   <form method="post" action="/scan" class="scan-form">
@@ -23,7 +23,7 @@
     </div>
 
     <div class="form-group">
-      <label for="timeout">Timeout (segundos)</label>
+      <label for="timeout">Timeout base por solicitud (segundos)</label>
       <input
         type="number"
         id="timeout"
@@ -32,14 +32,10 @@
         value="{{ default_timeout }}"
         required
       >
-    </div>
-
-    <div class="form-group">
-      <label for="scan_profile">Perfil de análisis</label>
-      <select id="scan_profile" name="scan_profile" required>
-        <option value="superficial" selected>superficial</option>
-        <option value="profundo">profundo</option>
-      </select>
+      <small>
+        Este valor funciona como referencia para solicitudes HTTP individuales.
+        Las herramientas internas pueden aplicar límites propios para evitar ejecuciones indefinidas.
+      </small>
     </div>
 
     <div class="form-actions">
@@ -60,10 +56,7 @@
             <th>Target</th>
             <th>Estado</th>
             <th>Origen</th>
-            <th>Perfil</th>
-            <th>Puntaje HTTP</th>
-            <th>Nota HTTP</th>
-            <th>Cumplimiento</th>
+            <th>Cumplimiento cabeceras</th>
             <th>XSS</th>
             <th>Grupos IA</th>
             <th>Inicio</th>
@@ -74,7 +67,10 @@
           {% for item in recent_executions %}
             <tr>
               <td>{{ item.id }}</td>
-              <td class="break-cell">{{ item.target_url }}</td>
+
+              <td class="break-cell">
+                {{ item.target_url }}
+              </td>
 
               <td>
                 <span class="badge badge-{{ item.status }}">
@@ -83,31 +79,6 @@
               </td>
 
               <td>{{ item.request_source }}</td>
-              <td>{{ item.scan_profile }}</td>
-
-              <td>
-                {% if item.http_score is not none %}
-                  {{ item.http_score }}/100
-                {% else %}
-                  {% if item.status in ["initiated", "running"] %}
-                    En proceso
-                  {% else %}
-                    -
-                  {% endif %}
-                {% endif %}
-              </td>
-
-              <td>
-                {% if item.http_grade %}
-                  {{ item.http_grade }}
-                {% else %}
-                  {% if item.status in ["initiated", "running"] %}
-                    En proceso
-                  {% else %}
-                    -
-                  {% endif %}
-                {% endif %}
-              </td>
 
               <td>
                 {% if item.cumplimiento_pct is not none %}

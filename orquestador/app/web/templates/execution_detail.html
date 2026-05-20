@@ -64,8 +64,8 @@
 
     <div class="col-12 col-md-6 col-xl-3">
       <div class="detail-item h-100">
-        <h3>Perfil</h3>
-        <p>{{ detail.scan_profile }}</p>
+        <h3>Flujo aplicado</h3>
+        <p>Evaluación profunda controlada</p>
       </div>
     </div>
 
@@ -102,38 +102,38 @@
       </div>
     </div>
 
-    <div class="col-12 col-md-6 col-xl-2">
+    <div class="col-12 col-md-6 col-xl-3">
       <div class="stat-card h-100">
-        <h3>Puntaje HTTP</h3>
-        <p>
-          {% if detail.http_score is not none %}
-            {{ detail.http_score }}/100
-          {% else %}
-            -
-          {% endif %}
-        </p>
-      </div>
-    </div>
-
-    <div class="col-12 col-md-6 col-xl-2">
-      <div class="stat-card h-100">
-        <h3>Nota HTTP</h3>
-        <p>
-          {% if detail.http_grade %}
-            {{ detail.http_grade }}
-          {% else %}
-            -
-          {% endif %}
-        </p>
-      </div>
-    </div>
-
-    <div class="col-12 col-md-6 col-xl-2">
-      <div class="stat-card h-100">
-        <h3>Cumplimiento</h3>
+        <h3>Cumplimiento de cabeceras</h3>
         <p>
           {% if detail.cumplimiento_pct is not none %}
             {{ detail.cumplimiento_pct }}%
+          {% else %}
+            -
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="stat-card h-100">
+        <h3>Cabeceras evaluadas</h3>
+        <p>
+          {% if detail.headers_evaluadas is not none %}
+            {{ detail.headers_evaluadas }}
+          {% else %}
+            -
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="stat-card h-100">
+        <h3>Cabeceras presentes</h3>
+        <p>
+          {% if detail.headers_presentes is not none %}
+            {{ detail.headers_presentes }}
           {% else %}
             -
           {% endif %}
@@ -154,7 +154,7 @@
       </div>
     </div>
 
-    <div class="col-12 col-md-6 col-xl-3">
+    <div class="col-12 col-md-6 col-xl-6">
       <div class="detail-item h-100">
         <h3>Carpeta lógica</h3>
         <p class="break-cell">
@@ -235,6 +235,76 @@
       <section class="card mb-3 analysis-wide-card">
         <h2 class="mb-3">verificación de cabeceras</h2>
 
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-md-6 col-xl-3">
+            <div class="stat-card h-100">
+              <h3>Cumplimiento</h3>
+              <p>
+                {% if detail.cumplimiento_pct is not none %}
+                  {{ detail.cumplimiento_pct }}%
+                {% else %}
+                  -
+                {% endif %}
+              </p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6 col-xl-3">
+            <div class="stat-card h-100">
+              <h3>Evaluadas</h3>
+              <p>
+                {% if detail.headers_evaluadas is not none %}
+                  {{ detail.headers_evaluadas }}
+                {% else %}
+                  -
+                {% endif %}
+              </p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6 col-xl-3">
+            <div class="stat-card h-100">
+              <h3>Presentes</h3>
+              <p>
+                {% if detail.headers_presentes is not none %}
+                  {{ detail.headers_presentes }}
+                {% else %}
+                  -
+                {% endif %}
+              </p>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6 col-xl-3">
+            <div class="stat-card h-100">
+              <h3>Faltantes</h3>
+              <p>
+                {% if detail.headers_evaluadas is not none and detail.headers_presentes is not none %}
+                  {{ detail.headers_evaluadas - detail.headers_presentes }}
+                {% else %}
+                  -
+                {% endif %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-item info-box-compact mb-3">
+          <h3>Cómo leer esta sección</h3>
+
+          <div class="info-two-columns">
+            <div class="info-two-columns__col">
+              <p><strong>Cumplimiento:</strong> representa únicamente el porcentaje de cabeceras HTTP requeridas que fueron encontradas por la verificación principal con curl.</p>
+              <p><strong>Evaluadas:</strong> total de cabeceras de seguridad consideradas por DASTXH en esta capa.</p>
+            </div>
+
+            <div class="info-two-columns__col">
+              <p><strong>Presentes:</strong> cabeceras encontradas en la respuesta HTTP analizada.</p>
+              <p><strong>Faltantes:</strong> cabeceras esperadas que no fueron observadas y que requieren revisión de configuración.</p>
+            </div>
+          </div>
+        </div>
+
         {% if detail.http_tests %}
           <div class="table-responsive">
             <table
@@ -245,7 +315,6 @@
                 <tr>
                   <th>Prueba</th>
                   <th>Resultado</th>
-                  <th>Puntaje</th>
                   <th>Razón</th>
                   <th>Recomendación</th>
                 </tr>
@@ -263,13 +332,6 @@
                         Advertencia
                       {% else %}
                         Informativo
-                      {% endif %}
-                    </td>
-                    <td>
-                      {% if test.status == "info" %}
-                        -
-                      {% else %}
-                        {{ test.score_delta }}
                       {% endif %}
                     </td>
                     <td class="break-cell">{{ test.reason }}</td>
@@ -668,7 +730,7 @@
               <strong>curl:</strong> verificación principal de cabeceras realizada por el prototipo.
             </p>
             <p class="mb-1">
-              <strong>hsecscan:</strong> segunda capa de contraste usada en el análisis profundo.
+              <strong>hsecscan:</strong> segunda capa de contraste usada en la evaluación profunda controlada.
             </p>
             <p class="mb-0">
               <strong>Resultado:</strong> resume si la debilidad fue confirmada por ambas capas o detectada solo por una.
@@ -907,7 +969,7 @@
           <div class="detail-item">
             <h3>Interpretación rápida</h3>
             <p class="mb-0">
-              No hay hallazgos estructurados confirmados para mostrar en formato resumido.
+              No se encontraron hallazgos XSS válidos para mostrar en formato resumido.
               Si deseas revisar la evidencia técnica completa, consulta la pestaña <strong>Detalle técnico</strong>.
             </p>
           </div>

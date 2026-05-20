@@ -30,27 +30,18 @@ services:
     container_name: dastxh-db
     restart: unless-stopped
 
-    # Variables de entorno internas de PostgreSQL
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
-    # Puerto expuesto al host para acceso externo opcional
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
 
     volumes:
-      # Volumen persistente de PostgreSQL principal
-      # IMPORTANTE: en PostgreSQL 18+ usar /var/lib/postgresql
       - pgdata:/var/lib/postgresql
-
-      # Script de creación de esquema inicial de DASTXH
-      # Solo se ejecuta cuando la BD se inicializa desde cero
       - ./db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
 
-    # Healthcheck para que otros servicios esperen a que
-    # PostgreSQL esté realmente listo antes de usarse
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -69,70 +60,108 @@ services:
   # - API
   # - lógica de escaneo
   # - integración opcional con IA local
+  #
+  # Cambio importante:
+  # - Se exponen al contenedor las variables nuevas de Dalfox.
+  # - Se exponen todas las variables de IA usadas por XSS,
+  #   hsecscan y cookies.
+  # - Se asignan 2 CPU al orquestador para dar más margen
+  #   a Dalfox y al backend.
   # --------------------------------------------------------
   orquestador:
     build:
-      # Carpeta donde está el Dockerfile del backend
       context: ./orquestador
       dockerfile: Dockerfile
 
     container_name: dastxh-orquestador
     restart: unless-stopped
 
-    # No arranca completamente hasta que la BD principal
-    # esté saludable
+    cpus: "2.0"
+
     depends_on:
       db:
         condition: service_healthy
 
     environment:
+      # ----------------------------------------------------
       # Conexión del backend hacia la BD principal
+      # ----------------------------------------------------
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
 
-      # Timeout general del backend para evaluaciones
+      # ----------------------------------------------------
+      # Configuración general del backend
+      # ----------------------------------------------------
       DEFAULT_TIMEOUT_SECONDS: ${DEFAULT_TIMEOUT_SECONDS:-30}
-
-      # Carpeta lógica dentro del contenedor donde se
-      # guardan reportes y evidencias
       WORKDIR: /work
 
       # ----------------------------------------------------
-      # Variables para integración opcional con IA local
+      # DASTXH - Interpretación XSS con IA local
+      # Docker Model Runner / endpoint OpenAI-compatible
       # ----------------------------------------------------
-      # Activa o desactiva la interpretación con IA
       DASTXH_AI_ENABLED: ${DASTXH_AI_ENABLED:-false}
-
-      # Endpoint OpenAI-compatible del Docker Model Runner
-      DASTXH_AI_BASE_URL: ${DASTXH_AI_BASE_URL:-http://model-runner.docker.internal:12434/v1}
-
-      # Modelo local a usar
+      DASTXH_AI_BASE_URL: ${DASTXH_AI_BASE_URL:-http://model-runner.docker.internal:12434/engines/v1}
       DASTXH_AI_MODEL: ${DASTXH_AI_MODEL:-ai/llama3.2}
-
-      # Docker Model Runner local no requiere una API key real
       DASTXH_AI_API_KEY: ${DASTXH_AI_API_KEY:-not-needed}
+      DASTXH_AI_TIMEOUT_SECONDS: ${DASTXH_AI_TIMEOUT_SECONDS:-420}
+      DASTXH_AI_MAX_TOKENS: ${DASTXH_AI_MAX_TOKENS:-1200}
+      DASTXH_AI_TEMPERATURE: ${DASTXH_AI_TEMPERATURE:-0.1}
+      DASTXH_AI_MAX_GROUPS: ${DASTXH_AI_MAX_GROUPS:-20}
+      DASTXH_AI_BATCH_SIZE: ${DASTXH_AI_BATCH_SIZE:-5}
+      DASTXH_AI_MAX_PAYLOADS_PER_GROUP: ${DASTXH_AI_MAX_PAYLOADS_PER_GROUP:-2}
+      DASTXH_AI_MAX_PAYLOAD_CHARS: ${DASTXH_AI_MAX_PAYLOAD_CHARS:-180}
+      DASTXH_AI_MAX_EVIDENCE_PER_GROUP: ${DASTXH_AI_MAX_EVIDENCE_PER_GROUP:-1}
+      DASTXH_AI_MAX_EVIDENCE_CHARS: ${DASTXH_AI_MAX_EVIDENCE_CHARS:-260}
 
-      # Tiempo máximo de espera para la interpretación IA
-      DASTXH_AI_TIMEOUT_SECONDS: ${DASTXH_AI_TIMEOUT_SECONDS:-180}
+      # ----------------------------------------------------
+      # DASTXH - Traducción hsecscan con IA local
+      # ----------------------------------------------------
+      DASTXH_HSECSCAN_AI_TRANSLATION_ENABLED: ${DASTXH_HSECSCAN_AI_TRANSLATION_ENABLED:-true}
+      DASTXH_HSECSCAN_AI_TRANSLATION_BASE_URL: ${DASTXH_HSECSCAN_AI_TRANSLATION_BASE_URL:-http://model-runner.docker.internal:12434/engines/v1}
+      DASTXH_HSECSCAN_AI_TRANSLATION_MODEL: ${DASTXH_HSECSCAN_AI_TRANSLATION_MODEL:-ai/llama3.2}
+      DASTXH_HSECSCAN_AI_TRANSLATION_API_KEY: ${DASTXH_HSECSCAN_AI_TRANSLATION_API_KEY:-not-needed}
+      DASTXH_HSECSCAN_AI_TRANSLATION_TIMEOUT_SECONDS: ${DASTXH_HSECSCAN_AI_TRANSLATION_TIMEOUT_SECONDS:-300}
+      DASTXH_HSECSCAN_AI_TRANSLATION_TEMPERATURE: ${DASTXH_HSECSCAN_AI_TRANSLATION_TEMPERATURE:-0.1}
+      DASTXH_HSECSCAN_AI_TRANSLATION_MAX_OUTPUT_TOKENS: ${DASTXH_HSECSCAN_AI_TRANSLATION_MAX_OUTPUT_TOKENS:-3000}
+      DASTXH_HSECSCAN_AI_TRANSLATION_BATCH_SIZE: ${DASTXH_HSECSCAN_AI_TRANSLATION_BATCH_SIZE:-1}
+      DASTXH_HSECSCAN_AI_TRANSLATION_MAX_ITEMS: ${DASTXH_HSECSCAN_AI_TRANSLATION_MAX_ITEMS:-80}
+      DASTXH_HSECSCAN_AI_TRANSLATION_MAX_CHARS_PER_FIELD: ${DASTXH_HSECSCAN_AI_TRANSLATION_MAX_CHARS_PER_FIELD:-650}
 
-    # Puerto expuesto para la GUI y la API web
+      # ----------------------------------------------------
+      # DASTXH - Interpretación de cookies con reglas + IA
+      # ----------------------------------------------------
+      DASTXH_COOKIE_AI_ENABLED: ${DASTXH_COOKIE_AI_ENABLED:-true}
+      DASTXH_COOKIE_AI_BASE_URL: ${DASTXH_COOKIE_AI_BASE_URL:-http://model-runner.docker.internal:12434/engines/v1}
+      DASTXH_COOKIE_AI_MODEL: ${DASTXH_COOKIE_AI_MODEL:-ai/llama3.2}
+      DASTXH_COOKIE_AI_API_KEY: ${DASTXH_COOKIE_AI_API_KEY:-not-needed}
+      DASTXH_COOKIE_AI_TIMEOUT_SECONDS: ${DASTXH_COOKIE_AI_TIMEOUT_SECONDS:-240}
+      DASTXH_COOKIE_AI_TEMPERATURE: ${DASTXH_COOKIE_AI_TEMPERATURE:-0.1}
+      DASTXH_COOKIE_AI_MAX_OUTPUT_TOKENS: ${DASTXH_COOKIE_AI_MAX_OUTPUT_TOKENS:-1800}
+      DASTXH_COOKIE_AI_BATCH_SIZE: ${DASTXH_COOKIE_AI_BATCH_SIZE:-2}
+      DASTXH_COOKIE_AI_MAX_ITEMS: ${DASTXH_COOKIE_AI_MAX_ITEMS:-80}
+
+      # ----------------------------------------------------
+      # DASTXH - Dalfox / XSS
+      # Flujo único: evaluación profunda controlada
+      # ----------------------------------------------------
+      DASTXH_DALFOX_REQUEST_TIMEOUT_SECONDS: ${DASTXH_DALFOX_REQUEST_TIMEOUT_SECONDS:-60}
+      DASTXH_DALFOX_HARD_TIMEOUT_SECONDS: ${DASTXH_DALFOX_HARD_TIMEOUT_SECONDS:-900}
+      DASTXH_DALFOX_WORKERS: ${DASTXH_DALFOX_WORKERS:-8}
+      DASTXH_DALFOX_LIGHT_MINING_ENABLED: ${DASTXH_DALFOX_LIGHT_MINING_ENABLED:-true}
+      DASTXH_DALFOX_SKIP_MINING_DOM: ${DASTXH_DALFOX_SKIP_MINING_DOM:-true}
+      DASTXH_DALFOX_SKIP_MINING_DICT: ${DASTXH_DALFOX_SKIP_MINING_DICT:-true}
+
     ports:
       - "${WEB_PORT:-8000}:8000"
 
     volumes:
-      # Carpeta local visible desde el host donde el backend
-      # guardará reportes, JSON y artifacts
       - ./workdata:/work
 
-    # Permite que el contenedor resuelva nombres útiles
-    # para llegar al host / Docker Model Runner
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "model-runner.docker.internal:host-gateway"
 
-    # Directorio de trabajo interno del backend
     working_dir: /app/app
 
-    # Comando de inicio del backend con Uvicorn
     command:
       [
         "uvicorn",
@@ -154,22 +183,18 @@ services:
     container_name: dastxh-pgadmin
     restart: unless-stopped
 
-    # Espera a que la BD principal esté saludable
     depends_on:
       db:
         condition: service_healthy
 
     environment:
-      # Credenciales iniciales de acceso a pgAdmin
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
 
-    # Puerto web de pgAdmin
     ports:
       - "${PGADMIN_PORT:-5050}:80"
 
     volumes:
-      # Volumen persistente de configuración interna de pgAdmin
       - pgadmin_data:/var/lib/pgadmin
 
     networks:
@@ -192,21 +217,13 @@ services:
       POSTGRES_USER: ${COMBO_LAB_POSTGRES_USER:-combo_user}
       POSTGRES_PASSWORD: ${COMBO_LAB_POSTGRES_PASSWORD:-combo_pass}
 
-    # Puerto de la BD del laboratorio
     ports:
       - "${COMBO_LAB_POSTGRES_PORT:-5543}:5432"
 
     volumes:
-      # Volumen persistente del laboratorio
-      # IMPORTANTE: en PostgreSQL 18+ usar /var/lib/postgresql
       - combo_lab_pgdata:/var/lib/postgresql
-
-      # Script inicial del esquema de la BD del laboratorio
-      # IMPORTANTE: aquí debe ser init.sql, no schema.sql
       - ./labs/combo-lab/db/init.sql:/docker-entrypoint-initdb.d/001-combo-lab-init.sql:ro
 
-    # Healthcheck para que el laboratorio espere a que
-    # su BD esté lista
     healthcheck:
       test:
         [
@@ -231,31 +248,21 @@ services:
   # --------------------------------------------------------
   combo-lab:
     build:
-      # Carpeta donde vive el laboratorio combinado
       context: ./labs/combo-lab
       dockerfile: Dockerfile
 
     container_name: dastxh-combo-lab
     restart: unless-stopped
 
-    # El laboratorio no inicia completamente hasta que
-    # su BD esté saludable
     depends_on:
       combo-lab-db:
         condition: service_healthy
 
     environment:
-      # Conexión interna del laboratorio hacia su propia BD
-      # IMPORTANTE: el código del lab espera LAB_DATABASE_URL
       LAB_DATABASE_URL: postgresql://${COMBO_LAB_POSTGRES_USER:-combo_user}:${COMBO_LAB_POSTGRES_PASSWORD:-combo_pass}@combo-lab-db:5432/${COMBO_LAB_POSTGRES_DB:-combo_lab}
-
-      # Puerto interno del laboratorio dentro del contenedor
       PORT: 5000
-
-      # Salida Python sin buffering, útil para logs
       PYTHONUNBUFFERED: "1"
 
-    # Puerto expuesto del laboratorio hacia el host
     ports:
       - "${COMBO_LAB_PORT:-5003}:5000"
 
@@ -266,13 +273,8 @@ services:
 # Volúmenes nombrados del proyecto
 # ----------------------------------------------------------
 volumes:
-  # Volumen de la BD principal
   pgdata:
-
-  # Volumen de configuración de pgAdmin
   pgadmin_data:
-
-  # Volumen de la BD del laboratorio combinado
   combo_lab_pgdata:
 
 # ----------------------------------------------------------
