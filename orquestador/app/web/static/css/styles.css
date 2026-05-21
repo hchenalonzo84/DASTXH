@@ -9,12 +9,15 @@
      * tarjetas
      * formularios
      * tablas
-     * tabs Pretty / Raw / Artifacts
+     * tabs Pretty / Raw / Artifacts / Reporte general
      * detalle de ejecuciones
      * tarjetas amplias para secciones con tablas grandes
      * tabla XSS sin columna Confianza
-     * tabla hsecscan con resultados estructurados
+     * tabla hsecscan con resultados estructurados y clasificación DASTXH
      * tabla minimalista de comparación curl vs hsecscan
+     * formulario editable del Reporte General Profesional
+     * historial de versiones del Reporte General
+     * versiones históricas en modo solo lectura
      * paginación local para tablas largas
    ========================================================== */
 
@@ -240,9 +243,16 @@ a:hover {
     box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
 }
 
+.form-group small {
+    margin-top: 0.4rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
 .form-actions {
     margin-top: 1rem;
 }
+
 /* ----------------------------------------------------------
    Botones
    ---------------------------------------------------------- */
@@ -385,7 +395,6 @@ button:active,
 .tab-content > .tab-pane {
     padding-top: 0.25rem;
 }
-
 /* ----------------------------------------------------------
    Tablas base
    ---------------------------------------------------------- */
@@ -427,9 +436,12 @@ button:active,
    ---------------------------------------------------------- */
 .xss-table-wrapper,
 .hsecscan-table-wrapper,
-.header-comparison-table-wrapper {
+.header-comparison-table-wrapper,
+.cookie-table-wrapper,
+.professional-report-history-wrapper,
+.professional-report-pdf-wrapper {
     margin-top: 1rem;
-    overflow-x: visible;
+    overflow-x: auto;
     overflow-y: hidden;
     border: 1px solid var(--border-main);
     border-radius: var(--radius-md);
@@ -438,27 +450,39 @@ button:active,
 
 .xss-table-wrapper::-webkit-scrollbar,
 .hsecscan-table-wrapper::-webkit-scrollbar,
-.header-comparison-table-wrapper::-webkit-scrollbar {
+.header-comparison-table-wrapper::-webkit-scrollbar,
+.cookie-table-wrapper::-webkit-scrollbar,
+.professional-report-history-wrapper::-webkit-scrollbar,
+.professional-report-pdf-wrapper::-webkit-scrollbar {
     height: 10px;
 }
 
 .xss-table-wrapper::-webkit-scrollbar-track,
 .hsecscan-table-wrapper::-webkit-scrollbar-track,
-.header-comparison-table-wrapper::-webkit-scrollbar-track {
+.header-comparison-table-wrapper::-webkit-scrollbar-track,
+.cookie-table-wrapper::-webkit-scrollbar-track,
+.professional-report-history-wrapper::-webkit-scrollbar-track,
+.professional-report-pdf-wrapper::-webkit-scrollbar-track {
     background: var(--bg-panel-soft);
     border-radius: 999px;
 }
 
 .xss-table-wrapper::-webkit-scrollbar-thumb,
 .hsecscan-table-wrapper::-webkit-scrollbar-thumb,
-.header-comparison-table-wrapper::-webkit-scrollbar-thumb {
+.header-comparison-table-wrapper::-webkit-scrollbar-thumb,
+.cookie-table-wrapper::-webkit-scrollbar-thumb,
+.professional-report-history-wrapper::-webkit-scrollbar-thumb,
+.professional-report-pdf-wrapper::-webkit-scrollbar-thumb {
     background: var(--border-soft);
     border-radius: 999px;
 }
 
 .xss-table-wrapper::-webkit-scrollbar-thumb:hover,
 .hsecscan-table-wrapper::-webkit-scrollbar-thumb:hover,
-.header-comparison-table-wrapper::-webkit-scrollbar-thumb:hover {
+.header-comparison-table-wrapper::-webkit-scrollbar-thumb:hover,
+.cookie-table-wrapper::-webkit-scrollbar-thumb:hover,
+.professional-report-history-wrapper::-webkit-scrollbar-thumb:hover,
+.professional-report-pdf-wrapper::-webkit-scrollbar-thumb:hover {
     background: #475569;
 }
 
@@ -529,6 +553,7 @@ main.container button.table-pagination-button:disabled {
     border-color: var(--border-main);
     color: var(--text-muted) !important;
 }
+
 /* ----------------------------------------------------------
    Cajas explicativas compactas en dos columnas
    ---------------------------------------------------------- */
@@ -559,9 +584,6 @@ main.container button.table-pagination-button:disabled {
 
 /* ----------------------------------------------------------
    Tabla XSS
-   - Sin columna Confianza.
-   - Mantiene paginación porque conserva js-paginated-table.
-   - Evita scroll horizontal en pantallas grandes.
    ---------------------------------------------------------- */
 .xss-results-table {
     width: 100%;
@@ -584,7 +606,6 @@ main.container button.table-pagination-button:disabled {
     white-space: normal;
 }
 
-/* Vista agrupada: 10 columnas */
 .xss-results-table th:nth-child(1),
 .xss-results-table td:nth-child(1) {
     width: 3%;
@@ -637,7 +658,6 @@ main.container button.table-pagination-button:disabled {
     width: 8%;
 }
 
-/* Vista individual: 9 columnas */
 .xss-results-table:not(:has(th:nth-child(10))) th:nth-child(1),
 .xss-results-table:not(:has(th:nth-child(10))) td:nth-child(1) {
     width: 3%;
@@ -705,18 +725,14 @@ main.container button.table-pagination-button:disabled {
 .xss-results-table tbody tr:hover td {
     background: #111b2e;
 }
-
 /* ----------------------------------------------------------
    Tabla hsecscan
-   - Mantiene security_description y recommendations.
-   - Mantiene paginación.
-   - Evita scroll horizontal en pantallas grandes.
    ---------------------------------------------------------- */
 .hsecscan-results-table {
     width: 100%;
-    min-width: 0 !important;
+    min-width: 1350px;
     table-layout: fixed;
-    font-size: 0.82rem;
+    font-size: 0.80rem;
 }
 
 .hsecscan-results-table th,
@@ -735,33 +751,38 @@ main.container button.table-pagination-button:disabled {
 
 .hsecscan-results-table th:nth-child(1),
 .hsecscan-results-table td:nth-child(1) {
-    width: 9%;
+    width: 8%;
 }
 
 .hsecscan-results-table th:nth-child(2),
 .hsecscan-results-table td:nth-child(2) {
-    width: 17%;
+    width: 14%;
 }
 
 .hsecscan-results-table th:nth-child(3),
 .hsecscan-results-table td:nth-child(3) {
-    width: 8%;
-    text-align: center;
+    width: 18%;
 }
 
 .hsecscan-results-table th:nth-child(4),
 .hsecscan-results-table td:nth-child(4) {
-    width: 27%;
+    width: 8%;
+    text-align: center;
 }
 
 .hsecscan-results-table th:nth-child(5),
 .hsecscan-results-table td:nth-child(5) {
-    width: 25%;
+    width: 22%;
 }
 
 .hsecscan-results-table th:nth-child(6),
 .hsecscan-results-table td:nth-child(6) {
-    width: 14%;
+    width: 20%;
+}
+
+.hsecscan-results-table th:nth-child(7),
+.hsecscan-results-table td:nth-child(7) {
+    width: 10%;
 }
 
 .hsecscan-results-table .break-cell {
@@ -780,21 +801,22 @@ main.container button.table-pagination-button:disabled {
     line-height: 1.35;
 }
 
-.hsecscan-results-table th:nth-child(4),
-.hsecscan-results-table td:nth-child(4) {
+.hsecscan-results-table th:nth-child(5),
+.hsecscan-results-table td:nth-child(5) {
     border-left: 1px solid var(--border-soft);
 }
 
 .hsecscan-results-table tbody tr:hover td {
     background: #111b2e;
 }
+
 /* ----------------------------------------------------------
    Tabla minimalista: comparación curl vs hsecscan
    ---------------------------------------------------------- */
 .header-comparison-results-table {
-    min-width: 980px;
+    min-width: 1180px;
     table-layout: fixed;
-    font-size: 0.88rem;
+    font-size: 0.86rem;
 }
 
 .header-comparison-results-table th,
@@ -808,39 +830,45 @@ main.container button.table-pagination-button:disabled {
     position: sticky;
     top: 0;
     z-index: 2;
-    white-space: nowrap;
+    white-space: normal;
 }
 
 .header-comparison-results-table th:nth-child(1),
 .header-comparison-results-table td:nth-child(1) {
-    width: 260px;
-    min-width: 260px;
+    width: 210px;
+    min-width: 210px;
 }
 
 .header-comparison-results-table th:nth-child(2),
 .header-comparison-results-table td:nth-child(2) {
-    width: 135px;
-    min-width: 135px;
-    text-align: center;
+    width: 230px;
+    min-width: 230px;
 }
 
 .header-comparison-results-table th:nth-child(3),
 .header-comparison-results-table td:nth-child(3) {
-    width: 150px;
-    min-width: 150px;
+    width: 120px;
+    min-width: 120px;
     text-align: center;
 }
 
 .header-comparison-results-table th:nth-child(4),
 .header-comparison-results-table td:nth-child(4) {
-    width: 310px;
-    min-width: 310px;
+    width: 155px;
+    min-width: 155px;
+    text-align: center;
 }
 
 .header-comparison-results-table th:nth-child(5),
 .header-comparison-results-table td:nth-child(5) {
-    width: 125px;
-    min-width: 125px;
+    width: 330px;
+    min-width: 330px;
+}
+
+.header-comparison-results-table th:nth-child(6),
+.header-comparison-results-table td:nth-child(6) {
+    width: 135px;
+    min-width: 135px;
     text-align: center;
 }
 
@@ -851,13 +879,179 @@ main.container button.table-pagination-button:disabled {
     overflow-wrap: anywhere;
 }
 
-.header-comparison-results-table th:nth-child(4),
-.header-comparison-results-table td:nth-child(4) {
+.header-comparison-results-table th:nth-child(5),
+.header-comparison-results-table td:nth-child(5) {
     border-left: 1px solid var(--border-soft);
 }
 
 .header-comparison-results-table tbody tr:hover td {
     background: #111b2e;
+}
+
+/* ----------------------------------------------------------
+   Tabla de cookies
+   ---------------------------------------------------------- */
+.cookie-results-table {
+    min-width: 1250px;
+    table-layout: fixed;
+    font-size: 0.82rem;
+}
+
+.cookie-results-table th,
+.cookie-results-table td {
+    padding: 0.65rem 0.65rem;
+    line-height: 1.42;
+    vertical-align: top;
+}
+
+.cookie-results-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    white-space: normal;
+}
+
+.cookie-results-table th:nth-child(1),
+.cookie-results-table td:nth-child(1) {
+    width: 13%;
+}
+
+.cookie-results-table th:nth-child(2),
+.cookie-results-table td:nth-child(2),
+.cookie-results-table th:nth-child(3),
+.cookie-results-table td:nth-child(3),
+.cookie-results-table th:nth-child(4),
+.cookie-results-table td:nth-child(4) {
+    width: 7%;
+    text-align: center;
+}
+
+.cookie-results-table th:nth-child(5),
+.cookie-results-table td:nth-child(5) {
+    width: 9%;
+    text-align: center;
+}
+
+.cookie-results-table th:nth-child(6),
+.cookie-results-table td:nth-child(6) {
+    width: 8%;
+    text-align: center;
+}
+
+.cookie-results-table th:nth-child(7),
+.cookie-results-table td:nth-child(7) {
+    width: 14%;
+}
+
+.cookie-results-table th:nth-child(8),
+.cookie-results-table td:nth-child(8) {
+    width: 20%;
+}
+
+.cookie-results-table th:nth-child(9),
+.cookie-results-table td:nth-child(9) {
+    width: 15%;
+}
+
+.cookie-results-table .break-cell {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* ----------------------------------------------------------
+   Reporte General Profesional
+   ---------------------------------------------------------- */
+.professional-report-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 1rem;
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel-soft);
+}
+
+.professional-report-action-form {
+    margin: 0;
+}
+
+.professional-report-meta {
+    color: var(--text-muted);
+    font-size: 0.92rem;
+}
+
+.professional-report-form {
+    margin-top: 1rem;
+}
+
+.professional-report-field {
+    padding: 1rem;
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel-soft);
+    margin-bottom: 1rem;
+}
+
+.professional-report-field label {
+    font-size: 1rem;
+    color: var(--text-strong);
+}
+
+.professional-report-field textarea {
+    min-height: 150px;
+    resize: vertical;
+    line-height: 1.5;
+    font-family: Arial, sans-serif;
+}
+
+.professional-report-field input[type="text"] {
+    font-weight: 700;
+}
+
+.professional-report-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    padding: 1rem;
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel-soft);
+}
+
+.professional-report-history-wrapper table,
+.professional-report-pdf-wrapper table {
+    min-width: 980px;
+}
+
+.professional-report-readonly {
+    margin-bottom: 1rem;
+}
+
+.professional-report-readonly .detail-item {
+    height: auto;
+}
+
+.professional-report-readonly-text {
+    margin-top: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    line-height: 1.55;
+    min-height: 80px;
+}
+
+.professional-report-history-wrapper .break-cell,
+.professional-report-pdf-wrapper .break-cell {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 /* ----------------------------------------------------------
@@ -882,7 +1076,6 @@ pre {
     word-break: break-word;
     margin-bottom: 0;
 }
-
 /* ----------------------------------------------------------
    Responsive
    ---------------------------------------------------------- */
@@ -897,12 +1090,17 @@ pre {
     }
 
     .hsecscan-results-table {
-        font-size: 0.80rem;
+        font-size: 0.78rem;
     }
 
     .header-comparison-results-table {
-        min-width: 920px;
-        font-size: 0.84rem;
+        min-width: 1120px;
+        font-size: 0.82rem;
+    }
+
+    .cookie-results-table {
+        min-width: 1180px;
+        font-size: 0.80rem;
     }
 }
 
@@ -922,7 +1120,11 @@ pre {
     }
 
     .hsecscan-table-wrapper,
-    .xss-table-wrapper {
+    .xss-table-wrapper,
+    .header-comparison-table-wrapper,
+    .cookie-table-wrapper,
+    .professional-report-history-wrapper,
+    .professional-report-pdf-wrapper {
         overflow-x: auto;
     }
 
@@ -931,11 +1133,31 @@ pre {
     }
 
     .hsecscan-results-table {
-        min-width: 1150px !important;
+        min-width: 1320px !important;
     }
 
     .header-comparison-results-table {
-        min-width: 900px;
+        min-width: 1120px;
+    }
+
+    .cookie-results-table {
+        min-width: 1180px;
+    }
+
+    .professional-report-toolbar,
+    .professional-report-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .professional-report-toolbar .btn,
+    .professional-report-actions .btn,
+    .professional-report-action-form {
+        width: 100%;
+    }
+
+    .professional-report-action-form button {
+        width: 100%;
     }
 }
 
@@ -966,13 +1188,31 @@ pre {
     }
 
     .hsecscan-results-table {
-        min-width: 1100px !important;
-        font-size: 0.78rem;
+        min-width: 1280px !important;
+        font-size: 0.76rem;
     }
 
     .header-comparison-results-table {
-        min-width: 860px;
-        font-size: 0.80rem;
+        min-width: 1080px;
+        font-size: 0.78rem;
+    }
+
+    .cookie-results-table {
+        min-width: 1100px;
+        font-size: 0.76rem;
+    }
+
+    .professional-report-history-wrapper table,
+    .professional-report-pdf-wrapper table {
+        min-width: 900px;
+    }
+
+    .professional-report-field {
+        padding: 0.85rem;
+    }
+
+    .professional-report-field textarea {
+        min-height: 180px;
     }
 
     .table-pagination {

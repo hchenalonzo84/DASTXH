@@ -10,6 +10,11 @@ Objetivo actual:
 - Convertir la salida cruda de hsecscan en una estructura útil para BD, GUI y reportes.
 - Detectar errores técnicos como HTTP 403, traceback o salidas no parseables.
 - Evitar marcar como ok=True una salida que realmente corresponde a un error de herramienta.
+- Clasificar las cabeceras reportadas por hsecscan como:
+  * principal
+  * complementaria_vigente
+  * historica_obsoleta
+  * otra_observacion
 
 Contexto:
 - hsecscan puede fallar contra URLs públicas cuando el servidor responde 403 Forbidden,
@@ -20,6 +25,13 @@ Contexto:
   * >> RESPONSE MISSING HEADERS <<
 - DASTXH debe registrar ese caso como error controlado de la capa complementaria,
   no como “0 registros encontrados”.
+
+Decisión sobre cabeceras históricas:
+- hsecscan puede reportar cabeceras antiguas o no recomendadas actualmente,
+  como Public-Key-Pins, X-XSS-Protection, X-WebKit-CSP o X-Content-Security-Policy.
+- Esas cabeceras se conservan como evidencia técnica, pero se clasifican como
+  historica_obsoleta y su riesgo visual queda como informativa.
+- No deben penalizar el indicador principal “Cumplimiento de cabeceras”.
 """
 
 from __future__ import annotations
@@ -28,6 +40,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
+import config
 from config import UA
 from utils import run_cmd
 
@@ -44,6 +57,174 @@ from utils import run_cmd
 
 HSECSCAN_MAX_ATTEMPTS = 3
 HSECSCAN_RETRY_DELAY_SECONDS = 2
+
+
+# ==========================================================
+# HELPERS DE CONFIGURACIÓN / CLASIFICACIÓN
+# ==========================================================
+
+def _normalize_header_key(value: Any) -> str:
+    """
+    Normaliza nombres de cabeceras para comparar entre catálogos.
+
+    Ejemplos:
+    - "Content-Security-Policy" -> "content-security-policy"
+    - "content_security_policy" -> "content-security-policy"
+    """
+    text = str(value or "").strip().lower()
+    text = text.replace("_", "-")
+
+    while "--" in text:
+        text = text.replace("--", "-")
+
+    return text
+
+
+def _header_key_set(values: Any) -> set[str]:
+    """
+    Convierte una lista de cabeceras en un set normalizado.
+    """
+    if not isinstance(values, list):
+        return set()
+
+    return {
+        _normalize_header_key(item)
+        for item in values
+        if _normalize_header_key(item)
+    }
+
+
+def _get_config_text(name: str, default: str) -> str:
+    """
+    Lee un texto desde config.py con fallback seguro.
+    """
+    value = getattr(config, name, default)
+    text = str(value or "").strip()
+    return text if text else default
+
+
+def _get_config_dict(name: str) -> Dict[str, str]:
+    """
+    Lee un diccionario desde config.py con fallback seguro.
+    """
+    value = getattr(config, name, {})
+
+    if isinstance(value, dict):
+        return value
+
+    return {}
+
+
+def _get_header_class_label(header_class: str) -> str:
+    """
+    Devuelve etiqueta visual de una clase de cabecera hsecscan.
+    """
+    labels = _get_config_dict("HSECSCAN_HEADER_CLASS_LABELS")
+
+    default_labels = {
+        "principal": "Catálogo principal DASTXH",
+        "complementaria_vigente": "Observación complementaria vigente",
+        "historica_obsoleta": "Referencia histórica/obsoleta",
+        "otra_observacion": "Otra observación hsecscan",
+    }
+
+    return str(labels.get(header_class) or default_labels.get(header_class) or header_class)
+
+
+def _get_header_class_description(header_class: str) -> str:
+    """
+    Devuelve descripción de una clase de cabecera hsecscan.
+    """
+    descriptions = _get_config_dict("HSECSCAN_HEADER_CLASS_DESCRIPTIONS")
+
+    default_descriptions = {
+        "principal": (
+            "Cabecera incluida en el catálogo principal de DASTXH. "
+            "hsecscan se usa como contraste para confirmar o ampliar la evidencia."
+        ),
+        "complementaria_vigente": (
+            "Cabecera o elemento útil para contexto técnico, pero no forma parte "
+            "del porcentaje principal de cumplimiento."
+        ),
+        "historica_obsoleta": (
+            "Cabecera histórica, antigua, no recomendada como requisito principal "
+            "o reemplazada por mecanismos modernos. Se conserva como referencia, "
+            "pero no penaliza el cumplimiento principal."
+        ),
+        "otra_observacion": (
+            "Registro reportado por hsecscan fuera del catálogo principal. "
+            "Debe interpretarse como información complementaria."
+        ),
+    }
+
+    return str(descriptions.get(header_class) or default_descriptions.get(header_class) or "")
+
+
+def _classify_hsecscan_header(header_name: Any) -> Dict[str, str]:
+    """
+    Clasifica una cabecera reportada por hsecscan.
+
+    Esta clasificación no elimina la evidencia original.
+    Solo ayuda a la GUI y al reporte a distinguir:
+    - controles principales;
+    - observaciones complementarias;
+    - cabeceras históricas/obsoletas;
+    - otros registros.
+    """
+    key = _normalize_header_key(header_name)
+
+    primary_class = _get_config_text("HSECSCAN_HEADER_CLASS_PRIMARY", "principal")
+    complementary_class = _get_config_text(
+        "HSECSCAN_HEADER_CLASS_COMPLEMENTARY",
+        "complementaria_vigente",
+    )
+    legacy_class = _get_config_text(
+        "HSECSCAN_HEADER_CLASS_LEGACY",
+        "historica_obsoleta",
+    )
+    other_class = _get_config_text("HSECSCAN_HEADER_CLASS_OTHER", "otra_observacion")
+
+    primary_headers = _header_key_set(
+        getattr(
+            config,
+            "HSECSCAN_PRIMARY_COMPARABLE_HEADERS",
+            getattr(config, "REQUIRED_HEADERS", []),
+        )
+    )
+
+    complementary_headers = _header_key_set(
+        getattr(config, "HSECSCAN_COMPLEMENTARY_CURRENT_HEADERS", [])
+    )
+
+    legacy_headers = _header_key_set(
+        getattr(config, "HSECSCAN_LEGACY_OR_HISTORICAL_HEADERS", [])
+    )
+
+    if key in primary_headers:
+        header_class = primary_class
+    elif key in complementary_headers:
+        header_class = complementary_class
+    elif key in legacy_headers:
+        header_class = legacy_class
+    else:
+        header_class = other_class
+
+    return {
+        "header_class": header_class,
+        "header_class_label": _get_header_class_label(header_class),
+        "header_class_description": _get_header_class_description(header_class),
+    }
+
+
+def _is_legacy_or_historical_header(header_name: Any) -> bool:
+    """
+    Indica si una cabecera pertenece al grupo histórica/obsoleta.
+    """
+    classification = _classify_hsecscan_header(header_name)
+    return classification.get("header_class") == _get_config_text(
+        "HSECSCAN_HEADER_CLASS_LEGACY",
+        "historica_obsoleta",
+    )
 
 
 # ==========================================================
@@ -101,8 +282,6 @@ def _build_hsecscan_attempt_header(
         f"[DASTXH] hsecscan attempt={attempt_number} "
         f"tool_rc={tool_rc} status={status}"
     )
-
-
 def _build_recovered_output(
     url: str,
     attempt_number: int,
@@ -276,6 +455,8 @@ def _extract_section(raw_output: str, section_name: str) -> str:
         return ""
 
     return match.group(1).strip()
+
+
 # ==========================================================
 # DETECCIÓN DE ERRORES TÉCNICOS DE HSECSCAN
 # ==========================================================
@@ -385,8 +566,6 @@ def _build_parse_warning_for_tool_error(tool_error: Dict[str, Any]) -> Optional[
         )
 
     return message
-
-
 # ==========================================================
 # PARSEO DE RESPONSE INFO
 # ==========================================================
@@ -493,12 +672,17 @@ def _infer_hsecscan_risk_level(record: Dict[str, Any]) -> str:
     """
     Asigna un nivel orientativo para mostrar en UI.
 
-    Esta clasificación NO reemplaza reglas formales.
-    Solo ayuda a ordenar/visualizar la salida de hsecscan.
+    Regla importante:
+    - Las cabeceras históricas/obsoletas quedan como informativa,
+      aunque hsecscan las reporte como faltantes.
     """
     record_type = str(record.get("record_type") or "").lower()
-    header_name = str(record.get("header_name") or "").strip().lower()
+    header_name = str(record.get("header_name") or "").strip()
+    header_key = _normalize_header_key(header_name)
     cwe = str(record.get("cwe") or "").lower()
+
+    if _is_legacy_or_historical_header(header_name):
+        return "informativa"
 
     if record_type == "missing":
         high_headers = {
@@ -509,18 +693,18 @@ def _infer_hsecscan_risk_level(record: Dict[str, Any]) -> str:
         }
 
         medium_headers = {
-            "x-xss-protection",
-            "pragma",
-            "cache-control",
             "referrer-policy",
             "permissions-policy",
-            "content-security-policy-report-only",
+            "cross-origin-opener-policy",
+            "cross-origin-resource-policy",
+            "cross-origin-embedder-policy",
+            "cache-control",
         }
 
-        if header_name in high_headers:
+        if header_key in high_headers:
             return "alta"
 
-        if header_name in medium_headers:
+        if header_key in medium_headers:
             return "media"
 
         if "cwe-79" in cwe or "cwe-693" in cwe:
@@ -529,13 +713,13 @@ def _infer_hsecscan_risk_level(record: Dict[str, Any]) -> str:
         return "baja"
 
     # Cabeceras presentes, pero con advertencia.
-    if header_name == "set-cookie":
+    if header_key == "set-cookie":
         return "media"
 
-    if header_name == "server" or "cwe-200" in cwe:
+    if header_key == "server" or "cwe-200" in cwe:
         return "baja"
 
-    if header_name == "content-type":
+    if header_key == "content-type":
         return "baja"
 
     return "informativa"
@@ -566,6 +750,8 @@ def _finalize_header_record(record: Dict[str, Any], record_type: str) -> Optiona
     if not header_name:
         return None
 
+    classification = _classify_hsecscan_header(header_name)
+
     normalized: Dict[str, Any] = {
         "record_type": record_type,
         "header_name": header_name,
@@ -577,6 +763,12 @@ def _finalize_header_record(record: Dict[str, Any], record_type: str) -> Optiona
         "cwe": _clean_text(record.get("cwe")) or None,
         "cwe_url": _clean_text(record.get("cwe_url")) or None,
         "https": _clean_text(record.get("https")) or None,
+
+        # Clasificación DASTXH para explicar cómo debe leerse
+        # este registro en GUI y reportes.
+        "header_class": classification.get("header_class"),
+        "header_class_label": classification.get("header_class_label"),
+        "header_class_description": classification.get("header_class_description"),
     }
 
     normalized["risk_level"] = _infer_hsecscan_risk_level(normalized)
@@ -704,6 +896,33 @@ def _build_summary(
         if item.get("header_name")
     ]
 
+    primary_missing_header_names = [
+        item.get("header_name")
+        for item in missing_headers
+        if item.get("header_name")
+        and item.get("header_class") == _get_config_text("HSECSCAN_HEADER_CLASS_PRIMARY", "principal")
+    ]
+
+    complementary_header_names = [
+        item.get("header_name")
+        for item in observed_headers + missing_headers
+        if item.get("header_name")
+        and item.get("header_class") == _get_config_text(
+            "HSECSCAN_HEADER_CLASS_COMPLEMENTARY",
+            "complementaria_vigente",
+        )
+    ]
+
+    legacy_header_names = [
+        item.get("header_name")
+        for item in observed_headers + missing_headers
+        if item.get("header_name")
+        and item.get("header_class") == _get_config_text(
+            "HSECSCAN_HEADER_CLASS_LEGACY",
+            "historica_obsoleta",
+        )
+    ]
+
     tool_error = tool_error or {}
 
     return {
@@ -714,6 +933,12 @@ def _build_summary(
         "total_hsecscan_records": len(observed_headers) + len(missing_headers),
         "missing_header_names": missing_header_names,
         "observed_header_names": observed_header_names,
+        "primary_missing_header_names": primary_missing_header_names,
+        "primary_missing_headers_count": len(primary_missing_header_names),
+        "complementary_header_names": complementary_header_names,
+        "complementary_headers_count": len(complementary_header_names),
+        "legacy_header_names": legacy_header_names,
+        "legacy_headers_count": len(legacy_header_names),
         "has_set_cookie": "set-cookie" in presence_index,
         "has_server_disclosure": "server" in presence_index,
         "has_content_security_policy": "content-security-policy" in presence_index,

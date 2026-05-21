@@ -1,7 +1,7 @@
 """
 db.py
 - Acceso a PostgreSQL usando psycopg (psycopg3).
-- Adaptado al esquema normalizado v9.
+- Adaptado al esquema normalizado v10.
 
 Responsabilidades:
 - ejecutar operaciones CRUD de persistencia
@@ -13,22 +13,27 @@ Responsabilidades:
 - guardar resultados XSS
 - guardar agrupación XSS preparada para IA
 - guardar interpretaciones generadas por IA
+- administrar el reporte general profesional editable
+- administrar versiones históricas de solo lectura del reporte general
+- registrar exportaciones PDF del reporte general
 - exponer consultas de historial y detalle
 
-Ajustes actuales:
-- el conteo visual de Hallazgos XSS usa únicamente las filas válidas
-  que realmente se muestran en la tabla XSS.
-- hsecscan puede guardar traducciones IA para Descripción, Recomendación
-  y CWE, manteniendo el texto original como evidencia técnica.
-- cookie_checks puede guardar análisis por reglas + IA:
-  riesgo, mapeo CWE, interpretación y recomendación.
+Notas importantes:
+- Este archivo no ejecuta herramientas externas.
+- Este archivo no llama a IA directamente.
+- El reporte general actual editable vive en professional_reports.
+- Cada guardado del reporte general crea una fotografía histórica en
+  professional_report_versions.
+- Las versiones históricas no se editan; solo se consultan.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Dict, List, Optional
 
+import config
 import psycopg
 from psycopg import Connection
 from psycopg.rows import dict_row
@@ -58,7 +63,7 @@ def ping_db(dsn: str) -> None:
 
 
 # ==========================================================
-# HELPERS PRIVADOS DE NORMALIZACIÓN
+# HELPERS PRIVADOS GENERALES
 # ==========================================================
 
 def _json_or_none(value: Any) -> Optional[str]:
@@ -70,6 +75,81 @@ def _json_or_none(value: Any) -> Optional[str]:
 
     return json.dumps(value, ensure_ascii=False)
 
+
+def _normalize_risk_level(value: Any) -> Optional[str]:
+    """
+    Normaliza un nivel de riesgo usado en varias tablas.
+    """
+    if value is None:
+        return None
+
+    text = str(value).strip().lower()
+
+    if text in ("alta", "media", "baja", "informativa"):
+        return text
+
+    return None
+
+
+def _clean_display_text(value: Any) -> str:
+    """
+    Normaliza texto para uso visual.
+    """
+    text = str(value or "").strip()
+    return " ".join(text.replace("\n", " ").replace("\r", " ").split())
+
+
+def _is_empty_visual_value(value: Any) -> bool:
+    """
+    Determina si un valor debe considerarse vacío o no informativo.
+    """
+    text = _clean_display_text(value).lower()
+    return text in ("", "-", "none", "null", "unknown", "desconocido")
+
+
+def _as_list(value: Any) -> List[Any]:
+    """
+    Normaliza campos json/jsonb que deberían venir como lista.
+    """
+    if value is None:
+        return []
+
+    if isinstance(value, list):
+        return value
+
+    if isinstance(value, str):
+        raw = value.strip()
+
+        if not raw:
+            return []
+
+        try:
+            parsed = json.loads(raw)
+
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            return [value]
+
+    return []
+
+
+def _first_non_empty_text(values: Any) -> Optional[str]:
+    """
+    Devuelve el primer texto no vacío de una lista.
+    """
+    for item in _as_list(values):
+        text = _clean_display_text(item)
+
+        if text:
+            return text
+
+    return None
+
+
+# ==========================================================
+# HELPERS PRIVADOS: HEADER / COOKIE / HTTP TESTS
+# ==========================================================
 
 def _build_header_details_if_missing(hdr_eval: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
@@ -98,37 +178,10 @@ def _build_header_details_if_missing(hdr_eval: Dict[str, Any]) -> List[Dict[str,
     return result
 
 
-def _normalize_risk_level(value: Any) -> Optional[str]:
-    """
-    Normaliza un nivel de riesgo usado en varias tablas.
-
-    Valores válidos:
-    - alta
-    - media
-    - baja
-    - informativa
-    """
-    if value is None:
-        return None
-
-    text = str(value).strip().lower()
-
-    if text in ("alta", "media", "baja", "informativa"):
-        return text
-
-    return None
-
-
 def _normalize_cookie_item(item: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normaliza un registro de cookie para aceptar tanto la forma vieja
     como la nueva.
-
-    En v9 también acepta campos de interpretación si ya vienen
-    calculados por un servicio anterior, aunque el flujo normal será:
-    1. insertar cookies técnicas;
-    2. analizarlas por reglas + IA;
-    3. actualizar columnas de interpretación.
     """
     cookie_raw = item.get("cookie_raw")
 
@@ -173,72 +226,13 @@ def _normalize_http_test_item(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _normalize_xss_ai_group_item(item: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normaliza una entrada agrupada XSS antes de persistirla.
-    """
-    entry_type = str(item.get("entry_type", "group") or "group").strip()
-    finding_orders = item.get("finding_orders")
-
-    if not isinstance(finding_orders, list):
-        finding_orders = item.get("sample_finding_orders") or []
-
-    sample_payloads = item.get("sample_payloads") or []
-    sample_evidence = item.get("sample_evidence") or []
-
-    if entry_type == "individual":
-        finding_order = int(item.get("finding_order", 0) or 0)
-
-        if not finding_orders and finding_order > 0:
-            finding_orders = [finding_order]
-
-        payload = item.get("payload")
-        evidence = item.get("evidence")
-
-        if not sample_payloads and payload:
-            sample_payloads = [payload]
-
-        if not sample_evidence and evidence:
-            sample_evidence = [evidence]
-
-        return {
-            "entry_type": "individual",
-            "parameter_probable": item.get("parameter_probable"),
-            "context_probable": item.get("context_probable"),
-            "severity_mode": item.get("severity") or item.get("severity_mode"),
-            "payload_signature": item.get("payload_signature"),
-            "occurrences": 1,
-            "target_url": item.get("target_url"),
-            "sample_finding_orders": finding_orders,
-            "sample_payloads": sample_payloads,
-            "sample_evidence": sample_evidence,
-        }
-
-    return {
-        "entry_type": "group",
-        "parameter_probable": item.get("parameter_probable"),
-        "context_probable": item.get("context_probable"),
-        "severity_mode": item.get("severity_mode"),
-        "payload_signature": item.get("payload_signature"),
-        "occurrences": int(item.get("occurrences", 1) or 1),
-        "target_url": item.get("target_url"),
-        "sample_finding_orders": finding_orders,
-        "sample_payloads": sample_payloads,
-        "sample_evidence": sample_evidence,
-    }
-
-
 # ==========================================================
-# HELPERS PRIVADOS PARA HSECSCAN
+# HELPERS PRIVADOS: HSECSCAN
 # ==========================================================
 
 def _unwrap_hsecscan_structured_payload(value: Any) -> Dict[str, Any]:
     """
-    Acepta dos formas:
-    1. El objeto interno devuelto por parse_hsecscan_output(...).
-    2. El wrapper escrito en hsecscan.json.
-
-    Devuelve siempre el objeto estructurado interno.
+    Acepta el objeto interno del parser o el wrapper escrito en hsecscan.json.
     """
     if not isinstance(value, dict):
         return {}
@@ -297,14 +291,12 @@ def _normalize_hsecscan_check_item(item: Dict[str, Any]) -> Optional[Dict[str, A
     if record_type not in ("observed", "missing"):
         record_type = "missing" if item.get("value") is None else "observed"
 
-    risk_level = _normalize_risk_level(item.get("risk_level"))
-
     return {
         "record_type": record_type,
         "display_status": item.get("display_status"),
         "header_name": header_name,
         "header_value": item.get("value"),
-        "risk_level": risk_level,
+        "risk_level": _normalize_risk_level(item.get("risk_level")),
         "reference_url": item.get("reference"),
         "security_description": item.get("security_description"),
         "security_reference": item.get("security_reference"),
@@ -319,8 +311,10 @@ def _normalize_hsecscan_check_item(item: Dict[str, Any]) -> Optional[Dict[str, A
         "translated_at": item.get("translated_at"),
         "raw_check_json": item,
     }
+
+
 # ==========================================================
-# HELPERS PRIVADOS PARA COMPARACIÓN CURL VS HSECSCAN
+# HELPERS PRIVADOS: CLASIFICACIÓN CURL VS HSECSCAN
 # ==========================================================
 
 def _normalize_header_key(value: Any) -> str:
@@ -341,13 +335,237 @@ def _display_header_name(value: Any) -> str:
     Devuelve un nombre de cabecera amigable para mostrar en GUI.
     """
     text = str(value or "").strip()
-
-    if not text:
-        return "-"
-
-    return text
+    return text if text else "-"
 
 
+def _config_text(name: str, fallback: str) -> str:
+    """
+    Lee un texto desde config.py con fallback.
+    """
+    value = getattr(config, name, fallback)
+    text = str(value or "").strip()
+    return text if text else fallback
+
+
+def _config_dict(name: str) -> Dict[str, str]:
+    """
+    Lee un diccionario desde config.py con fallback.
+    """
+    value = getattr(config, name, {})
+
+    if isinstance(value, dict):
+        return value
+
+    return {}
+
+
+def _config_header_set(name: str, fallback: Optional[List[str]] = None) -> set[str]:
+    """
+    Lee una lista de cabeceras desde config.py y la normaliza como set.
+    """
+    raw_values = getattr(config, name, fallback or [])
+
+    if not isinstance(raw_values, list):
+        raw_values = fallback or []
+
+    return {
+        _normalize_header_key(item)
+        for item in raw_values
+        if _normalize_header_key(item)
+    }
+
+
+def _get_header_class_label(header_class: str) -> str:
+    """
+    Devuelve la etiqueta de clase de cabecera para GUI.
+    """
+    labels = _config_dict("HSECSCAN_HEADER_CLASS_LABELS")
+
+    fallback_labels = {
+        "principal": "Catálogo principal DASTXH",
+        "complementaria_vigente": "Observación complementaria vigente",
+        "historica_obsoleta": "Referencia histórica/obsoleta",
+        "otra_observacion": "Otra observación hsecscan",
+    }
+
+    return str(labels.get(header_class) or fallback_labels.get(header_class) or header_class)
+
+
+def _get_header_class_description(header_class: str) -> str:
+    """
+    Devuelve explicación de la clase de cabecera para GUI.
+    """
+    descriptions = _config_dict("HSECSCAN_HEADER_CLASS_DESCRIPTIONS")
+
+    fallback_descriptions = {
+        "principal": (
+            "Cabecera incluida en el catálogo principal de DASTXH. "
+            "hsecscan se usa como contraste para confirmar o ampliar la evidencia."
+        ),
+        "complementaria_vigente": (
+            "Cabecera o elemento útil para contexto técnico, pero no forma parte "
+            "del porcentaje principal de cumplimiento."
+        ),
+        "historica_obsoleta": (
+            "Cabecera histórica, antigua, no recomendada como requisito principal "
+            "o reemplazada por mecanismos modernos. Se conserva como referencia, "
+            "pero no penaliza el cumplimiento principal."
+        ),
+        "otra_observacion": (
+            "Registro reportado por hsecscan fuera del catálogo principal. "
+            "Debe interpretarse como información complementaria."
+        ),
+    }
+
+    return str(descriptions.get(header_class) or fallback_descriptions.get(header_class) or "")
+
+
+def _classify_hsecscan_header(header_name: Any, raw_check_json: Any = None) -> Dict[str, str]:
+    """
+    Clasifica una cabecera de hsecscan sin depender de columnas nuevas.
+    """
+    raw_payload = raw_check_json if isinstance(raw_check_json, dict) else {}
+
+    existing_class = str(raw_payload.get("header_class") or "").strip()
+
+    primary_class = _config_text("HSECSCAN_HEADER_CLASS_PRIMARY", "principal")
+    complementary_class = _config_text(
+        "HSECSCAN_HEADER_CLASS_COMPLEMENTARY",
+        "complementaria_vigente",
+    )
+    legacy_class = _config_text("HSECSCAN_HEADER_CLASS_LEGACY", "historica_obsoleta")
+    other_class = _config_text("HSECSCAN_HEADER_CLASS_OTHER", "otra_observacion")
+
+    valid_classes = {
+        primary_class,
+        complementary_class,
+        legacy_class,
+        other_class,
+    }
+
+    if existing_class in valid_classes:
+        header_class = existing_class
+    else:
+        key = _normalize_header_key(header_name)
+
+        primary_headers = _config_header_set(
+            "HSECSCAN_PRIMARY_COMPARABLE_HEADERS",
+            getattr(config, "REQUIRED_HEADERS", []),
+        )
+
+        complementary_headers = _config_header_set(
+            "HSECSCAN_COMPLEMENTARY_CURRENT_HEADERS",
+            [],
+        )
+
+        legacy_headers = _config_header_set(
+            "HSECSCAN_LEGACY_OR_HISTORICAL_HEADERS",
+            [],
+        )
+
+        if key in primary_headers:
+            header_class = primary_class
+        elif key in complementary_headers:
+            header_class = complementary_class
+        elif key in legacy_headers:
+            header_class = legacy_class
+        else:
+            header_class = other_class
+
+    return {
+        "header_class": header_class,
+        "header_class_label": raw_payload.get("header_class_label") or _get_header_class_label(header_class),
+        "header_class_description": raw_payload.get("header_class_description") or _get_header_class_description(header_class),
+    }
+
+
+def _enrich_hsecscan_check_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Agrega clasificación DASTXH a una fila de hsecscan_checks.
+    """
+    item = dict(row)
+    raw_check_json = item.get("raw_check_json")
+
+    classification = _classify_hsecscan_header(
+        header_name=item.get("header_name"),
+        raw_check_json=raw_check_json,
+    )
+
+    item["header_class"] = classification.get("header_class")
+    item["header_class_label"] = classification.get("header_class_label")
+    item["header_class_description"] = classification.get("header_class_description")
+
+    if _is_hsecscan_legacy(item):
+        item["risk_level"] = "informativa"
+
+    return item
+
+
+def _enrich_hsecscan_check_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Enriquece todas las filas hsecscan para GUI/comparación.
+    """
+    return [_enrich_hsecscan_check_row(row) for row in rows]
+
+
+def _hsecscan_header_class(item: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Devuelve la clase DASTXH de un registro hsecscan.
+    """
+    if not item:
+        return None
+
+    header_class = item.get("header_class")
+
+    if header_class:
+        return str(header_class)
+
+    classification = _classify_hsecscan_header(
+        header_name=item.get("header_name"),
+        raw_check_json=item.get("raw_check_json"),
+    )
+
+    return classification.get("header_class")
+
+
+def _is_hsecscan_primary(item: Optional[Dict[str, Any]]) -> bool:
+    """
+    Indica si hsecscan está reportando una cabecera del catálogo principal.
+    """
+    return _hsecscan_header_class(item) == _config_text(
+        "HSECSCAN_HEADER_CLASS_PRIMARY",
+        "principal",
+    )
+
+
+def _is_hsecscan_complementary(item: Optional[Dict[str, Any]]) -> bool:
+    """
+    Indica si hsecscan está reportando una observación complementaria vigente.
+    """
+    return _hsecscan_header_class(item) == _config_text(
+        "HSECSCAN_HEADER_CLASS_COMPLEMENTARY",
+        "complementaria_vigente",
+    )
+
+
+def _is_hsecscan_legacy(item: Optional[Dict[str, Any]]) -> bool:
+    """
+    Indica si hsecscan está reportando una cabecera histórica/obsoleta.
+    """
+    return _hsecscan_header_class(item) == _config_text(
+        "HSECSCAN_HEADER_CLASS_LEGACY",
+        "historica_obsoleta",
+    )
+
+
+def _is_hsecscan_other_observation(item: Optional[Dict[str, Any]]) -> bool:
+    """
+    Indica si hsecscan está reportando otra observación fuera del catálogo principal.
+    """
+    return _hsecscan_header_class(item) == _config_text(
+        "HSECSCAN_HEADER_CLASS_OTHER",
+        "otra_observacion",
+    )
 def _curl_status_label(status: Any) -> str:
     """
     Convierte el status interno de http_tests a una etiqueta amigable.
@@ -375,6 +593,20 @@ def _hsecscan_status_label(item: Optional[Dict[str, Any]]) -> str:
     """
     if not item:
         return "No reportada"
+
+    if _is_hsecscan_legacy(item):
+        return "Referencia histórica"
+
+    if _is_hsecscan_complementary(item):
+        record_type = str(item.get("record_type") or "").strip().lower()
+
+        if record_type == "missing":
+            return "Complementaria faltante"
+
+        if record_type == "observed":
+            return "Complementaria observada"
+
+        return "Complementaria"
 
     display_status = item.get("display_status")
 
@@ -405,9 +637,12 @@ def _is_curl_weak(test: Optional[Dict[str, Any]]) -> bool:
 
 def _is_hsecscan_weak(item: Optional[Dict[str, Any]]) -> bool:
     """
-    Determina si hsecscan detectó una debilidad.
+    Determina si hsecscan detectó una debilidad accionable comparable.
     """
     if not item:
+        return False
+
+    if not _is_hsecscan_primary(item):
         return False
 
     record_type = str(item.get("record_type") or "").strip().lower()
@@ -416,7 +651,8 @@ def _is_hsecscan_weak(item: Optional[Dict[str, Any]]) -> bool:
 
 def _risk_rank(value: Any) -> int:
     """
-    Rank numérico para ordenar riesgo. Menor número = mayor prioridad.
+    Rank numérico para ordenar riesgo.
+    Menor número = mayor prioridad.
     """
     risk = str(value or "").strip().lower()
 
@@ -460,6 +696,17 @@ def _merge_priority(curl_test: Optional[Dict[str, Any]], hsec_item: Optional[Dic
     """
     Define la prioridad visual de la fila comparada.
     """
+    if _is_hsecscan_legacy(hsec_item):
+        return "informativa"
+
+    if _is_hsecscan_complementary(hsec_item) or _is_hsecscan_other_observation(hsec_item):
+        risk = hsec_item.get("risk_level") if hsec_item else None
+
+        if risk:
+            return str(risk)
+
+        return "informativa"
+
     candidates: List[str] = []
 
     if curl_test and _is_curl_weak(curl_test):
@@ -487,13 +734,34 @@ def _comparison_result_label(
     curl_weak = _is_curl_weak(curl_test)
     hsec_weak = _is_hsecscan_weak(hsec_item)
 
+    if _is_hsecscan_legacy(hsec_item):
+        return "Referencia histórica/obsoleta hsecscan"
+
+    if _is_hsecscan_complementary(hsec_item):
+        if curl_weak:
+            return "Detectado por curl; hsecscan aporta contexto"
+
+        return "Observación complementaria hsecscan"
+
+    if _is_hsecscan_other_observation(hsec_item):
+        if curl_weak:
+            return "Detectado por curl; hsecscan aporta observación"
+
+        return "Otra observación hsecscan"
+
     if curl_weak and hsec_weak:
         return "Confirmado por curl y hsecscan"
 
     if curl_weak and not hsec_weak:
-        return "Detectado por curl"
+        if hsec_item:
+            return "Detectado por curl"
+
+        return "Sin contraste hsecscan"
 
     if hsec_weak and not curl_weak:
+        if curl_test:
+            return "Discrepancia: requiere revisión"
+
         return "Detectado por hsecscan"
 
     if curl_test and not hsec_item:
@@ -503,6 +771,41 @@ def _comparison_result_label(
         return "No evaluado por curl"
 
     return "Sin debilidad confirmada"
+
+
+def _comparison_result_rank(value: Any) -> int:
+    """
+    Orden visual para comparación curl vs hsecscan.
+    """
+    text = str(value or "")
+
+    if text == "Confirmado por curl y hsecscan":
+        return 1
+
+    if text == "Discrepancia: requiere revisión":
+        return 2
+
+    if text == "Detectado por curl":
+        return 3
+
+    if text == "Sin contraste hsecscan":
+        return 4
+
+    if text == "Detectado por hsecscan":
+        return 5
+
+    if text in (
+        "Observación complementaria hsecscan",
+        "Detectado por curl; hsecscan aporta contexto",
+        "Otra observación hsecscan",
+        "Detectado por curl; hsecscan aporta observación",
+    ):
+        return 6
+
+    if text == "Referencia histórica/obsoleta hsecscan":
+        return 7
+
+    return 8
 
 
 def _build_curl_index(http_tests_rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -537,6 +840,25 @@ def _build_curl_index(http_tests_rows: List[Dict[str, Any]]) -> Dict[str, Dict[s
     return result
 
 
+def _hsecscan_class_rank(item: Optional[Dict[str, Any]]) -> int:
+    """
+    Orden de prioridad para elegir un registro hsecscan si hay duplicados.
+    """
+    if _is_hsecscan_primary(item):
+        return 1
+
+    if _is_hsecscan_complementary(item):
+        return 2
+
+    if _is_hsecscan_other_observation(item):
+        return 3
+
+    if _is_hsecscan_legacy(item):
+        return 4
+
+    return 5
+
+
 def _build_hsecscan_index(hsecscan_checks_rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
     Crea índice de hsecscan por cabecera.
@@ -555,8 +877,16 @@ def _build_hsecscan_index(hsecscan_checks_rows: List[Dict[str, Any]]) -> Dict[st
             result[key] = item
             continue
 
-        if _risk_rank(item.get("risk_level")) < _risk_rank(current.get("risk_level")):
+        current_class_rank = _hsecscan_class_rank(current)
+        incoming_class_rank = _hsecscan_class_rank(item)
+
+        if incoming_class_rank < current_class_rank:
             result[key] = item
+            continue
+
+        if incoming_class_rank == current_class_rank:
+            if _risk_rank(item.get("risk_level")) < _risk_rank(current.get("risk_level")):
+                result[key] = item
 
     return result
 
@@ -585,12 +915,15 @@ def _build_header_layer_comparison(
         if not display_name and hsec_item:
             display_name = hsec_item.get("header_name")
 
+        comparison_result = _comparison_result_label(curl_test, hsec_item)
+        header_class = _hsecscan_header_class(hsec_item) if hsec_item else None
+
         rows.append(
             {
                 "header_key": key,
                 "header_name": _display_header_name(display_name),
                 "priority": _merge_priority(curl_test, hsec_item),
-                "comparison_result": _comparison_result_label(curl_test, hsec_item),
+                "comparison_result": comparison_result,
                 "curl_status_raw": curl_test.get("status") if curl_test else None,
                 "curl_status": _curl_status_label(curl_test.get("status") if curl_test else None),
                 "curl_score_delta": curl_test.get("score_delta") if curl_test else None,
@@ -605,13 +938,16 @@ def _build_header_layer_comparison(
                 "hsecscan_recommendation_es": hsec_item.get("recommendations_es") if hsec_item else None,
                 "hsecscan_cwe": hsec_item.get("cwe") if hsec_item else None,
                 "hsecscan_cwe_es": hsec_item.get("cwe_es") if hsec_item else None,
+                "hsecscan_header_class": header_class,
+                "hsecscan_header_class_label": hsec_item.get("header_class_label") if hsec_item else None,
+                "hsecscan_header_class_description": hsec_item.get("header_class_description") if hsec_item else None,
             }
         )
 
     rows.sort(
         key=lambda item: (
             _risk_rank(item.get("priority")),
-            0 if item.get("comparison_result") == "Confirmado por curl y hsecscan" else 1,
+            _comparison_result_rank(item.get("comparison_result")),
             str(item.get("header_name") or "").lower(),
         )
     )
@@ -628,6 +964,10 @@ def _build_header_layer_comparison_summary(comparison_rows: List[Dict[str, Any]]
     only_hsecscan = 0
     without_contrast = 0
     high_priority = 0
+    discrepancies = 0
+    complementary = 0
+    legacy = 0
+    other_observations = 0
 
     for item in comparison_rows:
         result = item.get("comparison_result")
@@ -640,6 +980,20 @@ def _build_header_layer_comparison_summary(comparison_rows: List[Dict[str, Any]]
             only_hsecscan += 1
         elif result in ("Sin contraste hsecscan", "No evaluado por curl"):
             without_contrast += 1
+        elif result == "Discrepancia: requiere revisión":
+            discrepancies += 1
+        elif result in (
+            "Observación complementaria hsecscan",
+            "Detectado por curl; hsecscan aporta contexto",
+        ):
+            complementary += 1
+        elif result == "Referencia histórica/obsoleta hsecscan":
+            legacy += 1
+        elif result in (
+            "Otra observación hsecscan",
+            "Detectado por curl; hsecscan aporta observación",
+        ):
+            other_observations += 1
 
         if item.get("priority") == "alta":
             high_priority += 1
@@ -651,67 +1005,70 @@ def _build_header_layer_comparison_summary(comparison_rows: List[Dict[str, Any]]
         "only_hsecscan": only_hsecscan,
         "without_contrast": without_contrast,
         "high_priority": high_priority,
+        "discrepancies": discrepancies,
+        "complementary": complementary,
+        "legacy": legacy,
+        "other_observations": other_observations,
     }
 
 
 # ==========================================================
-# HELPERS PRIVADOS PARA RENDER XSS EN GUI
+# HELPERS PRIVADOS: XSS DISPLAY
 # ==========================================================
 
-def _clean_display_text(value: Any) -> str:
+def _normalize_xss_ai_group_item(item: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Normaliza texto para decidir si un valor es útil para mostrar en GUI.
+    Normaliza una entrada agrupada XSS antes de persistirla.
     """
-    text = str(value or "").strip()
-    return " ".join(text.replace("\n", " ").replace("\r", " ").split())
+    entry_type = str(item.get("entry_type", "group") or "group").strip()
+    finding_orders = item.get("finding_orders")
 
+    if not isinstance(finding_orders, list):
+        finding_orders = item.get("sample_finding_orders") or []
 
-def _is_empty_visual_value(value: Any) -> bool:
-    """
-    Determina si un valor debe considerarse vacío o no informativo.
-    """
-    text = _clean_display_text(value).lower()
-    return text in ("", "-", "none", "null", "unknown", "desconocido")
+    sample_payloads = item.get("sample_payloads") or []
+    sample_evidence = item.get("sample_evidence") or []
 
+    if entry_type == "individual":
+        finding_order = int(item.get("finding_order", 0) or 0)
 
-def _as_list(value: Any) -> List[Any]:
-    """
-    Normaliza campos jsonb que deberían venir como lista.
-    """
-    if value is None:
-        return []
+        if not finding_orders and finding_order > 0:
+            finding_orders = [finding_order]
 
-    if isinstance(value, list):
-        return value
+        payload = item.get("payload")
+        evidence = item.get("evidence")
 
-    if isinstance(value, str):
-        raw = value.strip()
+        if not sample_payloads and payload:
+            sample_payloads = [payload]
 
-        if not raw:
-            return []
+        if not sample_evidence and evidence:
+            sample_evidence = [evidence]
 
-        try:
-            parsed = json.loads(raw)
+        return {
+            "entry_type": "individual",
+            "parameter_probable": item.get("parameter_probable"),
+            "context_probable": item.get("context_probable"),
+            "severity_mode": item.get("severity") or item.get("severity_mode"),
+            "payload_signature": item.get("payload_signature"),
+            "occurrences": 1,
+            "target_url": item.get("target_url"),
+            "sample_finding_orders": finding_orders,
+            "sample_payloads": sample_payloads,
+            "sample_evidence": sample_evidence,
+        }
 
-            if isinstance(parsed, list):
-                return parsed
-        except Exception:
-            return [value]
-
-    return []
-
-
-def _first_non_empty_text(values: Any) -> Optional[str]:
-    """
-    Devuelve el primer texto no vacío de una lista.
-    """
-    for item in _as_list(values):
-        text = _clean_display_text(item)
-
-        if text:
-            return text
-
-    return None
+    return {
+        "entry_type": "group",
+        "parameter_probable": item.get("parameter_probable"),
+        "context_probable": item.get("context_probable"),
+        "severity_mode": item.get("severity_mode"),
+        "payload_signature": item.get("payload_signature"),
+        "occurrences": int(item.get("occurrences", 1) or 1),
+        "target_url": item.get("target_url"),
+        "sample_finding_orders": finding_orders,
+        "sample_payloads": sample_payloads,
+        "sample_evidence": sample_evidence,
+    }
 
 
 def _has_valid_xss_group_signal(group: Dict[str, Any]) -> bool:
@@ -760,7 +1117,6 @@ def _has_valid_xss_finding_signal(finding: Dict[str, Any]) -> bool:
 def _build_no_valid_xss_row(raw_count: int = 0) -> Dict[str, Any]:
     """
     Construye una fila informativa cuando no hay hallazgos XSS válidos.
-    Esta fila no cuenta como hallazgo real.
     """
     return {
         "row_order": "-",
@@ -777,6 +1133,196 @@ def _build_no_valid_xss_row(raw_count: int = 0) -> Dict[str, Any]:
         "model_name": None,
         "is_placeholder": True,
     }
+# ==========================================================
+# HELPERS PRIVADOS: REPORTE GENERAL PROFESIONAL
+# ==========================================================
+
+def _professional_report_editable_fields() -> List[str]:
+    """
+    Devuelve la lista de campos editables del reporte general.
+    """
+    fields = getattr(config, "PROFESSIONAL_REPORT_EDITABLE_FIELDS", [])
+
+    if isinstance(fields, list) and fields:
+        return [str(item) for item in fields]
+
+    return [
+        "report_title",
+        "executive_summary",
+        "scope_text",
+        "methodology_text",
+        "headers_analysis",
+        "hsecscan_analysis",
+        "cookies_analysis",
+        "xss_analysis",
+        "prioritized_findings",
+        "general_recommendations",
+        "limitations_text",
+        "conclusion_text",
+        "analyst_notes",
+    ]
+
+
+def _empty_professional_report_payload() -> Dict[str, Any]:
+    """
+    Crea el payload base del reporte profesional.
+    """
+    payload = {field: "" for field in _professional_report_editable_fields()}
+    payload["report_title"] = getattr(
+        config,
+        "PROFESSIONAL_REPORT_DEFAULT_TITLE",
+        "Reporte general DASTXH",
+    )
+    return payload
+
+
+def _normalize_professional_report_payload(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Normaliza el contenido editable del reporte profesional.
+    """
+    normalized = _empty_professional_report_payload()
+
+    if not isinstance(payload, dict):
+        return normalized
+
+    for field in _professional_report_editable_fields():
+        value = payload.get(field)
+
+        if value is None:
+            value = ""
+
+        normalized[field] = str(value)
+
+    if not normalized.get("report_title", "").strip():
+        normalized["report_title"] = getattr(
+            config,
+            "PROFESSIONAL_REPORT_DEFAULT_TITLE",
+            "Reporte general DASTXH",
+        )
+
+    return normalized
+
+
+def _professional_report_snapshot_from_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Construye snapshot_json desde una fila de professional_reports.
+    """
+    payload: Dict[str, Any] = {}
+
+    for field in _professional_report_editable_fields():
+        payload[field] = row.get(field) or ""
+
+    return _normalize_professional_report_payload(payload)
+
+
+def _professional_report_content_hash(snapshot: Dict[str, Any]) -> str:
+    """
+    Calcula un hash estable del snapshot para trazabilidad.
+    """
+    raw = json.dumps(
+        snapshot,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _professional_report_version_label(version_number: int) -> str:
+    """
+    Construye etiqueta amigable de versión.
+    """
+    prefix = getattr(config, "PROFESSIONAL_REPORT_VERSION_LABEL_PREFIX", "Versión")
+    return f"{prefix} {version_number}"
+
+
+def _next_professional_report_version_number(cur: Any, professional_report_id: int) -> int:
+    """
+    Calcula el siguiente número de versión para un reporte profesional.
+    """
+    cur.execute(
+        """
+        SELECT COALESCE(MAX(version_number), 0) + 1 AS next_version
+        FROM professional_report_versions
+        WHERE professional_report_id = %s;
+        """,
+        (professional_report_id,),
+    )
+    row = cur.fetchone()
+
+    return int(row["next_version"] if row else 1)
+
+
+def _insert_professional_report_version_cur(
+    cur: Any,
+    professional_report_id: int,
+    execution_id: int,
+    snapshot: Dict[str, Any],
+    change_type: str,
+    change_reason: Optional[str] = None,
+    created_by: str = "web",
+) -> Dict[str, Any]:
+    """
+    Inserta una versión histórica del reporte profesional.
+
+    Esta función debe llamarse dentro de una transacción existente.
+    """
+    version_number = _next_professional_report_version_number(
+        cur=cur,
+        professional_report_id=professional_report_id,
+    )
+    content_hash = _professional_report_content_hash(snapshot)
+
+    cur.execute(
+        """
+        INSERT INTO professional_report_versions (
+            professional_report_id,
+            execution_id,
+            version_number,
+            version_label,
+            change_type,
+            change_reason,
+            snapshot_json,
+            content_hash,
+            created_at,
+            created_by
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+        RETURNING
+            id,
+            professional_report_id,
+            execution_id,
+            version_number,
+            version_label,
+            change_type,
+            change_reason,
+            snapshot_json,
+            content_hash,
+            created_at,
+            created_by;
+        """,
+        (
+            professional_report_id,
+            execution_id,
+            version_number,
+            _professional_report_version_label(version_number),
+            change_type,
+            change_reason,
+            _json_or_none(snapshot),
+            content_hash,
+            utc_now(),
+            created_by,
+        ),
+    )
+
+    row = cur.fetchone()
+
+    if not row:
+        raise RuntimeError("No fue posible crear la versión histórica del reporte general.")
+
+    return dict(row)
+
+
 # ==========================================================
 # EJECUCIONES
 # ==========================================================
@@ -921,9 +1467,6 @@ def insert_header_results(
 ) -> None:
     """
     Inserta los resultados HTTP en forma normalizada.
-
-    En v9, cookie_checks ya queda preparada para recibir interpretación
-    posterior, pero aquí se inserta primero la evidencia técnica base.
     """
     _ = raw_headers_json
     header_details = _build_header_details_if_missing(hdr_eval)
@@ -1064,19 +1607,12 @@ def insert_header_results(
         conn.commit()
 
 
-# ==========================================================
-# RESULTADOS HTTP: INTERPRETACIÓN DE COOKIES
-# ==========================================================
-
 def list_cookie_checks_for_interpretation(
     dsn: str,
     execution_id: int,
 ) -> List[Dict[str, Any]]:
     """
     Devuelve cookies observadas para análisis por reglas + IA.
-
-    Se omiten cookies que ya tienen interpretación guardada para evitar
-    llamadas repetidas al modelo.
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -1124,15 +1660,7 @@ def update_cookie_check_interpretations(
     model_name: Optional[str] = None,
 ) -> None:
     """
-    Actualiza cookies con:
-    - risk_level
-    - cwe_mappings
-    - interpretation_humana
-    - recommended_action
-    - model_name
-    - interpreted_at
-
-    Se actualiza por id de cookie_checks.
+    Actualiza cookies con interpretación por reglas + IA.
     """
     now = utc_now()
 
@@ -1304,8 +1832,7 @@ def list_hsecscan_checks_for_translation(
     execution_id: int,
 ) -> List[Dict[str, Any]]:
     """
-    Devuelve los checks de hsecscan que pueden enviarse al servicio de
-    traducción IA.
+    Devuelve los checks de hsecscan que pueden enviarse al servicio de traducción IA.
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -1480,10 +2007,6 @@ def insert_xss_results(
         conn.commit()
 
 
-# ==========================================================
-# AGRUPACIÓN XSS PREPARADA PARA IA
-# ==========================================================
-
 def insert_xss_ai_groups(
     dsn: str,
     execution_id: int,
@@ -1593,6 +2116,602 @@ def update_xss_ai_group_interpretations(
 
 
 # ==========================================================
+# REPORTE GENERAL PROFESIONAL
+# ==========================================================
+
+def get_professional_report(
+    dsn: str,
+    execution_id: int,
+) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene el reporte general profesional actual editable.
+    """
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    execution_id,
+                    current_version_number,
+                    current_version_id,
+                    status,
+                    generated_by_ai,
+                    ai_model_name,
+                    report_title,
+                    executive_summary,
+                    scope_text,
+                    methodology_text,
+                    headers_analysis,
+                    hsecscan_analysis,
+                    cookies_analysis,
+                    xss_analysis,
+                    prioritized_findings,
+                    general_recommendations,
+                    limitations_text,
+                    conclusion_text,
+                    analyst_notes,
+                    created_at,
+                    updated_at
+                FROM professional_reports
+                WHERE execution_id = %s;
+                """,
+                (execution_id,),
+            )
+            row = cur.fetchone()
+
+        conn.commit()
+
+    return dict(row) if row else None
+
+
+def get_or_create_professional_report(
+    dsn: str,
+    execution_id: int,
+    initial_payload: Optional[Dict[str, Any]] = None,
+    generated_by_ai: bool = False,
+    ai_model_name: Optional[str] = None,
+    change_type: str = "manual_save",
+    change_reason: Optional[str] = None,
+    created_by: str = "web",
+) -> Dict[str, Any]:
+    """
+    Obtiene el reporte actual o crea uno nuevo.
+
+    Si lo crea, también genera la versión histórica 1.
+    """
+    existing = get_professional_report(dsn, execution_id)
+
+    if existing:
+        return existing
+
+    payload = _normalize_professional_report_payload(initial_payload)
+    now = utc_now()
+
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO professional_reports (
+                    execution_id,
+                    current_version_number,
+                    status,
+                    generated_by_ai,
+                    ai_model_name,
+                    report_title,
+                    executive_summary,
+                    scope_text,
+                    methodology_text,
+                    headers_analysis,
+                    hsecscan_analysis,
+                    cookies_analysis,
+                    xss_analysis,
+                    prioritized_findings,
+                    general_recommendations,
+                    limitations_text,
+                    conclusion_text,
+                    analyst_notes,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    %s, 0, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s
+                )
+                RETURNING
+                    id,
+                    execution_id,
+                    current_version_number,
+                    current_version_id,
+                    status,
+                    generated_by_ai,
+                    ai_model_name,
+                    report_title,
+                    executive_summary,
+                    scope_text,
+                    methodology_text,
+                    headers_analysis,
+                    hsecscan_analysis,
+                    cookies_analysis,
+                    xss_analysis,
+                    prioritized_findings,
+                    general_recommendations,
+                    limitations_text,
+                    conclusion_text,
+                    analyst_notes,
+                    created_at,
+                    updated_at;
+                """,
+                (
+                    execution_id,
+                    getattr(config, "PROFESSIONAL_REPORT_STATUS_AI_GENERATED", "ai_generated")
+                    if generated_by_ai
+                    else getattr(config, "PROFESSIONAL_REPORT_STATUS_DRAFT", "draft"),
+                    bool(generated_by_ai),
+                    ai_model_name,
+                    payload.get("report_title"),
+                    payload.get("executive_summary"),
+                    payload.get("scope_text"),
+                    payload.get("methodology_text"),
+                    payload.get("headers_analysis"),
+                    payload.get("hsecscan_analysis"),
+                    payload.get("cookies_analysis"),
+                    payload.get("xss_analysis"),
+                    payload.get("prioritized_findings"),
+                    payload.get("general_recommendations"),
+                    payload.get("limitations_text"),
+                    payload.get("conclusion_text"),
+                    payload.get("analyst_notes"),
+                    now,
+                    now,
+                ),
+            )
+            report = dict(cur.fetchone())
+
+            version = _insert_professional_report_version_cur(
+                cur=cur,
+                professional_report_id=int(report["id"]),
+                execution_id=execution_id,
+                snapshot=_professional_report_snapshot_from_row(report),
+                change_type=change_type,
+                change_reason=change_reason,
+                created_by=created_by,
+            )
+
+            cur.execute(
+                """
+                UPDATE professional_reports
+                SET current_version_number = %s,
+                    current_version_id = %s,
+                    updated_at = %s
+                WHERE id = %s
+                RETURNING
+                    id,
+                    execution_id,
+                    current_version_number,
+                    current_version_id,
+                    status,
+                    generated_by_ai,
+                    ai_model_name,
+                    report_title,
+                    executive_summary,
+                    scope_text,
+                    methodology_text,
+                    headers_analysis,
+                    hsecscan_analysis,
+                    cookies_analysis,
+                    xss_analysis,
+                    prioritized_findings,
+                    general_recommendations,
+                    limitations_text,
+                    conclusion_text,
+                    analyst_notes,
+                    created_at,
+                    updated_at;
+                """,
+                (
+                    version["version_number"],
+                    version["id"],
+                    utc_now(),
+                    report["id"],
+                ),
+            )
+            updated = dict(cur.fetchone())
+
+        conn.commit()
+
+    return updated
+def save_professional_report(
+    dsn: str,
+    execution_id: int,
+    payload: Dict[str, Any],
+    generated_by_ai: bool = False,
+    ai_model_name: Optional[str] = None,
+    change_type: str = "manual_save",
+    change_reason: Optional[str] = None,
+    updated_by: str = "web",
+) -> Dict[str, Any]:
+    """
+    Guarda el reporte general editable y crea una nueva versión histórica.
+    """
+    normalized = _normalize_professional_report_payload(payload)
+    existing = get_professional_report(dsn, execution_id)
+
+    if not existing:
+        return get_or_create_professional_report(
+            dsn=dsn,
+            execution_id=execution_id,
+            initial_payload=normalized,
+            generated_by_ai=generated_by_ai,
+            ai_model_name=ai_model_name,
+            change_type=change_type,
+            change_reason=change_reason,
+            created_by=updated_by,
+        )
+
+    report_id = int(existing["id"])
+    now = utc_now()
+
+    status = (
+        getattr(config, "PROFESSIONAL_REPORT_STATUS_AI_GENERATED", "ai_generated")
+        if generated_by_ai
+        else getattr(config, "PROFESSIONAL_REPORT_STATUS_EDITED", "edited")
+    )
+
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE professional_reports
+                SET status = %s,
+                    generated_by_ai = CASE WHEN %s THEN TRUE ELSE generated_by_ai END,
+                    ai_model_name = COALESCE(%s, ai_model_name),
+                    report_title = %s,
+                    executive_summary = %s,
+                    scope_text = %s,
+                    methodology_text = %s,
+                    headers_analysis = %s,
+                    hsecscan_analysis = %s,
+                    cookies_analysis = %s,
+                    xss_analysis = %s,
+                    prioritized_findings = %s,
+                    general_recommendations = %s,
+                    limitations_text = %s,
+                    conclusion_text = %s,
+                    analyst_notes = %s,
+                    updated_at = %s
+                WHERE id = %s
+                  AND execution_id = %s
+                RETURNING
+                    id,
+                    execution_id,
+                    current_version_number,
+                    current_version_id,
+                    status,
+                    generated_by_ai,
+                    ai_model_name,
+                    report_title,
+                    executive_summary,
+                    scope_text,
+                    methodology_text,
+                    headers_analysis,
+                    hsecscan_analysis,
+                    cookies_analysis,
+                    xss_analysis,
+                    prioritized_findings,
+                    general_recommendations,
+                    limitations_text,
+                    conclusion_text,
+                    analyst_notes,
+                    created_at,
+                    updated_at;
+                """,
+                (
+                    status,
+                    bool(generated_by_ai),
+                    ai_model_name,
+                    normalized.get("report_title"),
+                    normalized.get("executive_summary"),
+                    normalized.get("scope_text"),
+                    normalized.get("methodology_text"),
+                    normalized.get("headers_analysis"),
+                    normalized.get("hsecscan_analysis"),
+                    normalized.get("cookies_analysis"),
+                    normalized.get("xss_analysis"),
+                    normalized.get("prioritized_findings"),
+                    normalized.get("general_recommendations"),
+                    normalized.get("limitations_text"),
+                    normalized.get("conclusion_text"),
+                    normalized.get("analyst_notes"),
+                    now,
+                    report_id,
+                    execution_id,
+                ),
+            )
+            updated_report = dict(cur.fetchone())
+
+            version = _insert_professional_report_version_cur(
+                cur=cur,
+                professional_report_id=report_id,
+                execution_id=execution_id,
+                snapshot=_professional_report_snapshot_from_row(updated_report),
+                change_type=change_type,
+                change_reason=change_reason,
+                created_by=updated_by,
+            )
+
+            cur.execute(
+                """
+                UPDATE professional_reports
+                SET current_version_number = %s,
+                    current_version_id = %s,
+                    updated_at = %s
+                WHERE id = %s
+                  AND execution_id = %s
+                RETURNING
+                    id,
+                    execution_id,
+                    current_version_number,
+                    current_version_id,
+                    status,
+                    generated_by_ai,
+                    ai_model_name,
+                    report_title,
+                    executive_summary,
+                    scope_text,
+                    methodology_text,
+                    headers_analysis,
+                    hsecscan_analysis,
+                    cookies_analysis,
+                    xss_analysis,
+                    prioritized_findings,
+                    general_recommendations,
+                    limitations_text,
+                    conclusion_text,
+                    analyst_notes,
+                    created_at,
+                    updated_at;
+                """,
+                (
+                    version["version_number"],
+                    version["id"],
+                    utc_now(),
+                    report_id,
+                    execution_id,
+                ),
+            )
+            final_report = dict(cur.fetchone())
+
+        conn.commit()
+
+    final_report["created_version"] = version
+    return final_report
+
+
+def create_professional_report_pdf_snapshot_version(
+    dsn: str,
+    execution_id: int,
+    payload: Dict[str, Any],
+    change_reason: Optional[str] = "Snapshot usado para exportación PDF.",
+    created_by: str = "web",
+) -> Dict[str, Any]:
+    """
+    Crea una versión histórica específica para exportación PDF.
+    """
+    report = save_professional_report(
+        dsn=dsn,
+        execution_id=execution_id,
+        payload=payload,
+        generated_by_ai=False,
+        ai_model_name=None,
+        change_type=getattr(
+            config,
+            "PROFESSIONAL_REPORT_CHANGE_TYPE_PDF_EXPORT_SNAPSHOT",
+            "pdf_export_snapshot",
+        ),
+        change_reason=change_reason,
+        updated_by=created_by,
+    )
+
+    version = report.get("created_version")
+
+    if not isinstance(version, dict):
+        raise RuntimeError("No fue posible crear la versión de snapshot para PDF.")
+
+    return version
+
+
+def list_professional_report_versions(
+    dsn: str,
+    professional_report_id: int,
+) -> List[Dict[str, Any]]:
+    """
+    Lista versiones históricas de un reporte general.
+    """
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    professional_report_id,
+                    execution_id,
+                    version_number,
+                    version_label,
+                    change_type,
+                    change_reason,
+                    snapshot_json,
+                    content_hash,
+                    created_at,
+                    created_by
+                FROM professional_report_versions
+                WHERE professional_report_id = %s
+                ORDER BY version_number DESC;
+                """,
+                (professional_report_id,),
+            )
+            rows = cur.fetchall()
+
+        conn.commit()
+
+    return [dict(r) for r in rows]
+
+
+def get_professional_report_version(
+    dsn: str,
+    version_id: int,
+) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene una versión histórica específica.
+    """
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    professional_report_id,
+                    execution_id,
+                    version_number,
+                    version_label,
+                    change_type,
+                    change_reason,
+                    snapshot_json,
+                    content_hash,
+                    created_at,
+                    created_by
+                FROM professional_report_versions
+                WHERE id = %s;
+                """,
+                (version_id,),
+            )
+            row = cur.fetchone()
+
+        conn.commit()
+
+    return dict(row) if row else None
+
+
+def register_professional_report_pdf_export(
+    dsn: str,
+    professional_report_id: int,
+    professional_report_version_id: int,
+    execution_id: int,
+    artifact_id: Optional[int],
+    pdf_file_name: str,
+    pdf_relative_path: str,
+    exported_by: str = "web",
+) -> Dict[str, Any]:
+    """
+    Registra una exportación PDF del reporte general profesional.
+    """
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO professional_report_pdf_exports (
+                    professional_report_id,
+                    professional_report_version_id,
+                    execution_id,
+                    artifact_id,
+                    pdf_file_name,
+                    pdf_relative_path,
+                    exported_at,
+                    exported_by
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING
+                    id,
+                    professional_report_id,
+                    professional_report_version_id,
+                    execution_id,
+                    artifact_id,
+                    pdf_file_name,
+                    pdf_relative_path,
+                    exported_at,
+                    exported_by;
+                """,
+                (
+                    professional_report_id,
+                    professional_report_version_id,
+                    execution_id,
+                    artifact_id,
+                    pdf_file_name,
+                    pdf_relative_path,
+                    utc_now(),
+                    exported_by,
+                ),
+            )
+            export_row = dict(cur.fetchone())
+
+            cur.execute(
+                """
+                UPDATE professional_reports
+                SET status = %s,
+                    updated_at = %s
+                WHERE id = %s
+                  AND execution_id = %s;
+                """,
+                (
+                    getattr(config, "PROFESSIONAL_REPORT_STATUS_PDF_EXPORTED", "pdf_exported"),
+                    utc_now(),
+                    professional_report_id,
+                    execution_id,
+                ),
+            )
+
+        conn.commit()
+
+    return export_row
+
+
+def list_professional_report_pdf_exports(
+    dsn: str,
+    professional_report_id: int,
+) -> List[Dict[str, Any]]:
+    """
+    Lista exportaciones PDF de un reporte general.
+    """
+    with connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    prpdf.id,
+                    prpdf.professional_report_id,
+                    prpdf.professional_report_version_id,
+                    prpdf.execution_id,
+                    prpdf.artifact_id,
+                    prpdf.pdf_file_name,
+                    prpdf.pdf_relative_path,
+                    prpdf.exported_at,
+                    prpdf.exported_by,
+                    prv.version_number,
+                    prv.version_label,
+                    a.file_name AS artifact_file_name,
+                    a.relative_path AS artifact_relative_path,
+                    a.mime_type AS artifact_mime_type,
+                    a.size_bytes AS artifact_size_bytes
+                FROM professional_report_pdf_exports prpdf
+                LEFT JOIN professional_report_versions prv
+                    ON prv.id = prpdf.professional_report_version_id
+                LEFT JOIN artifacts a
+                    ON a.id = prpdf.artifact_id
+                WHERE prpdf.professional_report_id = %s
+                ORDER BY prpdf.exported_at DESC, prpdf.id DESC;
+                """,
+                (professional_report_id,),
+            )
+            rows = cur.fetchall()
+
+        conn.commit()
+
+    return [dict(r) for r in rows]
+
+
+# ==========================================================
 # ARTIFACTS / EVIDENCIAS
 # ==========================================================
 
@@ -1604,9 +2723,13 @@ def register_artifact(
     relative_path: str,
     mime_type: Optional[str] = None,
     size_bytes: Optional[int] = None,
-) -> None:
+) -> int:
     """
-    Registra un artifact generado por una ejecución.
+    Registra un artifact generado por una ejecución y devuelve su id.
+
+    Compatibilidad:
+    - Antes esta función no devolvía valor.
+    - Los llamadores existentes pueden ignorar el retorno sin problema.
     """
     with connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -1626,7 +2749,8 @@ def register_artifact(
                     artifact_type = EXCLUDED.artifact_type,
                     file_name = EXCLUDED.file_name,
                     mime_type = EXCLUDED.mime_type,
-                    size_bytes = EXCLUDED.size_bytes;
+                    size_bytes = EXCLUDED.size_bytes
+                RETURNING id;
                 """,
                 (
                     execution_id,
@@ -1637,8 +2761,11 @@ def register_artifact(
                     size_bytes,
                 ),
             )
+            row = cur.fetchone()
 
         conn.commit()
+
+    return int(row["id"]) if row and row.get("id") is not None else 0
 
 
 def list_artifacts(dsn: str, execution_id: int) -> List[Dict[str, Any]]:
@@ -1669,6 +2796,8 @@ def list_artifacts(dsn: str, execution_id: int) -> List[Dict[str, Any]]:
         conn.commit()
 
     return [dict(r) for r in rows]
+
+
 # ==========================================================
 # CONSULTAS DE HISTORIAL Y DETALLE
 # ==========================================================
@@ -1713,7 +2842,13 @@ def list_execution_summaries(
                     hsecscan_checks_count,
                     hsecscan_translated_checks_count,
                     xss_ai_groups_count,
-                    artifacts_count
+                    artifacts_count,
+                    professional_report_id,
+                    professional_report_current_version,
+                    professional_report_status,
+                    professional_report_updated_at,
+                    professional_report_versions_count,
+                    professional_report_pdf_exports_count
                 FROM vw_execution_summary
                 ORDER BY started_at DESC
                 LIMIT %s OFFSET %s;
@@ -1738,35 +2873,7 @@ def get_execution_summary(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT
-                    id,
-                    target_url,
-                    started_at,
-                    finished_at,
-                    status,
-                    request_source,
-                    scan_profile,
-                    enable_hsecscan,
-                    urls_ingresadas,
-                    urls_evaluadas,
-                    report_dir,
-                    headers_evaluadas,
-                    headers_presentes,
-                    cumplimiento_pct,
-                    http_score,
-                    http_grade,
-                    hsecscan_rc,
-                    hsecscan_missing_headers_count,
-                    hsecscan_observed_headers_count,
-                    hsecscan_records_count,
-                    dalfox_rc,
-                    xss_findings_count,
-                    cookie_checks_count,
-                    cookie_interpreted_checks_count,
-                    hsecscan_checks_count,
-                    hsecscan_translated_checks_count,
-                    xss_ai_groups_count,
-                    artifacts_count
+                SELECT *
                 FROM vw_execution_summary
                 WHERE id = %s;
                 """,
@@ -1837,13 +2944,7 @@ def get_execution_detail(
 
             cur.execute(
                 """
-                SELECT
-                    id,
-                    execution_id,
-                    header_name,
-                    is_present,
-                    header_value,
-                    created_at
+                SELECT id, execution_id, header_name, is_present, header_value, created_at
                 FROM header_checks
                 WHERE execution_id = %s
                 ORDER BY id ASC;
@@ -2023,11 +3124,97 @@ def get_execution_detail(
             )
             artifact_rows = [dict(r) for r in cur.fetchall()]
 
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    execution_id,
+                    current_version_number,
+                    current_version_id,
+                    status,
+                    generated_by_ai,
+                    ai_model_name,
+                    report_title,
+                    executive_summary,
+                    scope_text,
+                    methodology_text,
+                    headers_analysis,
+                    hsecscan_analysis,
+                    cookies_analysis,
+                    xss_analysis,
+                    prioritized_findings,
+                    general_recommendations,
+                    limitations_text,
+                    conclusion_text,
+                    analyst_notes,
+                    created_at,
+                    updated_at
+                FROM professional_reports
+                WHERE execution_id = %s;
+                """,
+                (execution_id,),
+            )
+            professional_report_row = cur.fetchone()
+            professional_report = dict(professional_report_row) if professional_report_row else None
+
+            professional_report_versions: List[Dict[str, Any]] = []
+            professional_report_pdf_exports: List[Dict[str, Any]] = []
+
+            if professional_report:
+                cur.execute(
+                    """
+                    SELECT
+                        id,
+                        professional_report_id,
+                        execution_id,
+                        version_number,
+                        version_label,
+                        change_type,
+                        change_reason,
+                        snapshot_json,
+                        content_hash,
+                        created_at,
+                        created_by
+                    FROM professional_report_versions
+                    WHERE professional_report_id = %s
+                    ORDER BY version_number DESC;
+                    """,
+                    (professional_report["id"],),
+                )
+                professional_report_versions = [dict(r) for r in cur.fetchall()]
+
+                cur.execute(
+                    """
+                    SELECT
+                        prpdf.id,
+                        prpdf.professional_report_id,
+                        prpdf.professional_report_version_id,
+                        prpdf.execution_id,
+                        prpdf.artifact_id,
+                        prpdf.pdf_file_name,
+                        prpdf.pdf_relative_path,
+                        prpdf.exported_at,
+                        prpdf.exported_by,
+                        prv.version_number,
+                        prv.version_label,
+                        a.file_name AS artifact_file_name,
+                        a.relative_path AS artifact_relative_path,
+                        a.mime_type AS artifact_mime_type,
+                        a.size_bytes AS artifact_size_bytes
+                    FROM professional_report_pdf_exports prpdf
+                    LEFT JOIN professional_report_versions prv
+                        ON prv.id = prpdf.professional_report_version_id
+                    LEFT JOIN artifacts a
+                        ON a.id = prpdf.artifact_id
+                    WHERE prpdf.professional_report_id = %s
+                    ORDER BY prpdf.exported_at DESC, prpdf.id DESC;
+                    """,
+                    (professional_report["id"],),
+                )
+                professional_report_pdf_exports = [dict(r) for r in cur.fetchall()]
+
         conn.commit()
 
-    # ------------------------------------------------------
-    # Derivados de cabeceras
-    # ------------------------------------------------------
     present_headers = [r["header_name"] for r in header_rows if r.get("is_present")]
     missing_headers = [r["header_name"] for r in header_rows if not r.get("is_present")]
 
@@ -2039,35 +3226,31 @@ def get_execution_detail(
         }
     }
 
-    # ------------------------------------------------------
-    # Derivados de cookies para la GUI
-    # ------------------------------------------------------
     cookies_flags_json: List[Dict[str, Any]] = []
 
-    for row in cookie_rows_raw:
+    for row_item in cookie_rows_raw:
         cookies_flags_json.append(
             {
-                "id": row.get("id"),
-                "cookie": row.get("cookie_raw"),
-                "secure": row.get("secure"),
-                "httponly": row.get("httponly"),
-                "samesite": row.get("samesite_present"),
-                "cookie_name": row.get("cookie_name"),
-                "cookie_raw": row.get("cookie_raw"),
-                "samesite_present": row.get("samesite_present"),
-                "samesite_value": row.get("samesite_value"),
-                "risk_level": row.get("risk_level"),
-                "cwe_mappings": row.get("cwe_mappings"),
-                "interpretation_humana": row.get("interpretation_humana"),
-                "recommended_action": row.get("recommended_action"),
-                "model_name": row.get("model_name"),
-                "interpreted_at": row.get("interpreted_at"),
+                "id": row_item.get("id"),
+                "cookie": row_item.get("cookie_raw"),
+                "secure": row_item.get("secure"),
+                "httponly": row_item.get("httponly"),
+                "samesite": row_item.get("samesite_present"),
+                "cookie_name": row_item.get("cookie_name"),
+                "cookie_raw": row_item.get("cookie_raw"),
+                "samesite_present": row_item.get("samesite_present"),
+                "samesite_value": row_item.get("samesite_value"),
+                "risk_level": row_item.get("risk_level"),
+                "cwe_mappings": row_item.get("cwe_mappings"),
+                "interpretation_humana": row_item.get("interpretation_humana"),
+                "recommended_action": row_item.get("recommended_action"),
+                "model_name": row_item.get("model_name"),
+                "interpreted_at": row_item.get("interpreted_at"),
             }
         )
 
-    # ------------------------------------------------------
-    # Derivados hsecscan para GUI
-    # ------------------------------------------------------
+    hsecscan_checks_rows = _enrich_hsecscan_check_rows(hsecscan_checks_rows)
+
     hsecscan_observed_checks = [
         item for item in hsecscan_checks_rows
         if str(item.get("record_type") or "").lower() == "observed"
@@ -2078,9 +3261,33 @@ def get_execution_detail(
         if str(item.get("record_type") or "").lower() == "missing"
     ]
 
-    # ------------------------------------------------------
-    # Comparación curl vs hsecscan
-    # ------------------------------------------------------
+    hsecscan_primary_checks = [
+        item for item in hsecscan_checks_rows
+        if _is_hsecscan_primary(item)
+    ]
+
+    hsecscan_complementary_checks = [
+        item for item in hsecscan_checks_rows
+        if _is_hsecscan_complementary(item)
+    ]
+
+    hsecscan_legacy_checks = [
+        item for item in hsecscan_checks_rows
+        if _is_hsecscan_legacy(item)
+    ]
+
+    hsecscan_other_observation_checks = [
+        item for item in hsecscan_checks_rows
+        if _is_hsecscan_other_observation(item)
+    ]
+
+    hsecscan_class_summary = {
+        "primary": len(hsecscan_primary_checks),
+        "complementary": len(hsecscan_complementary_checks),
+        "legacy": len(hsecscan_legacy_checks),
+        "other_observations": len(hsecscan_other_observation_checks),
+    }
+
     header_layer_comparison = _build_header_layer_comparison(
         http_tests_rows=http_tests_rows,
         hsecscan_checks_rows=hsecscan_checks_rows,
@@ -2090,9 +3297,6 @@ def get_execution_detail(
         header_layer_comparison
     )
 
-    # ------------------------------------------------------
-    # Enriquecer hallazgos individuales con IA cuando aplique
-    # ------------------------------------------------------
     interpretation_by_finding_order: Dict[int, Dict[str, Any]] = {}
 
     for group in xss_ai_groups_rows:
@@ -2118,8 +3322,8 @@ def get_execution_detail(
 
     enriched_xss_findings_rows: List[Dict[str, Any]] = []
 
-    for row in xss_findings_rows:
-        current = dict(row)
+    for finding in xss_findings_rows:
+        current = dict(finding)
         finding_order = int(current.get("finding_order", 0) or 0)
         ai_data = interpretation_by_finding_order.get(finding_order, {})
         current["interpretation_humana"] = ai_data.get("interpretation_humana")
@@ -2130,18 +3334,13 @@ def get_execution_detail(
         current["model_name"] = ai_data.get("model_name")
         enriched_xss_findings_rows.append(current)
 
-    # ------------------------------------------------------
-    # Preparar filas de visualización XSS
-    # ------------------------------------------------------
     valid_xss_ai_groups_rows = [
-        group
-        for group in xss_ai_groups_rows
+        group for group in xss_ai_groups_rows
         if _has_valid_xss_group_signal(group)
     ]
 
     valid_enriched_xss_findings_rows = [
-        finding
-        for finding in enriched_xss_findings_rows
+        finding for finding in enriched_xss_findings_rows
         if _has_valid_xss_finding_signal(finding)
     ]
 
@@ -2177,7 +3376,6 @@ def get_execution_detail(
                     "is_placeholder": False,
                 }
             )
-
     else:
         for finding in valid_enriched_xss_findings_rows:
             xss_display_rows.append(
@@ -2206,7 +3404,7 @@ def get_execution_detail(
         )
 
     xss_display_count = len(
-        [row for row in xss_display_rows if not bool(row.get("is_placeholder"))]
+        [item for item in xss_display_rows if not bool(item.get("is_placeholder"))]
     )
 
     detail["present_json"] = present_headers
@@ -2219,6 +3417,11 @@ def get_execution_detail(
     detail["hsecscan_checks"] = hsecscan_checks_rows
     detail["hsecscan_observed_checks"] = hsecscan_observed_checks
     detail["hsecscan_missing_checks"] = hsecscan_missing_checks
+    detail["hsecscan_primary_checks"] = hsecscan_primary_checks
+    detail["hsecscan_complementary_checks"] = hsecscan_complementary_checks
+    detail["hsecscan_legacy_checks"] = hsecscan_legacy_checks
+    detail["hsecscan_other_observation_checks"] = hsecscan_other_observation_checks
+    detail["hsecscan_class_summary"] = hsecscan_class_summary
     detail["header_layer_comparison"] = header_layer_comparison
     detail["header_layer_comparison_summary"] = header_layer_comparison_summary
     detail["xss_findings"] = enriched_xss_findings_rows
@@ -2227,5 +3430,8 @@ def get_execution_detail(
     detail["xss_display_rows"] = xss_display_rows
     detail["xss_display_count"] = xss_display_count
     detail["artifacts"] = artifact_rows
+    detail["professional_report"] = professional_report
+    detail["professional_report_versions"] = professional_report_versions
+    detail["professional_report_pdf_exports"] = professional_report_pdf_exports
 
     return detail

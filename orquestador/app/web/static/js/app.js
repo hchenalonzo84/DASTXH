@@ -1,25 +1,55 @@
 /* ==========================================================
    app.js
    - Script principal de la GUI web de DASTXH
-   - Esta versión agrega:
-     * prevención de doble envío en el formulario
-     * resaltado del enlace activo
-     * polling automático en detalle de ejecución
-     * soporte de pestañas Bootstrap
-     * persistencia de pestaña activa por hash
-     * paginación local simple para tablas largas
-     * paginación visible siempre en la tabla XSS
+
+   Esta versión conserva lo que ya funcionaba:
+   * prevención de doble envío en el formulario principal
+   * resaltado del enlace activo
+   * polling automático en detalle de ejecución
+   * soporte de pestañas Bootstrap
+   * persistencia de pestaña activa por hash
+   * paginación local simple para tablas largas
+   * paginación visible siempre en la tabla XSS
+
+   Integración nueva:
+   * soporte explícito para #general-report-pane
+   * activación de pestañas al cambiar el hash
+   * protección contra doble envío en formularios del Reporte general
+   * recarga conservando cualquier pestaña activa:
+     #pretty-pane, #raw-pane, #artifacts-pane, #general-report-pane
    ========================================================== */
 
 document.addEventListener("DOMContentLoaded", () => {
     console.log("DASTXH web cargado correctamente");
 
     setupScanForm();
+    setupProfessionalReportForms();
     highlightCurrentNavLink();
     setupBootstrapTabs();
     setupPaginatedTables();
     setupExecutionPolling();
 });
+
+
+/* ==========================================================
+   HELPERS GENERALES
+   ========================================================== */
+
+function hasBootstrapTabSupport() {
+    /*
+      Verifica si Bootstrap JS está disponible antes de intentar
+      controlar pestañas con bootstrap.Tab.
+    */
+    return typeof bootstrap !== "undefined" && Boolean(bootstrap.Tab);
+}
+
+
+function normalizeText(value) {
+    /*
+      Convierte cualquier valor a texto normalizado.
+    */
+    return String(value || "").trim();
+}
 
 
 /* ==========================================================
@@ -43,6 +73,59 @@ function setupScanForm() {
             submitButton.disabled = true;
             submitButton.textContent = "Ejecutando...";
         }
+    });
+}
+
+
+/* ==========================================================
+   FORMULARIOS DEL REPORTE GENERAL
+   ========================================================== */
+
+function setupProfessionalReportForms() {
+    /*
+      Evita doble envío accidental en los formularios del Reporte general.
+
+      Aplica a:
+      - Generar reporte con IA
+      - Guardar cambios
+      - Imprimir PDF, cuando se implemente la ruta backend
+
+      Importante:
+      - No modifica datos del formulario.
+      - No cambia el action ni el formaction.
+      - Solo deshabilita botones después del submit.
+    */
+    const reportForms = document.querySelectorAll(
+        ".professional-report-action-form, .professional-report-form"
+    );
+
+    reportForms.forEach((form) => {
+        if (form.dataset.submitProtectionReady === "true") {
+            return;
+        }
+
+        form.dataset.submitProtectionReady = "true";
+
+        form.addEventListener("submit", (event) => {
+            const submitter = event.submitter || document.activeElement;
+            const buttons = form.querySelectorAll('button[type="submit"]');
+
+            buttons.forEach((button) => {
+                button.disabled = true;
+            });
+
+            if (submitter && submitter.tagName === "BUTTON") {
+                const buttonText = normalizeText(submitter.textContent);
+
+                if (buttonText.toLowerCase().includes("imprimir")) {
+                    submitter.textContent = "Preparando PDF...";
+                } else if (buttonText.toLowerCase().includes("generar")) {
+                    submitter.textContent = "Generando...";
+                } else {
+                    submitter.textContent = "Guardando...";
+                }
+            }
+        });
     });
 }
 
@@ -75,29 +158,19 @@ function highlightCurrentNavLink() {
 function setupBootstrapTabs() {
     /*
       Activa comportamiento adicional para las pestañas:
-      - si la URL tiene hash (#raw-pane, #artifacts-pane, etc.),
-        abre esa pestaña al cargar
+      - si la URL tiene hash (#raw-pane, #artifacts-pane,
+        #general-report-pane, etc.), abre esa pestaña al cargar.
       - cuando el usuario cambia de pestaña, actualiza el hash
-        sin saltos bruscos
+        sin saltos bruscos.
+      - si cambia el hash manualmente, intenta activar la pestaña.
     */
     const tabButtons = document.querySelectorAll('[data-bs-toggle="tab"]');
 
-    if (!tabButtons.length || typeof bootstrap === "undefined") {
+    if (!tabButtons.length) {
         return;
     }
 
-    const currentHash = window.location.hash;
-
-    if (currentHash) {
-        const matchingButton = document.querySelector(
-            `[data-bs-target="${currentHash}"]`
-        );
-
-        if (matchingButton) {
-            const tab = new bootstrap.Tab(matchingButton);
-            tab.show();
-        }
-    }
+    activateTabFromHash();
 
     tabButtons.forEach((button) => {
         button.addEventListener("shown.bs.tab", (event) => {
@@ -107,10 +180,93 @@ function setupBootstrapTabs() {
                 return;
             }
 
+            if (window.location.hash === targetSelector) {
+                return;
+            }
+
             history.replaceState(null, "", targetSelector);
         });
     });
+
+    window.addEventListener("hashchange", () => {
+        activateTabFromHash();
+    });
 }
+
+
+function activateTabFromHash() {
+    /*
+      Activa una pestaña a partir del hash actual de la URL.
+
+      Ejemplos:
+      - #pretty-pane
+      - #raw-pane
+      - #artifacts-pane
+      - #general-report-pane
+
+      Si Bootstrap JS está disponible, usa bootstrap.Tab.
+      Si no está disponible, aplica un fallback básico.
+    */
+    const currentHash = window.location.hash;
+
+    if (!currentHash) {
+        return;
+    }
+
+    const targetPane = document.querySelector(currentHash);
+
+    if (!targetPane) {
+        return;
+    }
+
+    const matchingButton = document.querySelector(
+        `[data-bs-target="${currentHash}"]`
+    );
+
+    if (!matchingButton) {
+        return;
+    }
+
+    if (hasBootstrapTabSupport()) {
+        const tab = new bootstrap.Tab(matchingButton);
+        tab.show();
+        return;
+    }
+
+    activateTabFallback(matchingButton, targetPane);
+}
+
+
+function activateTabFallback(button, targetPane) {
+    /*
+      Fallback básico para activar pestañas si Bootstrap JS no está disponible.
+
+      En condiciones normales no debería usarse, porque la GUI trabaja
+      con Bootstrap, pero evita que el hash quede inútil si falla la carga JS.
+    */
+    const tabList = button.closest('[role="tablist"]');
+
+    if (tabList) {
+        const buttons = tabList.querySelectorAll(".nav-link");
+
+        buttons.forEach((item) => {
+            item.classList.remove("active");
+            item.setAttribute("aria-selected", "false");
+        });
+    }
+
+    const panes = document.querySelectorAll(".tab-pane");
+
+    panes.forEach((pane) => {
+        pane.classList.remove("show", "active");
+    });
+
+    button.classList.add("active");
+    button.setAttribute("aria-selected", "true");
+    targetPane.classList.add("show", "active");
+}
+
+
 /* ==========================================================
    PAGINACIÓN LOCAL DE TABLAS
    ========================================================== */
@@ -275,6 +431,8 @@ function createPaginationButton(text, ariaLabel) {
 
     return button;
 }
+
+
 /* ==========================================================
    POLLING DE EJECUCIÓN
    ========================================================== */
@@ -417,8 +575,12 @@ function updateVisibleExecutionStatus(status) {
 function reloadPreservingHash() {
     /*
       Recarga la página manteniendo la pestaña actual.
-      Si el usuario estaba en #raw-pane o #artifacts-pane,
-      regresará ahí mismo después del reload.
+
+      Ejemplos:
+      - #pretty-pane
+      - #raw-pane
+      - #artifacts-pane
+      - #general-report-pane
     */
     const hash = window.location.hash || "";
     const baseUrl = window.location.pathname + window.location.search;

@@ -1,5 +1,5 @@
 -- =========================================================
--- DASTXH - Schema base v9
+-- DASTXH - Schema base v10
 --
 -- Objetivo de esta versión:
 --   - conservar executions como entidad principal
@@ -24,11 +24,21 @@
 --       * recommended_action
 --       * model_name
 --       * interpreted_at
+--   - persistir reporte general profesional:
+--       * versión actual editable
+--       * historial de versiones solo lectura
+--       * exportaciones PDF trazables
+--
+-- Decisión de diseño:
+--   professional_reports guarda la versión actual editable.
+--   professional_report_versions guarda fotografías históricas.
+--   professional_report_pdf_exports vincula una versión histórica con
+--   el artifact PDF generado.
 --
 -- Nota:
---   Las traducciones IA de hsecscan son apoyo lingüístico para la GUI.
---   La interpretación IA de cookies se apoya en reglas internas de DASTXH
---   alineadas con recomendaciones OWASP y mapeo CWE.
+--   Las versiones históricas del reporte general no deben editarse
+--   desde la aplicación. Para reforzar esto, se agrega un trigger que
+--   bloquea UPDATE sobre professional_report_versions.
 -- =========================================================
 
 
@@ -146,10 +156,6 @@ CREATE INDEX IF NOT EXISTS ix_header_checks_present
 --
 --   recommended_action:
 --     recomendación breve para revisar o corregir atributos de cookie.
---
--- Nota:
---   La clasificación se basa en reglas internas de DASTXH alineadas
---   con recomendaciones OWASP y mapeo CWE.
 -- =========================================================
 CREATE TABLE IF NOT EXISTS cookie_checks (
   id                   BIGSERIAL PRIMARY KEY,
@@ -226,6 +232,8 @@ CREATE INDEX IF NOT EXISTS ix_cookie_checks_risk_level
 
 CREATE INDEX IF NOT EXISTS ix_cookie_checks_interpreted_at
   ON cookie_checks (interpreted_at);
+
+
 -- =========================================================
 -- 5) RESULTADOS HTTP: PRUEBAS DETALLADAS
 -- =========================================================
@@ -262,8 +270,6 @@ CREATE INDEX IF NOT EXISTS ix_http_tests_status
 
 CREATE INDEX IF NOT EXISTS ix_http_tests_category
   ON http_tests (category);
-
-
 -- =========================================================
 -- 6) RESULTADOS CAPA 2: HSECSCAN
 -- =========================================================
@@ -431,6 +437,8 @@ CREATE INDEX IF NOT EXISTS ix_xss_findings_execution_id
 
 CREATE INDEX IF NOT EXISTS ix_xss_findings_severity
   ON xss_findings (severity);
+
+
 -- =========================================================
 -- 9) AGRUPACIÓN XSS PREPARADA PARA IA
 -- =========================================================
@@ -500,6 +508,9 @@ CREATE TABLE IF NOT EXISTS artifacts (
                            'dalfox_json',
                            'dalfox_txt',
                            'run_meta_json',
+                           'professional_report_md',
+                           'professional_report_html',
+                           'professional_report_pdf',
                            'other'
                          )
                        ),
@@ -538,6 +549,9 @@ BEGIN
         'dalfox_json',
         'dalfox_txt',
         'run_meta_json',
+        'professional_report_md',
+        'professional_report_html',
+        'professional_report_pdf',
         'other'
       )
     );
@@ -551,8 +565,290 @@ CREATE INDEX IF NOT EXISTS ix_artifacts_artifact_type
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_artifacts_execution_relative_path
   ON artifacts (execution_id, relative_path);
- -- =========================================================
--- 11) VISTA DE RESUMEN PARA HISTORIAL
+-- =========================================================
+-- 11) REPORTE GENERAL PROFESIONAL: VERSIÓN ACTUAL EDITABLE
+--
+-- Esta tabla guarda el estado actual editable del reporte general.
+--
+-- Regla:
+--   - Solo esta tabla se edita desde el formulario.
+--   - Cada guardado debe crear una fotografía histórica en
+--     professional_report_versions.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS professional_reports (
+  id                       BIGSERIAL PRIMARY KEY,
+
+  execution_id             BIGINT NOT NULL
+                           REFERENCES executions(id) ON DELETE CASCADE,
+
+  current_version_number   INT NOT NULL DEFAULT 0
+                           CHECK (current_version_number >= 0),
+
+  -- Se llena después de crear professional_report_versions.
+  current_version_id       BIGINT NULL,
+
+  status                   TEXT NOT NULL DEFAULT 'draft'
+                           CHECK (
+                             status IN (
+                               'draft',
+                               'ai_generated',
+                               'edited',
+                               'pdf_exported',
+                               'archived'
+                             )
+                           ),
+
+  generated_by_ai          BOOLEAN NOT NULL DEFAULT FALSE,
+  ai_model_name            TEXT NULL,
+
+  report_title             TEXT NOT NULL DEFAULT 'Reporte general DASTXH',
+
+  executive_summary        TEXT NULL,
+  scope_text               TEXT NULL,
+  methodology_text         TEXT NULL,
+  headers_analysis         TEXT NULL,
+  hsecscan_analysis        TEXT NULL,
+  cookies_analysis         TEXT NULL,
+  xss_analysis             TEXT NULL,
+  prioritized_findings     TEXT NULL,
+  general_recommendations  TEXT NULL,
+  limitations_text         TEXT NULL,
+  conclusion_text          TEXT NULL,
+  analyst_notes            TEXT NULL,
+
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  CONSTRAINT ux_professional_reports_execution
+    UNIQUE (execution_id)
+);
+
+-- Compatibilidad si la tabla ya existía parcialmente.
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS current_version_number INT NOT NULL DEFAULT 0;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS current_version_id BIGINT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS generated_by_ai BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS ai_model_name TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS report_title TEXT NOT NULL DEFAULT 'Reporte general DASTXH';
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS executive_summary TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS scope_text TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS methodology_text TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS headers_analysis TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS hsecscan_analysis TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS cookies_analysis TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS xss_analysis TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS prioritized_findings TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS general_recommendations TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS limitations_text TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS conclusion_text TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS analyst_notes TEXT NULL;
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE professional_reports
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS ix_professional_reports_execution_id
+  ON professional_reports (execution_id);
+
+CREATE INDEX IF NOT EXISTS ix_professional_reports_status
+  ON professional_reports (status);
+
+CREATE INDEX IF NOT EXISTS ix_professional_reports_updated_at
+  ON professional_reports (updated_at DESC);
+
+
+-- =========================================================
+-- 11.1) REPORTE GENERAL PROFESIONAL: VERSIONES HISTÓRICAS
+--
+-- Esta tabla guarda una fotografía completa del reporte cada vez
+-- que se genera con IA, se guarda manualmente o se prepara para PDF.
+--
+-- Regla:
+--   - Las versiones históricas son solo lectura.
+--   - La aplicación no debe editarlas.
+--   - La tabla tiene un trigger para bloquear UPDATE.
+--
+-- Nota:
+--   Se bloquea UPDATE porque la regla principal es que una versión
+--   creada no debe modificarse. No se bloquea DELETE para evitar
+--   interferir con borrados en cascada si en el futuro se elimina una
+--   ejecución completa.
+-- =========================================================
+CREATE TABLE IF NOT EXISTS professional_report_versions (
+  id                       BIGSERIAL PRIMARY KEY,
+
+  professional_report_id   BIGINT NOT NULL
+                           REFERENCES professional_reports(id) ON DELETE CASCADE,
+
+  execution_id             BIGINT NOT NULL
+                           REFERENCES executions(id) ON DELETE CASCADE,
+
+  version_number           INT NOT NULL
+                           CHECK (version_number > 0),
+
+  version_label            TEXT NULL,
+
+  change_type              TEXT NOT NULL
+                           CHECK (
+                             change_type IN (
+                               'ai_generated',
+                               'manual_save',
+                               'pdf_export_snapshot'
+                             )
+                           ),
+
+  change_reason            TEXT NULL,
+
+  -- Fotografía completa del contenido editable en ese momento.
+  snapshot_json            JSONB NOT NULL,
+
+  -- Hash opcional para detectar cambios de contenido.
+  content_hash             TEXT NULL,
+
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by               TEXT NOT NULL DEFAULT 'web',
+
+  CONSTRAINT ux_professional_report_versions_report_version
+    UNIQUE (professional_report_id, version_number)
+);
+
+CREATE INDEX IF NOT EXISTS ix_professional_report_versions_report_id
+  ON professional_report_versions (professional_report_id);
+
+CREATE INDEX IF NOT EXISTS ix_professional_report_versions_execution_id
+  ON professional_report_versions (execution_id);
+
+CREATE INDEX IF NOT EXISTS ix_professional_report_versions_created_at
+  ON professional_report_versions (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS ix_professional_report_versions_change_type
+  ON professional_report_versions (change_type);
+
+-- Relación desde professional_reports hacia su versión actual.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'professional_reports_current_version_fk'
+      AND conrelid = 'professional_reports'::regclass
+  ) THEN
+    ALTER TABLE professional_reports
+      ADD CONSTRAINT professional_reports_current_version_fk
+      FOREIGN KEY (current_version_id)
+      REFERENCES professional_report_versions(id)
+      ON DELETE SET NULL;
+  END IF;
+END $$;
+
+
+-- =========================================================
+-- 11.2) FUNCIÓN Y TRIGGER PARA BLOQUEAR EDICIÓN DE VERSIONES
+-- =========================================================
+CREATE OR REPLACE FUNCTION prevent_professional_report_version_update()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION
+    'Las versiones históricas del reporte general son solo lectura y no pueden editarse.';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_prevent_professional_report_version_update
+  ON professional_report_versions;
+
+CREATE TRIGGER trg_prevent_professional_report_version_update
+BEFORE UPDATE ON professional_report_versions
+FOR EACH ROW
+EXECUTE FUNCTION prevent_professional_report_version_update();
+
+
+-- =========================================================
+-- 11.3) REPORTE GENERAL PROFESIONAL: EXPORTACIONES PDF
+--
+-- Registra cada PDF generado desde una versión histórica exacta.
+--
+-- El archivo físico se registra también en artifacts.
+-- Esta tabla vincula:
+--   - reporte
+--   - versión usada
+--   - ejecución
+--   - artifact PDF generado
+-- =========================================================
+CREATE TABLE IF NOT EXISTS professional_report_pdf_exports (
+  id                               BIGSERIAL PRIMARY KEY,
+
+  professional_report_id           BIGINT NOT NULL
+                                   REFERENCES professional_reports(id) ON DELETE CASCADE,
+
+  professional_report_version_id   BIGINT NOT NULL
+                                   REFERENCES professional_report_versions(id) ON DELETE CASCADE,
+
+  execution_id                     BIGINT NOT NULL
+                                   REFERENCES executions(id) ON DELETE CASCADE,
+
+  artifact_id                      BIGINT NULL
+                                   REFERENCES artifacts(id) ON DELETE SET NULL,
+
+  pdf_file_name                    TEXT NOT NULL,
+  pdf_relative_path                TEXT NOT NULL,
+
+  exported_at                      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  exported_by                      TEXT NOT NULL DEFAULT 'web'
+);
+
+CREATE INDEX IF NOT EXISTS ix_professional_report_pdf_exports_report_id
+  ON professional_report_pdf_exports (professional_report_id);
+
+CREATE INDEX IF NOT EXISTS ix_professional_report_pdf_exports_version_id
+  ON professional_report_pdf_exports (professional_report_version_id);
+
+CREATE INDEX IF NOT EXISTS ix_professional_report_pdf_exports_execution_id
+  ON professional_report_pdf_exports (execution_id);
+
+CREATE INDEX IF NOT EXISTS ix_professional_report_pdf_exports_artifact_id
+  ON professional_report_pdf_exports (artifact_id);
+
+CREATE INDEX IF NOT EXISTS ix_professional_report_pdf_exports_exported_at
+  ON professional_report_pdf_exports (exported_at DESC);
+-- =========================================================
+-- 12) VISTA DE RESUMEN PARA HISTORIAL
 -- =========================================================
 CREATE OR REPLACE VIEW vw_execution_summary AS
 SELECT
@@ -618,7 +914,16 @@ SELECT
   ) AS hsecscan_translated_checks_count,
 
   COUNT(DISTINCT xag.id) AS xss_ai_groups_count,
-  COUNT(DISTINCT a.id) AS artifacts_count
+  COUNT(DISTINCT a.id) AS artifacts_count,
+
+  pr.id AS professional_report_id,
+  pr.current_version_number AS professional_report_current_version,
+  pr.status AS professional_report_status,
+  pr.updated_at AS professional_report_updated_at,
+
+  COUNT(DISTINCT prv.id) AS professional_report_versions_count,
+  COUNT(DISTINCT prpdf.id) AS professional_report_pdf_exports_count
+
 FROM executions e
 LEFT JOIN header_results hr
   ON hr.execution_id = e.id
@@ -634,6 +939,12 @@ LEFT JOIN xss_ai_groups xag
   ON xag.execution_id = e.id
 LEFT JOIN artifacts a
   ON a.execution_id = e.id
+LEFT JOIN professional_reports pr
+  ON pr.execution_id = e.id
+LEFT JOIN professional_report_versions prv
+  ON prv.professional_report_id = pr.id
+LEFT JOIN professional_report_pdf_exports prpdf
+  ON prpdf.professional_report_id = pr.id
 GROUP BY
   e.id,
   e.target_url,
@@ -654,4 +965,8 @@ GROUP BY
   hs.tool_rc,
   hs.summary_json,
   xr.tool_rc,
-  xr.findings_count; 
+  xr.findings_count,
+  pr.id,
+  pr.current_version_number,
+  pr.status,
+  pr.updated_at;
