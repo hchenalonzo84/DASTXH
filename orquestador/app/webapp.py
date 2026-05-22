@@ -13,12 +13,20 @@ Esta versión:
     * generación de borrador asistido por IA
     * guardado editable con versionamiento histórico
     * impresión/exportación PDF trazable
+    * impresión de versiones históricas específicas
 
 Regla del reporte general:
 - professional_reports guarda la versión actual editable.
 - professional_report_versions conserva el historial de solo lectura.
 - professional_report_pdf_exports registra cada PDF generado.
 - artifacts registra el archivo físico PDF como evidencia de la ejecución.
+
+Flujo recomendado:
+1. El usuario revisa o edita el reporte actual.
+2. Presiona Guardar cambios.
+3. El sistema crea una versión histórica.
+4. El usuario puede imprimir la versión actual guardada o cualquier versión histórica.
+5. La impresión debe abrir el PDF en pestaña nueva desde la GUI.
 """
 
 from __future__ import annotations
@@ -73,8 +81,11 @@ REPORTS_DIR = WORKDIR / "reports"
 
 app = FastAPI(
     title="DASTXH Web",
-    version="0.4.0",
-    description="GUI web para DASTXH con flujo profundo controlado y reporte general profesional",
+    version="0.4.2",
+    description=(
+        "GUI web para DASTXH con flujo profundo controlado, "
+        "reporte general profesional versionado e impresión de versiones históricas"
+    ),
 )
 
 
@@ -250,8 +261,11 @@ def redirect_to_generated_pdf(run_id: str, pdf_file_name: str) -> RedirectRespon
     """
     Redirige al archivo PDF recién generado.
 
-    La ruta /api/reports/file/{run_id}/{file_name} ya sirve artifacts
+    La ruta /api/reports/file/{run_id}/{file_name} sirve artifacts
     desde la carpeta de reportes.
+
+    En la GUI, los formularios de impresión usan target="_blank",
+    por lo que esta redirección debe abrirse en una pestaña nueva.
     """
     if not run_id or not pdf_file_name:
         raise HTTPException(
@@ -263,6 +277,127 @@ def redirect_to_generated_pdf(run_id: str, pdf_file_name: str) -> RedirectRespon
         url=f"/api/reports/file/{run_id}/{pdf_file_name}",
         status_code=303,
     )
+def load_professional_report_version_or_404(
+    dsn: str,
+    execution_id: int,
+    version_id: int,
+) -> Dict[str, Any]:
+    """
+    Carga una versión histórica del reporte general o lanza 404.
+
+    Validación importante:
+    - la versión debe existir;
+    - la versión debe pertenecer a la ejecución indicada.
+    """
+    version = db_layer.get_professional_report_version(
+        dsn=dsn,
+        version_id=version_id,
+    )
+
+    if not version:
+        raise HTTPException(
+            status_code=404,
+            detail="Versión histórica no encontrada.",
+        )
+
+    if int(version.get("execution_id") or 0) != int(execution_id):
+        raise HTTPException(
+            status_code=404,
+            detail="La versión histórica no pertenece a esta ejecución.",
+        )
+
+    return version
+
+
+def register_professional_report_pdf_from_version(
+    dsn: str,
+    execution_id: int,
+    detail: Dict[str, Any],
+    version: Dict[str, Any],
+    exported_by: str = "web",
+) -> Dict[str, Any]:
+    """
+    Genera y registra un PDF desde una versión histórica específica.
+
+    Esta función centraliza la lógica para:
+    - imprimir versión actual;
+    - imprimir versiones antiguas;
+    - registrar artifact;
+    - registrar la exportación PDF.
+
+    Pasos:
+    1. Genera el PDF físico.
+    2. Registra el PDF como artifact.
+    3. Registra la exportación en professional_report_pdf_exports.
+    4. Devuelve la información necesaria para abrir el PDF.
+    """
+    professional_report_id = int(version.get("professional_report_id") or 0)
+
+    # Fallback: algunas filas históricas pueden no traer professional_report_id
+    # si el query de BD no lo está retornando. En ese caso se usa el reporte
+    # actual asociado a la ejecución.
+    if professional_report_id <= 0:
+        professional_report = db_layer.get_professional_report(
+            dsn=dsn,
+            execution_id=execution_id,
+        )
+
+        if not professional_report:
+            raise HTTPException(
+                status_code=500,
+                detail="No se encontró el reporte general asociado a la versión.",
+            )
+
+        professional_report_id = int(professional_report["id"])
+
+    pdf_result = generate_professional_report_pdf(
+        detail=detail,
+        version=version,
+        reports_root=REPORTS_DIR,
+    )
+
+    pdf_file_name = str(pdf_result.get("pdf_file_name") or "")
+    pdf_relative_path = str(pdf_result.get("pdf_relative_path") or "")
+    run_id = str(
+        pdf_result.get("run_id")
+        or get_report_folder_name(detail.get("report_dir"))
+        or ""
+    )
+    size_bytes = int(pdf_result.get("size_bytes") or 0)
+
+    if not pdf_file_name or not pdf_relative_path:
+        raise HTTPException(
+            status_code=500,
+            detail="El PDF fue generado, pero no se obtuvo nombre o ruta relativa.",
+        )
+
+    artifact_id = db_layer.register_artifact(
+        dsn=dsn,
+        execution_id=execution_id,
+        artifact_type=getattr(
+            config,
+            "ARTIFACT_TYPE_PROFESSIONAL_REPORT_PDF",
+            "professional_report_pdf",
+        ),
+        file_name=pdf_file_name,
+        relative_path=pdf_relative_path,
+        mime_type=getattr(config, "MIME_APPLICATION_PDF", "application/pdf"),
+        size_bytes=size_bytes,
+    )
+
+    db_layer.register_professional_report_pdf_export(
+        dsn=dsn,
+        professional_report_id=professional_report_id,
+        professional_report_version_id=int(version["id"]),
+        execution_id=execution_id,
+        artifact_id=artifact_id if artifact_id > 0 else None,
+        pdf_file_name=pdf_file_name,
+        pdf_relative_path=pdf_relative_path,
+        exported_by=exported_by,
+    )
+
+    pdf_result["run_id"] = run_id
+    return pdf_result
 
 
 # ==========================================================
@@ -300,6 +435,10 @@ def start_scan(
     - el usuario solo ingresa la URL y timeout base;
     - DASTXH ejecuta internamente el flujo profundo controlado;
     - hsecscan queda habilitado como parte del flujo estándar.
+
+    Nota:
+    - request_source se conserva con valor "web" en BD por compatibilidad,
+      pero ya no es necesario mostrarlo como tarjeta en la GUI.
     """
     target_url = validate_target_url(url)
     timeout_s = timeout if timeout is not None else get_default_timeout()
@@ -384,8 +523,6 @@ def execution_detail(request: Request, execution_id: int):
             "professional_report_view": professional_report_view,
         },
     )
-
-
 # ==========================================================
 # RUTAS WEB: REPORTE GENERAL PROFESIONAL
 # ==========================================================
@@ -401,6 +538,10 @@ def generate_professional_report(request: Request, execution_id: int):
     - si la IA falla, usa fallback determinístico;
     - guarda el contenido como versión actual editable;
     - crea una versión histórica.
+
+    Nota de flujo:
+    - En la GUI este botón se muestra como acción para crear una nueva
+      versión posterior, no como primer paso obligatorio.
     """
     dsn = wait_until_db_ready(timeout_s=20)
     ensure_work_paths()
@@ -498,7 +639,9 @@ async def save_professional_report(request: Request, execution_id: int):
 @app.post("/executions/{execution_id}/professional-report/print")
 async def print_professional_report(request: Request, execution_id: int):
     """
-    Imprime/exporta el Reporte General Profesional a PDF.
+    Imprime/exporta el Reporte General Profesional a PDF desde el formulario actual.
+
+    Esta ruta se conserva por compatibilidad.
 
     Flujo:
     1. Lee el formulario actual.
@@ -508,22 +651,19 @@ async def print_professional_report(request: Request, execution_id: int):
     5. Registra la exportación en professional_report_pdf_exports.
     6. Redirige al PDF generado.
 
-    Esto garantiza trazabilidad:
-    - el PDF queda asociado a una versión histórica inmutable;
-    - el archivo queda en artifacts;
-    - la exportación queda registrada en BD.
+    En la GUI nueva, lo recomendable es:
+    - guardar primero;
+    - luego imprimir una versión histórica ya guardada.
     """
     dsn = wait_until_db_ready(timeout_s=20)
     ensure_work_paths()
 
-    # Carga inicial para verificar existencia y obtener report_dir.
     detail = load_execution_detail_or_404(dsn=dsn, execution_id=execution_id)
 
     form = await request.form()
     form_data = dict(form)
     payload = build_report_payload_from_form(form_data)
 
-    # Crea una versión histórica específica para este PDF.
     pdf_version = db_layer.create_professional_report_pdf_snapshot_version(
         dsn=dsn,
         execution_id=execution_id,
@@ -532,65 +672,65 @@ async def print_professional_report(request: Request, execution_id: int):
         created_by="web",
     )
 
-    # Recarga detalle para que el PDF use datos actualizados y el reporte actual ya guardado.
+    # Recarga detalle para que el PDF use datos actualizados.
     detail = load_execution_detail_or_404(dsn=dsn, execution_id=execution_id)
 
-    pdf_result = generate_professional_report_pdf(
+    pdf_result = register_professional_report_pdf_from_version(
+        dsn=dsn,
+        execution_id=execution_id,
         detail=detail,
         version=pdf_version,
-        reports_root=REPORTS_DIR,
-    )
-
-    pdf_file_name = str(pdf_result.get("pdf_file_name") or "")
-    pdf_relative_path = str(pdf_result.get("pdf_relative_path") or "")
-    run_id = str(pdf_result.get("run_id") or get_report_folder_name(detail.get("report_dir")) or "")
-    size_bytes = int(pdf_result.get("size_bytes") or 0)
-
-    if not pdf_file_name or not pdf_relative_path:
-        raise HTTPException(
-            status_code=500,
-            detail="El PDF fue generado, pero no se obtuvo nombre o ruta relativa.",
-        )
-
-    professional_report = db_layer.get_professional_report(
-        dsn=dsn,
-        execution_id=execution_id,
-    )
-
-    if not professional_report:
-        raise HTTPException(
-            status_code=500,
-            detail="No se encontró el reporte general después de generar la versión PDF.",
-        )
-
-    artifact_id = db_layer.register_artifact(
-        dsn=dsn,
-        execution_id=execution_id,
-        artifact_type=getattr(
-            config,
-            "ARTIFACT_TYPE_PROFESSIONAL_REPORT_PDF",
-            "professional_report_pdf",
-        ),
-        file_name=pdf_file_name,
-        relative_path=pdf_relative_path,
-        mime_type=getattr(config, "MIME_APPLICATION_PDF", "application/pdf"),
-        size_bytes=size_bytes,
-    )
-
-    db_layer.register_professional_report_pdf_export(
-        dsn=dsn,
-        professional_report_id=int(professional_report["id"]),
-        professional_report_version_id=int(pdf_version["id"]),
-        execution_id=execution_id,
-        artifact_id=artifact_id if artifact_id > 0 else None,
-        pdf_file_name=pdf_file_name,
-        pdf_relative_path=pdf_relative_path,
         exported_by="web",
     )
 
-    return redirect_to_generated_pdf(run_id=run_id, pdf_file_name=pdf_file_name)
+    return redirect_to_generated_pdf(
+        run_id=str(pdf_result.get("run_id") or ""),
+        pdf_file_name=str(pdf_result.get("pdf_file_name") or ""),
+    )
 
 
+@app.post("/executions/{execution_id}/professional-report/versions/{version_id}/print")
+def print_professional_report_version(
+    request: Request,
+    execution_id: int,
+    version_id: int,
+):
+    """
+    Imprime/exporta una versión histórica específica del Reporte General.
+
+    Esta es la ruta que faltaba y causaba:
+    POST /executions/{id}/professional-report/versions/{version_id}/print -> 404
+
+    Ventajas:
+    - no modifica el contenido actual editable;
+    - no crea una versión nueva innecesaria;
+    - permite imprimir versiones antiguas;
+    - mantiene trazabilidad: PDF -> versión histórica exacta;
+    - desde HTML se usa con target="_blank" para abrir el PDF en pestaña nueva.
+    """
+    dsn = wait_until_db_ready(timeout_s=20)
+    ensure_work_paths()
+
+    detail = load_execution_detail_or_404(dsn=dsn, execution_id=execution_id)
+
+    version = load_professional_report_version_or_404(
+        dsn=dsn,
+        execution_id=execution_id,
+        version_id=version_id,
+    )
+
+    pdf_result = register_professional_report_pdf_from_version(
+        dsn=dsn,
+        execution_id=execution_id,
+        detail=detail,
+        version=version,
+        exported_by="web",
+    )
+
+    return redirect_to_generated_pdf(
+        run_id=str(pdf_result.get("run_id") or ""),
+        pdf_file_name=str(pdf_result.get("pdf_file_name") or ""),
+    )
 @app.get("/executions/{execution_id}/professional-report/versions/{version_id}", response_class=HTMLResponse)
 def view_professional_report_version(
     request: Request,
@@ -603,19 +743,18 @@ def view_professional_report_version(
     Regla:
     - Las versiones históricas son solo lectura.
     - No existe ruta POST para editarlas.
+    - La versión histórica consultada también puede imprimirse desde la GUI.
     """
     dsn = wait_until_db_ready(timeout_s=20)
     ensure_work_paths()
 
     detail = load_execution_detail_or_404(dsn=dsn, execution_id=execution_id)
 
-    version = db_layer.get_professional_report_version(
+    version = load_professional_report_version_or_404(
         dsn=dsn,
+        execution_id=execution_id,
         version_id=version_id,
     )
-
-    if not version or int(version.get("execution_id") or 0) != execution_id:
-        raise HTTPException(status_code=404, detail="Versión histórica no encontrada.")
 
     artifacts = detail.get("artifacts", [])
     files = [str(item.get("file_name", "")) for item in artifacts if item.get("file_name")]
@@ -668,4 +807,5 @@ def health() -> Dict[str, Any]:
         "standard_hsecscan_enabled": STANDARD_ENABLE_HSECSCAN,
         "professional_report_enabled": True,
         "professional_report_pdf_enabled": True,
+        "professional_report_version_pdf_enabled": True,
     }
