@@ -9,17 +9,25 @@ Objetivo:
 - Devolver un payload editable compatible con professional_reports.
 - Usar fallback determinístico si la IA falla, está desactivada o responde mal.
 
+Regla actual del Reporte General:
+- El texto editable interpreta los resultados.
+- Las tablas de evidencia objetiva se muestran debajo de cada sección.
+- La IA NO debe copiar toda la evidencia dentro del texto.
+- La IA debe redactar conclusiones, contexto y explicación profesional.
+- Las evidencias de cabeceras, cookies y XSS se cargan desde professional_report_service.py.
+
 Importante:
 - La IA NO decide riesgos desde cero.
 - La IA NO ejecuta herramientas.
 - La IA NO modifica la base de datos.
 - La IA NO reemplaza la evidencia técnica.
+- La IA NO debe inventar cabeceras, cookies, CWE, payloads ni hallazgos.
 - La IA solo redacta secciones profesionales a partir de datos ya calculados.
 
 Flujo esperado:
 1. professional_report_service construye un contexto técnico resumido.
 2. ai_report_service envía ese contexto al modelo local.
-3. El modelo devuelve JSON con las secciones editables.
+3. El modelo devuelve JSON con las secciones editables visibles.
 4. Si el JSON es válido, se mezcla con el fallback determinístico.
 5. Si algo falla, se usa el fallback determinístico.
 6. webapp.py guarda el resultado usando db.save_professional_report(...).
@@ -47,7 +55,7 @@ import os
 import re
 import urllib.error
 import urllib.request
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from services.professional_report_service import (
     build_deterministic_professional_report_payload,
@@ -196,8 +204,6 @@ def _chat_completions_url(base_url: str) -> str:
     """
     clean_base = str(base_url or "").strip().rstrip("/")
     return f"{clean_base}/chat/completions"
-
-
 # ==========================================================
 # PROMPTS
 # ==========================================================
@@ -205,6 +211,9 @@ def _chat_completions_url(base_url: str) -> str:
 def _build_system_prompt() -> str:
     """
     Prompt de sistema para controlar el comportamiento de la IA.
+
+    La IA debe generar texto editable, no tablas de evidencia.
+    Las tablas se muestran aparte en la GUI y en el PDF.
     """
     fields = get_professional_report_fields()
     fields_text = ", ".join(fields)
@@ -213,20 +222,42 @@ def _build_system_prompt() -> str:
         "Eres un asistente técnico que redacta reportes profesionales de seguridad web "
         "para el prototipo académico DASTXH.\n\n"
         "Debes escribir en español latino, con tono formal, claro y profesional.\n\n"
+        "Contexto de funcionamiento del reporte:\n"
+        "- El Reporte General tiene campos editables de texto.\n"
+        "- Debajo de las secciones de cabeceras, cookies y XSS se muestran tablas de evidencia objetiva.\n"
+        "- Tu tarea es redactar interpretación profesional, no duplicar toda la evidencia dentro del texto.\n"
+        "- Puedes mencionar que la evidencia objetiva se muestra en la tabla correspondiente.\n\n"
         "Reglas obligatorias:\n"
         "1. No inventes hallazgos.\n"
-        "2. No afirmes vulnerabilidades no respaldadas por los datos.\n"
-        "3. No reemplaces la evidencia técnica.\n"
+        "2. No inventes cabeceras, cookies, payloads, CWE, porcentajes ni conteos.\n"
+        "3. No afirmes vulnerabilidades no respaldadas por los datos.\n"
         "4. No cambies porcentajes, conteos ni resultados técnicos.\n"
-        "5. Explica que hsecscan es una capa complementaria cuando corresponda.\n"
-        "6. Explica que las cabeceras históricas u obsoletas no penalizan el cumplimiento principal.\n"
-        "7. Si no hay hallazgos XSS, dilo con cautela: no se observaron hallazgos válidos en esta ejecución.\n"
-        "8. Si hay cookies, menciona atributos Secure, HttpOnly y SameSite cuando aplique.\n"
-        "9. Mantén las secciones editables y aptas para un informe académico/profesional.\n"
-        "10. Devuelve únicamente JSON válido, sin markdown, sin comentarios y sin texto adicional.\n\n"
+        "5. No pegues tablas en texto plano dentro de los campos editables.\n"
+        "6. No copies listas largas de evidencia dentro del texto; esa evidencia ya va en tablas.\n"
+        "7. Explica que curl define el cumplimiento principal de cabeceras.\n"
+        "8. Explica que hsecscan es una capa complementaria de contraste cuando corresponda.\n"
+        "9. Explica que cabeceras históricas u obsoletas reportadas por hsecscan no penalizan el cumplimiento principal.\n"
+        "10. Si no hay hallazgos XSS, dilo con cautela: no se observaron hallazgos válidos en esta ejecución.\n"
+        "11. Si hay cookies, menciona atributos Secure, HttpOnly y SameSite cuando aplique.\n"
+        "12. Si hay evidencia XSS, redacta interpretación prudente e indica que requiere validación manual.\n"
+        "13. Mantén las secciones aptas para un informe académico/profesional.\n"
+        "14. Devuelve únicamente JSON válido, sin markdown, sin comentarios y sin texto adicional.\n\n"
+        "Estructura conceptual esperada:\n"
+        "- Resumen ejecutivo: síntesis general de la evaluación.\n"
+        "- Alcance: URL, enfoque de caja negra y capas incluidas.\n"
+        "- Metodología: flujo DASTXH, herramientas y asistencia IA.\n"
+        "- Cabeceras: interpretación consolidada de curl + hsecscan, sin duplicar evidencia.\n"
+        "- Cookies: interpretación de atributos y riesgos, sin duplicar evidencia.\n"
+        "- XSS: interpretación de hallazgos o ausencia de hallazgos, sin duplicar evidencia.\n"
+        "- Hallazgos priorizados: puntos que requieren atención.\n"
+        "- Recomendaciones: acciones generales de mejora.\n"
+        "- Limitaciones: alcance, variabilidad, necesidad de revisión manual.\n"
+        "- Conclusión: cierre técnico defendible.\n"
+        "- Notas del analista: opcional, puede quedar vacío.\n\n"
         "El JSON debe contener exactamente estas claves:\n"
         f"{fields_text}\n\n"
-        "Cada valor debe ser texto. No uses listas JSON anidadas. Si necesitas enumerar, usa texto con viñetas dentro del string."
+        "Cada valor debe ser texto. No uses listas JSON anidadas. "
+        "Si necesitas enumerar, usa texto con viñetas dentro del string."
     )
 
 
@@ -237,13 +268,18 @@ def _build_user_prompt(context: Dict[str, Any]) -> str:
     context_json = json.dumps(context, ensure_ascii=False, indent=2)
 
     return (
-        "Genera una primera versión editable del reporte general profesional de DASTXH "
+        "Genera una primera versión editable del Reporte General Profesional de DASTXH "
         "a partir del siguiente contexto técnico resumido.\n\n"
-        "El reporte debe ser útil para una entrega académica o revisión técnica, "
-        "sin ser excesivamente largo.\n\n"
-        "Contexto técnico:\n"
+        "Instrucciones específicas:\n"
+        "- Redacta el texto editable del reporte.\n"
+        "- No insertes tablas en el texto.\n"
+        "- No repitas toda la evidencia objetiva dentro de las secciones.\n"
+        "- La evidencia objetiva ya será mostrada debajo de cada sección en tablas separadas.\n"
+        "- Usa los conteos, porcentajes y resúmenes exactamente como aparecen en el contexto.\n"
+        "- Si una sección no tiene evidencia, redacta con prudencia y aclara la limitación.\n\n"
+        "Contexto técnico resumido:\n"
         f"{context_json}\n\n"
-        "Devuelve únicamente JSON válido con las secciones solicitadas."
+        "Devuelve únicamente JSON válido con las claves solicitadas."
     )
 
 
@@ -324,7 +360,6 @@ def _parse_openai_compatible_response(response_json: Dict[str, Any]) -> str:
         if content is not None:
             return str(content)
 
-    # Algunos endpoints podrían devolver texto directo.
     text = first_choice.get("text")
 
     if text is not None:
@@ -361,8 +396,6 @@ def _validate_generated_payload(payload: Dict[str, Any]) -> Dict[str, str]:
         raise ValueError("La respuesta IA no contiene suficientes secciones útiles.")
 
     return normalized
-
-
 # ==========================================================
 # LLAMADA AL MODELO
 # ==========================================================
@@ -392,11 +425,9 @@ def _call_openai_compatible_chat(
         ],
         "temperature": _get_report_ai_temperature(),
         "max_tokens": _get_report_ai_max_output_tokens(),
+        "stream": False,
     }
 
-    # Algunos endpoints OpenAI-compatible aceptan response_format.
-    # Si el runtime no lo soporta, podría devolver error.
-    # Por estabilidad con Docker Model Runner local, no lo forzamos aquí.
     raw_body = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
 
     request = urllib.request.Request(
@@ -438,6 +469,28 @@ def _call_openai_compatible_chat(
     return parsed
 
 
+def _build_debug_context_summary(context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Construye un resumen pequeño del contexto enviado a IA.
+
+    No se usa para persistir todo el prompt.
+    Sirve para devolver información diagnóstica controlada.
+    """
+    execution = context.get("execution") or {}
+    headers = context.get("headers") or {}
+    cookies = context.get("cookies") or {}
+    xss = context.get("xss") or {}
+
+    return {
+        "execution_id": execution.get("id"),
+        "target_url": execution.get("target_url"),
+        "headers_evidence_count": headers.get("evidence_count"),
+        "cookies_evidence_count": cookies.get("evidence_count"),
+        "xss_evidence_count": xss.get("evidence_count"),
+        "headers_compliance": headers.get("cumplimiento_pct"),
+        "cookies_count": cookies.get("cookies_count"),
+        "xss_display_count": xss.get("xss_display_count"),
+    }
 # ==========================================================
 # API PÚBLICA DEL SERVICIO
 # ==========================================================
@@ -459,6 +512,11 @@ def generate_professional_report_with_ai(detail: Dict[str, Any]) -> Dict[str, An
 
     Si la IA falla, retorna ok=True con fallback_used=True.
     Esto permite que el usuario siempre obtenga un borrador editable.
+
+    Importante:
+    - El payload contiene solo texto editable.
+    - La evidencia objetiva no se guarda en el payload.
+    - Las tablas se reconstruyen desde detail al abrir la vista o generar PDF.
     """
     fallback_payload = build_deterministic_professional_report_payload(detail)
     context = build_professional_report_ai_context(detail)
@@ -471,7 +529,7 @@ def generate_professional_report_with_ai(detail: Dict[str, Any]) -> Dict[str, An
             "payload": fallback_payload,
             "fallback_used": True,
             "error": "La generación IA del reporte general está desactivada.",
-            "context": context,
+            "context": _build_debug_context_summary(context),
         }
 
     model_name = _get_report_ai_model()
@@ -501,7 +559,7 @@ def generate_professional_report_with_ai(detail: Dict[str, Any]) -> Dict[str, An
             "payload": final_payload,
             "fallback_used": False,
             "error": None,
-            "context": context,
+            "context": _build_debug_context_summary(context),
         }
 
     except Exception as exc:
@@ -512,7 +570,7 @@ def generate_professional_report_with_ai(detail: Dict[str, Any]) -> Dict[str, An
             "payload": fallback_payload,
             "fallback_used": True,
             "error": str(exc),
-            "context": context,
+            "context": _build_debug_context_summary(context),
         }
 
 
@@ -524,6 +582,10 @@ def build_professional_report_without_ai(detail: Dict[str, Any]) -> Dict[str, An
     - el usuario no quiere IA;
     - el modelo local no está disponible;
     - se requiere un fallback estable.
+
+    Importante:
+    - El payload contiene solo texto editable.
+    - La evidencia objetiva se carga por separado desde professional_report_service.py.
     """
     payload = build_deterministic_professional_report_payload(detail)
     context = build_professional_report_ai_context(detail)
@@ -535,5 +597,5 @@ def build_professional_report_without_ai(detail: Dict[str, Any]) -> Dict[str, An
         "payload": payload,
         "fallback_used": True,
         "error": None,
-        "context": context,
+        "context": _build_debug_context_summary(context),
     }

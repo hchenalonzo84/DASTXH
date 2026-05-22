@@ -5,8 +5,14 @@ professional_report_pdf_service.py
 Objetivo:
 - Tomar una versión histórica exacta del reporte general.
 - Generar un PDF profesional a partir de esa versión.
+- Incluir texto editable + evidencia objetiva resumida.
 - Guardar el PDF en la carpeta de artifacts de la ejecución:
     /work/reports/<run_id>/reporte_general_vX_YYYYMMDD_HHMMSS.pdf
+
+Regla del reporte:
+- El texto editable interpreta.
+- Las tablas de evidencia respaldan objetivamente el análisis.
+- La evidencia se toma de los mismos datos usados en la pestaña Resumen.
 
 Importante:
 - Este archivo NO llama IA.
@@ -14,14 +20,6 @@ Importante:
 - Este archivo NO registra artifacts.
 - Este archivo NO decide contenido técnico.
 - Solo toma texto ya guardado/versionado y lo convierte a PDF.
-
-Flujo esperado:
-1. webapp.py recibe POST /executions/{id}/professional-report/print
-2. webapp.py guarda primero los cambios actuales.
-3. db.py crea una versión histórica tipo pdf_export_snapshot.
-4. professional_report_pdf_service.py genera el PDF desde esa versión.
-5. webapp.py registra el PDF en artifacts.
-6. webapp.py registra la exportación en professional_report_pdf_exports.
 """
 
 from __future__ import annotations
@@ -30,9 +28,10 @@ import html
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import config
+from services.professional_report_service import build_professional_report_pdf_context
 
 
 # ==========================================================
@@ -81,7 +80,6 @@ def _sanitize_filename_part(value: Any, default: str = "reporte") -> str:
     """
     text = _safe_text(value, default).lower()
 
-    # Reemplazos básicos para nombres amigables.
     replacements = {
         "á": "a",
         "é": "e",
@@ -173,8 +171,6 @@ def _build_relative_path(run_folder_name: str, file_name: str) -> str:
     Construye una ruta relativa lógica para registrar como artifact.
     """
     return f"reports/{run_folder_name}/{file_name}"
-
-
 # ==========================================================
 # HELPERS DE CONTENIDO
 # ==========================================================
@@ -191,44 +187,6 @@ def _get_snapshot(version: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
-def _get_editable_fields() -> List[str]:
-    """
-    Devuelve campos editables del reporte general.
-    """
-    fields = getattr(config, "PROFESSIONAL_REPORT_EDITABLE_FIELDS", [])
-
-    if isinstance(fields, list) and fields:
-        return [str(item) for item in fields]
-
-    return [
-        "report_title",
-        "executive_summary",
-        "scope_text",
-        "methodology_text",
-        "headers_analysis",
-        "hsecscan_analysis",
-        "cookies_analysis",
-        "xss_analysis",
-        "prioritized_findings",
-        "general_recommendations",
-        "limitations_text",
-        "conclusion_text",
-        "analyst_notes",
-    ]
-
-
-def _get_section_labels() -> Dict[str, str]:
-    """
-    Devuelve etiquetas amigables para las secciones del reporte.
-    """
-    labels = getattr(config, "PROFESSIONAL_REPORT_SECTION_LABELS", {})
-
-    if isinstance(labels, dict):
-        return {str(k): str(v) for k, v in labels.items()}
-
-    return {field: field for field in _get_editable_fields()}
-
-
 def _clean_report_text(value: Any) -> str:
     """
     Limpia texto para evitar caracteres que puedan dar problemas visuales.
@@ -237,13 +195,22 @@ def _clean_report_text(value: Any) -> str:
     """
     text = _safe_text(value)
 
-    # Normaliza saltos de línea.
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-
-    # Evita caracteres de control.
     text = "".join(ch for ch in text if ch == "\n" or ch == "\t" or ord(ch) >= 32)
 
     return text.strip()
+
+
+def _truncate_text(value: Any, max_chars: int = 320) -> str:
+    """
+    Recorta texto largo para evitar que las tablas del PDF se vuelvan ilegibles.
+    """
+    text = _clean_report_text(value)
+
+    if len(text) <= max_chars:
+        return text
+
+    return text[:max_chars].rstrip() + "..."
 
 
 def _paragraph_chunks(text: str) -> List[str]:
@@ -270,7 +237,6 @@ def _paragraph_chunks(text: str) -> List[str]:
                 current = []
             continue
 
-        # Si parece viñeta, se trata como bloque individual.
         if raw_line.startswith("- ") or raw_line.startswith("* "):
             if current:
                 chunks.append("\n".join(current))
@@ -290,17 +256,27 @@ def _paragraph_chunks(text: str) -> List[str]:
 def _to_reportlab_html(text: str) -> str:
     """
     Convierte texto plano a contenido seguro para ReportLab Paragraph.
-
-    ReportLab Paragraph acepta un subconjunto HTML.
     """
     escaped = html.escape(text)
     escaped = escaped.replace("\n", "<br/>")
     return escaped
 
 
-# ==========================================================
-# CONSTRUCCIÓN DEL PDF
-# ==========================================================
+def _make_paragraph(text: str, style: Any) -> Any:
+    """
+    Crea un Paragraph seguro.
+    """
+    from reportlab.platypus import Paragraph
+
+    return Paragraph(_to_reportlab_html(text), style)
+
+
+def _cell(value: Any, style: Any, max_chars: int = 260) -> Any:
+    """
+    Convierte un valor de tabla a Paragraph seguro.
+    """
+    return _make_paragraph(_truncate_text(value, max_chars=max_chars), style)
+
 
 def _build_header_footer(canvas: Any, doc: Any, detail: Dict[str, Any], version: Dict[str, Any]) -> None:
     """
@@ -317,10 +293,10 @@ def _build_header_footer(canvas: Any, doc: Any, detail: Dict[str, Any], version:
     footer_text = f"Página {doc.page}"
 
     canvas.setFont("Helvetica", 8)
-    canvas.drawString(doc.leftMargin, height - 28, header_text)
+    canvas.drawString(doc.leftMargin, height - 22, header_text)
 
     canvas.setFont("Helvetica", 8)
-    canvas.drawRightString(width - doc.rightMargin, 20, footer_text)
+    canvas.drawRightString(width - doc.rightMargin, 18, footer_text)
 
     canvas.restoreState()
 
@@ -376,95 +352,15 @@ def _build_technical_summary_table(detail: Dict[str, Any]) -> List[List[str]]:
         ["Hallazgos XSS mostrables", xss_count],
         ["Artifacts registrados", str(artifacts_count)],
     ]
-
-
-def _append_table(story: List[Any], data: List[List[str]], styles: Dict[str, Any]) -> None:
-    """
-    Agrega una tabla al documento.
-    """
-    from reportlab.lib import colors
-    from reportlab.platypus import Spacer, Table, TableStyle
-
-    normal_style = styles["BodySmall"]
-
-    rendered_data: List[List[Any]] = []
-
-    for key, value in data:
-        rendered_data.append(
-            [
-                _make_paragraph(str(key), styles["TableHeader"]),
-                _make_paragraph(str(value), normal_style),
-            ]
-        )
-
-    table = Table(
-        rendered_data,
-        colWidths=[150, 350],
-        hAlign="LEFT",
-    )
-
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E8EEF8")),
-                ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#111827")),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CBD5E1")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ]
-        )
-    )
-
-    story.append(table)
-    story.append(Spacer(1, 12))
-
-
-def _make_paragraph(text: str, style: Any) -> Any:
-    """
-    Crea un Paragraph seguro.
-    """
-    from reportlab.platypus import Paragraph
-
-    return Paragraph(_to_reportlab_html(text), style)
-
-
-def _append_text_section(
-    story: List[Any],
-    title: str,
-    text: str,
-    styles: Dict[str, Any],
-) -> None:
-    """
-    Agrega una sección textual al PDF.
-    """
-    from reportlab.platypus import Spacer
-
-    story.append(_make_paragraph(title, styles["SectionTitle"]))
-    story.append(Spacer(1, 4))
-
-    chunks = _paragraph_chunks(text)
-
-    for chunk in chunks:
-        clean_chunk = _clean_report_text(chunk)
-
-        if clean_chunk.startswith("- ") or clean_chunk.startswith("* "):
-            bullet_text = clean_chunk[2:].strip()
-            story.append(_make_paragraph(f"• {bullet_text}", styles["BulletText"]))
-        else:
-            story.append(_make_paragraph(clean_chunk, styles["BodyText"]))
-
-        story.append(Spacer(1, 5))
-
-    story.append(Spacer(1, 8))
-
+# ==========================================================
+# ESTILOS Y TABLAS
+# ==========================================================
 
 def _build_styles() -> Dict[str, Any]:
     """
     Construye estilos de ReportLab para el PDF.
     """
+    from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import inch
@@ -488,7 +384,7 @@ def _build_styles() -> Dict[str, Any]:
             fontSize=10,
             leading=13,
             alignment=TA_CENTER,
-            textColor="#334155",
+            textColor=colors.HexColor("#334155"),
             spaceAfter=14,
         ),
         "SectionTitle": ParagraphStyle(
@@ -498,9 +394,20 @@ def _build_styles() -> Dict[str, Any]:
             fontSize=12,
             leading=15,
             alignment=TA_LEFT,
-            textColor="#0F172A",
+            textColor=colors.HexColor("#0F172A"),
             spaceBefore=8,
             spaceAfter=6,
+        ),
+        "EvidenceTitle": ParagraphStyle(
+            "DASTXHEvidenceTitle",
+            parent=base["Heading3"],
+            fontName="Helvetica-Bold",
+            fontSize=10,
+            leading=12,
+            alignment=TA_LEFT,
+            textColor=colors.HexColor("#1E293B"),
+            spaceBefore=4,
+            spaceAfter=5,
         ),
         "BodyText": ParagraphStyle(
             "DASTXHBodyText",
@@ -515,16 +422,33 @@ def _build_styles() -> Dict[str, Any]:
             "DASTXHBodySmall",
             parent=base["Normal"],
             fontName="Helvetica",
-            fontSize=8.6,
-            leading=11,
+            fontSize=8.2,
+            leading=10,
             alignment=TA_LEFT,
         ),
         "TableHeader": ParagraphStyle(
             "DASTXHTableHeader",
             parent=base["Normal"],
             fontName="Helvetica-Bold",
-            fontSize=8.7,
-            leading=11,
+            fontSize=6.5,
+            leading=8,
+            alignment=TA_LEFT,
+            textColor=colors.white,
+        ),
+        "TableCell": ParagraphStyle(
+            "DASTXHTableCell",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=6.2,
+            leading=7.4,
+            alignment=TA_LEFT,
+        ),
+        "TableCellSmall": ParagraphStyle(
+            "DASTXHTableCellSmall",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=5.8,
+            leading=7.0,
             alignment=TA_LEFT,
         ),
         "BulletText": ParagraphStyle(
@@ -537,8 +461,330 @@ def _build_styles() -> Dict[str, Any]:
             firstLineIndent=-0.12 * inch,
             spaceAfter=3,
         ),
+        "NoteText": ParagraphStyle(
+            "DASTXHNoteText",
+            parent=base["Normal"],
+            fontName="Helvetica-Oblique",
+            fontSize=8.1,
+            leading=10,
+            textColor=colors.HexColor("#475569"),
+        ),
     }
 
+
+def _append_key_value_table(story: List[Any], data: List[List[str]], styles: Dict[str, Any]) -> None:
+    """
+    Agrega una tabla de llave/valor al documento.
+    """
+    from reportlab.lib import colors
+    from reportlab.platypus import Spacer, Table, TableStyle
+
+    rendered_data: List[List[Any]] = []
+
+    for key, value in data:
+        rendered_data.append(
+            [
+                _make_paragraph(str(key), styles["TableCell"]),
+                _make_paragraph(str(value), styles["BodySmall"]),
+            ]
+        )
+
+    table = Table(
+        rendered_data,
+        colWidths=[150, 520],
+        hAlign="LEFT",
+    )
+
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E8EEF8")),
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#111827")),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CBD5E1")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+
+    story.append(table)
+    story.append(Spacer(1, 10))
+
+
+def _append_text_section(
+    story: List[Any],
+    title: str,
+    text: str,
+    styles: Dict[str, Any],
+) -> None:
+    """
+    Agrega una sección textual al PDF.
+    """
+    from reportlab.platypus import Spacer
+
+    story.append(_make_paragraph(title, styles["SectionTitle"]))
+    story.append(Spacer(1, 3))
+
+    chunks = _paragraph_chunks(text)
+
+    for chunk in chunks:
+        clean_chunk = _clean_report_text(chunk)
+
+        if clean_chunk.startswith("- ") or clean_chunk.startswith("* "):
+            bullet_text = clean_chunk[2:].strip()
+            story.append(_make_paragraph(f"• {bullet_text}", styles["BulletText"]))
+        else:
+            story.append(_make_paragraph(clean_chunk, styles["BodyText"]))
+
+        story.append(Spacer(1, 4))
+
+    story.append(Spacer(1, 6))
+
+
+def _append_generic_evidence_table(
+    story: List[Any],
+    title: str,
+    rows: List[Dict[str, Any]],
+    columns: List[Tuple[str, str, int]],
+    col_widths: List[float],
+    styles: Dict[str, Any],
+    max_rows: int,
+    empty_message: str,
+) -> None:
+    """
+    Agrega una tabla de evidencia al PDF.
+
+    columns:
+    - key
+    - label
+    - max_chars por celda
+    """
+    from reportlab.lib import colors
+    from reportlab.platypus import LongTable, Spacer, TableStyle
+
+    story.append(_make_paragraph(title, styles["EvidenceTitle"]))
+
+    if not rows:
+        story.append(_make_paragraph(empty_message, styles["NoteText"]))
+        story.append(Spacer(1, 8))
+        return
+
+    limited_rows = rows[:max_rows]
+
+    rendered_data: List[List[Any]] = [
+        [_make_paragraph(label, styles["TableHeader"]) for _, label, _ in columns]
+    ]
+
+    for row in limited_rows:
+        rendered_row: List[Any] = []
+
+        for key, _, max_chars in columns:
+            rendered_row.append(
+                _cell(
+                    row.get(key, "-"),
+                    styles["TableCellSmall"],
+                    max_chars=max_chars,
+                )
+            )
+
+        rendered_data.append(rendered_row)
+
+    table = LongTable(
+        rendered_data,
+        colWidths=col_widths,
+        hAlign="LEFT",
+        repeatRows=1,
+    )
+
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E293B")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#F8FAFC")),
+                ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#111827")),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CBD5E1")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]
+        )
+    )
+
+    story.append(table)
+
+    if len(rows) > max_rows:
+        story.append(Spacer(1, 4))
+        story.append(
+            _make_paragraph(
+                (
+                    f"Nota: se muestran {max_rows} de {len(rows)} registros de evidencia. "
+                    "La evidencia completa permanece disponible en la aplicación y artifacts técnicos."
+                ),
+                styles["NoteText"],
+            )
+        )
+
+    story.append(Spacer(1, 12))
+# ==========================================================
+# TABLAS DE EVIDENCIA ESPECÍFICAS
+# ==========================================================
+
+def _append_headers_evidence_table(
+    story: List[Any],
+    evidence: Dict[str, Any],
+    styles: Dict[str, Any],
+) -> None:
+    """
+    Agrega evidencia consolidada curl vs hsecscan.
+    """
+    rows = evidence.get("rows") or []
+    max_rows = int(getattr(config, "PROFESSIONAL_REPORT_PDF_MAX_HEADER_EVIDENCE_ROWS", 20))
+
+    columns = [
+        ("header_name", "Cabecera", 80),
+        ("classification", "Clasificación", 100),
+        ("curl_status", "curl", 60),
+        ("hsecscan_status", "hsecscan", 70),
+        ("comparison_result", "Resultado", 110),
+        ("priority", "Prioridad", 40),
+        ("cwe", "CWE", 120),
+        ("interpretation", "Interpretación", 260),
+        ("recommendation", "Recomendación", 260),
+    ]
+
+    col_widths = [65, 80, 45, 55, 80, 45, 70, 150, 150]
+
+    _append_generic_evidence_table(
+        story=story,
+        title=evidence.get("title") or "Evidencia consolidada curl vs hsecscan",
+        rows=rows,
+        columns=columns,
+        col_widths=col_widths,
+        styles=styles,
+        max_rows=max_rows,
+        empty_message="No hay evidencia consolidada de cabeceras disponible para esta ejecución.",
+    )
+
+
+def _append_cookies_evidence_table(
+    story: List[Any],
+    evidence: Dict[str, Any],
+    styles: Dict[str, Any],
+) -> None:
+    """
+    Agrega evidencia de cookies observadas.
+    """
+    rows = evidence.get("rows") or []
+    max_rows = int(getattr(config, "PROFESSIONAL_REPORT_PDF_MAX_COOKIE_EVIDENCE_ROWS", 20))
+
+    columns = [
+        ("cookie", "Cookie", 100),
+        ("secure", "Secure", 20),
+        ("httponly", "HttpOnly", 20),
+        ("samesite", "SameSite", 20),
+        ("samesite_value", "Valor", 40),
+        ("risk_level", "Riesgo", 40),
+        ("cwe", "CWE", 120),
+        ("interpretation", "Interpretación", 260),
+        ("recommendation", "Recomendación", 260),
+    ]
+
+    col_widths = [75, 40, 45, 45, 55, 45, 85, 170, 180]
+
+    _append_generic_evidence_table(
+        story=story,
+        title=evidence.get("title") or "Evidencia de cookies observadas",
+        rows=rows,
+        columns=columns,
+        col_widths=col_widths,
+        styles=styles,
+        max_rows=max_rows,
+        empty_message="No se registró evidencia de cookies observadas para esta ejecución.",
+    )
+
+
+def _append_xss_evidence_table(
+    story: List[Any],
+    evidence: Dict[str, Any],
+    styles: Dict[str, Any],
+) -> None:
+    """
+    Agrega evidencia de hallazgos XSS.
+    """
+    rows = evidence.get("rows") or []
+    max_rows = int(getattr(config, "PROFESSIONAL_REPORT_PDF_MAX_XSS_EVIDENCE_ROWS", 20))
+
+    columns = [
+        ("row_order", "#", 20),
+        ("parameter", "Parámetro", 60),
+        ("payload", "Payload", 180),
+        ("evidence", "Evidencia", 220),
+        ("severity", "Severidad", 50),
+        ("occurrences", "Ocurr.", 30),
+        ("interpretation", "Interpretación", 240),
+        ("risk_summary", "Riesgo", 150),
+        ("likely_root_cause", "Causa probable", 140),
+        ("recommended_review_area", "Revisar", 140),
+    ]
+
+    col_widths = [24, 50, 95, 110, 45, 40, 135, 75, 75, 75]
+
+    _append_generic_evidence_table(
+        story=story,
+        title=evidence.get("title") or "Evidencia de hallazgos XSS",
+        rows=rows,
+        columns=columns,
+        col_widths=col_widths,
+        styles=styles,
+        max_rows=max_rows,
+        empty_message="No se registró evidencia XSS mostrable para esta ejecución.",
+    )
+
+
+def _append_evidence_for_field(
+    story: List[Any],
+    field: str,
+    evidence_tables: Dict[str, Any],
+    styles: Dict[str, Any],
+) -> None:
+    """
+    Agrega la tabla de evidencia correspondiente a una sección editable.
+    """
+    if not bool(getattr(config, "PROFESSIONAL_REPORT_EVIDENCE_ENABLED", True)):
+        return
+
+    if field == "headers_analysis":
+        _append_headers_evidence_table(
+            story=story,
+            evidence=evidence_tables.get("headers", {}),
+            styles=styles,
+        )
+        return
+
+    if field == "cookies_analysis":
+        _append_cookies_evidence_table(
+            story=story,
+            evidence=evidence_tables.get("cookies", {}),
+            styles=styles,
+        )
+        return
+
+    if field == "xss_analysis":
+        _append_xss_evidence_table(
+            story=story,
+            evidence=evidence_tables.get("xss", {}),
+            styles=styles,
+        )
+        return
+# ==========================================================
+# CONSTRUCCIÓN DEL PDF
+# ==========================================================
 
 def _create_pdf_document(
     pdf_path: Path,
@@ -549,7 +795,7 @@ def _create_pdf_document(
     Crea físicamente el PDF usando ReportLab.
     """
     try:
-        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.pagesizes import landscape, letter
         from reportlab.lib.units import inch
         from reportlab.platypus import PageBreak, SimpleDocTemplate, Spacer
     except ImportError as exc:
@@ -560,22 +806,31 @@ def _create_pdf_document(
         ) from exc
 
     snapshot = _get_snapshot(version)
-    labels = _get_section_labels()
-    fields = _get_editable_fields()
+
+    pdf_context = build_professional_report_pdf_context(
+        detail=detail,
+        snapshot_payload=snapshot,
+    )
+
+    payload = pdf_context.get("payload", {})
+    labels = pdf_context.get("labels", {})
+    fields = pdf_context.get("fields", [])
+    evidence_tables = pdf_context.get("evidence", {})
+
     styles = _build_styles()
 
     report_title = _safe_text(
-        snapshot.get("report_title"),
+        payload.get("report_title"),
         getattr(config, "PROFESSIONAL_REPORT_DEFAULT_TITLE", "Reporte general DASTXH"),
     )
 
     doc = SimpleDocTemplate(
         str(pdf_path),
-        pagesize=letter,
-        rightMargin=0.65 * inch,
-        leftMargin=0.65 * inch,
-        topMargin=0.62 * inch,
-        bottomMargin=0.55 * inch,
+        pagesize=landscape(letter),
+        rightMargin=0.35 * inch,
+        leftMargin=0.35 * inch,
+        topMargin=0.42 * inch,
+        bottomMargin=0.35 * inch,
         title=report_title,
         author="DASTXH",
         subject="Reporte general profesional de evaluación dinámica de seguridad web",
@@ -591,17 +846,15 @@ def _create_pdf_document(
             styles["Subtitle"],
         )
     )
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 8))
 
-    _append_table(
+    _append_key_value_table(
         story=story,
         data=_build_metadata_table(detail, version),
         styles=styles,
     )
 
-    story.append(Spacer(1, 4))
-
-    _append_table(
+    _append_key_value_table(
         story=story,
         data=_build_technical_summary_table(detail),
         styles=styles,
@@ -609,18 +862,25 @@ def _create_pdf_document(
 
     story.append(PageBreak())
 
-    # Secciones editables del reporte.
+    # Secciones editables + tablas de evidencia.
     for field in fields:
         if field == "report_title":
             continue
 
         title = labels.get(field, field)
-        text = snapshot.get(field, "")
+        text = payload.get(field, "")
 
         _append_text_section(
             story=story,
             title=title,
             text=text,
+            styles=styles,
+        )
+
+        _append_evidence_for_field(
+            story=story,
+            field=field,
+            evidence_tables=evidence_tables,
             styles=styles,
         )
 

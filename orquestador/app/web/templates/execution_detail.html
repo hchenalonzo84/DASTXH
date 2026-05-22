@@ -1285,6 +1285,10 @@
       {% set report_help_texts = report_view.get("help_texts", {}) %}
       {% set report_versions = report_view.get("versions", []) %}
       {% set report_pdf_exports = report_view.get("pdf_exports", []) %}
+      {% set report_evidence = report_view.get("evidence", {}) %}
+      {% set headers_evidence = report_evidence.get("headers", {}) %}
+      {% set cookies_evidence = report_evidence.get("cookies", {}) %}
+      {% set xss_evidence = report_evidence.get("xss", {}) %}
 
       <section class="card mb-3 analysis-wide-card">
         <h2 class="mb-3">Reporte general</h2>
@@ -1336,15 +1340,15 @@
 
           <div class="info-two-columns">
             <div class="info-two-columns__col">
-              <p><strong>Editable:</strong> solo la versión actual del reporte puede modificarse desde este formulario.</p>
-              <p><strong>Versionamiento:</strong> cada vez que se guarda, DASTXH conserva una fotografía histórica en la base de datos.</p>
-              <p><strong>Versiones anteriores:</strong> pueden consultarse, pero no editarse.</p>
+              <p><strong>Texto editable:</strong> interpreta los resultados y permite ajustar redacción antes de guardar o imprimir.</p>
+              <p><strong>Evidencia objetiva:</strong> debajo de cabeceras, cookies y XSS se muestran tablas tomadas de la pestaña Resumen.</p>
+              <p><strong>Versionamiento:</strong> cada guardado conserva una fotografía histórica en base de datos.</p>
             </div>
 
             <div class="info-two-columns__col">
-              <p><strong>IA asistida:</strong> el botón de generación crea una primera redacción usando los datos técnicos ya calculados.</p>
-              <p><strong>Supervisión humana:</strong> el usuario puede editar el texto antes de guardar o imprimir.</p>
-              <p><strong>PDF:</strong> la impresión guardará una versión histórica y generará un artifact PDF asociado a la ejecución.</p>
+              <p><strong>Cabeceras:</strong> usa la evidencia consolidada curl vs hsecscan para evitar duplicar hallazgos.</p>
+              <p><strong>Cookies y XSS:</strong> trasladan la evidencia objetiva observada por DASTXH, incluyendo CWE, interpretación y recomendaciones cuando existen.</p>
+              <p><strong>PDF:</strong> la impresión genera una versión histórica y registra el archivo como artifact.</p>
             </div>
           </div>
         </div>
@@ -1370,6 +1374,133 @@
                 <h3>{{ report_labels.get(field, field) }}</h3>
                 <pre class="professional-report-readonly-text">{{ readonly_snapshot.get(field, "-") }}</pre>
               </div>
+
+              {% if field == "headers_analysis" %}
+                <section class="professional-report-evidence-block mb-3">
+                  <h3>{{ headers_evidence.get("title", "Evidencia consolidada curl vs hsecscan") }}</h3>
+
+                  {% if headers_evidence.get("rows") %}
+                    <div class="table-responsive professional-report-evidence-wrapper">
+                      <table class="table table-dark table-hover align-middle mb-0 professional-report-evidence-table js-paginated-table" data-page-size="10">
+                        <thead>
+                          <tr>
+                            <th>Cabecera</th>
+                            <th>Clasificación</th>
+                            <th>curl</th>
+                            <th>hsecscan</th>
+                            <th>Resultado</th>
+                            <th>Prioridad</th>
+                            <th>CWE</th>
+                            <th>Interpretación</th>
+                            <th>Recomendación</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {% for row in headers_evidence.get("rows", []) %}
+                            <tr>
+                              <td class="break-cell">{{ row.header_name }}</td>
+                              <td class="break-cell">{{ row.classification }}</td>
+                              <td>{{ row.curl_status }}</td>
+                              <td>{{ row.hsecscan_status }}</td>
+                              <td class="break-cell">{{ row.comparison_result }}</td>
+                              <td>{{ row.priority }}</td>
+                              <td class="break-cell">{{ row.cwe }}</td>
+                              <td class="break-cell">{{ row.interpretation }}</td>
+                              <td class="break-cell">{{ row.recommendation }}</td>
+                            </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    </div>
+                  {% else %}
+                    <p>No hay evidencia consolidada de cabeceras disponible para esta ejecución.</p>
+                  {% endif %}
+                </section>
+              {% elif field == "cookies_analysis" %}
+                <section class="professional-report-evidence-block mb-3">
+                  <h3>{{ cookies_evidence.get("title", "Evidencia de cookies observadas") }}</h3>
+
+                  {% if cookies_evidence.get("rows") %}
+                    <div class="table-responsive professional-report-evidence-wrapper">
+                      <table class="table table-dark table-hover align-middle mb-0 professional-report-evidence-table js-paginated-table" data-page-size="10">
+                        <thead>
+                          <tr>
+                            <th>Cookie</th>
+                            <th>Secure</th>
+                            <th>HttpOnly</th>
+                            <th>SameSite</th>
+                            <th>Valor SameSite</th>
+                            <th>Riesgo</th>
+                            <th>CWE asociado</th>
+                            <th>Interpretación</th>
+                            <th>Recomendación</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {% for row in cookies_evidence.get("rows", []) %}
+                            <tr>
+                              <td class="break-cell">{{ row.cookie }}</td>
+                              <td>{{ row.secure }}</td>
+                              <td>{{ row.httponly }}</td>
+                              <td>{{ row.samesite }}</td>
+                              <td>{{ row.samesite_value }}</td>
+                              <td>{{ row.risk_level }}</td>
+                              <td class="break-cell">{{ row.cwe }}</td>
+                              <td class="break-cell">{{ row.interpretation }}</td>
+                              <td class="break-cell">{{ row.recommendation }}</td>
+                            </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    </div>
+                  {% else %}
+                    <p>No se registró evidencia de cookies observadas para esta ejecución.</p>
+                  {% endif %}
+                </section>
+              {% elif field == "xss_analysis" %}
+                <section class="professional-report-evidence-block mb-3">
+                  <h3>{{ xss_evidence.get("title", "Evidencia de hallazgos XSS") }}</h3>
+
+                  {% if xss_evidence.get("rows") %}
+                    <div class="table-responsive professional-report-evidence-wrapper">
+                      <table class="table table-dark table-hover align-middle mb-0 professional-report-evidence-table js-paginated-table" data-page-size="10" data-always-paginate="true">
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>Parámetro</th>
+                            <th>Payload</th>
+                            <th>Evidencia</th>
+                            <th>Severidad</th>
+                            <th>Ocurrencias</th>
+                            <th>Interpretación</th>
+                            <th>Riesgo</th>
+                            <th>Causa probable</th>
+                            <th>Revisar</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {% for row in xss_evidence.get("rows", []) %}
+                            <tr>
+                              <td>{{ row.row_order }}</td>
+                              <td>{{ row.parameter }}</td>
+                              <td class="break-cell">{{ row.payload }}</td>
+                              <td class="break-cell">{{ row.evidence }}</td>
+                              <td>{{ row.severity }}</td>
+                              <td>{{ row.occurrences }}</td>
+                              <td class="break-cell">{{ row.interpretation }}</td>
+                              <td class="break-cell">{{ row.risk_summary }}</td>
+                              <td class="break-cell">{{ row.likely_root_cause }}</td>
+                              <td class="break-cell">{{ row.recommended_review_area }}</td>
+                            </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    </div>
+                  {% else %}
+                    <p>No se registró evidencia XSS mostrable para esta ejecución.</p>
+                  {% endif %}
+                </section>
+              {% endif %}
             {% endfor %}
           </div>
 
@@ -1379,7 +1510,6 @@
             </a>
           </div>
         {% endif %}
-
         <div class="professional-report-toolbar mb-3">
           <form
             method="post"
@@ -1424,6 +1554,151 @@
                 <small>{{ report_help_texts.get(field) }}</small>
               {% endif %}
             </div>
+
+            {% if field == "headers_analysis" %}
+              <section class="professional-report-evidence-block mb-3">
+                <h3>{{ headers_evidence.get("title", "Evidencia consolidada curl vs hsecscan") }}</h3>
+                <p>
+                  Esta tabla traslada al reporte general la evidencia consolidada de la pestaña Resumen.
+                  Evita duplicar curl y hsecscan por separado, mostrando una sola lectura comparativa.
+                </p>
+
+                {% if headers_evidence.get("rows") %}
+                  <div class="table-responsive professional-report-evidence-wrapper">
+                    <table class="table table-dark table-hover align-middle mb-0 professional-report-evidence-table js-paginated-table" data-page-size="10">
+                      <thead>
+                        <tr>
+                          <th>Cabecera</th>
+                          <th>Clasificación</th>
+                          <th>curl</th>
+                          <th>hsecscan</th>
+                          <th>Resultado</th>
+                          <th>Prioridad</th>
+                          <th>CWE</th>
+                          <th>Interpretación</th>
+                          <th>Recomendación</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {% for row in headers_evidence.get("rows", []) %}
+                          <tr>
+                            <td class="break-cell">{{ row.header_name }}</td>
+                            <td class="break-cell">{{ row.classification }}</td>
+                            <td>{{ row.curl_status }}</td>
+                            <td>{{ row.hsecscan_status }}</td>
+                            <td class="break-cell">{{ row.comparison_result }}</td>
+                            <td>{{ row.priority }}</td>
+                            <td class="break-cell">{{ row.cwe }}</td>
+                            <td class="break-cell">{{ row.interpretation }}</td>
+                            <td class="break-cell">{{ row.recommendation }}</td>
+                          </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                {% else %}
+                  <div class="notice">
+                    No hay evidencia consolidada de cabeceras disponible para esta ejecución.
+                  </div>
+                {% endif %}
+              </section>
+            {% elif field == "cookies_analysis" %}
+              <section class="professional-report-evidence-block mb-3">
+                <h3>{{ cookies_evidence.get("title", "Evidencia de cookies observadas") }}</h3>
+                <p>
+                  Esta tabla traslada al reporte general la evidencia de cookies mostrada en la pestaña Resumen.
+                  Incluye atributos de seguridad, riesgo, CWE, interpretación y recomendación.
+                </p>
+
+                {% if cookies_evidence.get("rows") %}
+                  <div class="table-responsive professional-report-evidence-wrapper">
+                    <table class="table table-dark table-hover align-middle mb-0 professional-report-evidence-table js-paginated-table" data-page-size="10">
+                      <thead>
+                        <tr>
+                          <th>Cookie</th>
+                          <th>Secure</th>
+                          <th>HttpOnly</th>
+                          <th>SameSite</th>
+                          <th>Valor SameSite</th>
+                          <th>Riesgo</th>
+                          <th>CWE asociado</th>
+                          <th>Interpretación</th>
+                          <th>Recomendación</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {% for row in cookies_evidence.get("rows", []) %}
+                          <tr>
+                            <td class="break-cell">{{ row.cookie }}</td>
+                            <td>{{ row.secure }}</td>
+                            <td>{{ row.httponly }}</td>
+                            <td>{{ row.samesite }}</td>
+                            <td>{{ row.samesite_value }}</td>
+                            <td>{{ row.risk_level }}</td>
+                            <td class="break-cell">{{ row.cwe }}</td>
+                            <td class="break-cell">{{ row.interpretation }}</td>
+                            <td class="break-cell">{{ row.recommendation }}</td>
+                          </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                {% else %}
+                  <div class="notice">
+                    No se registró evidencia de cookies observadas para esta ejecución.
+                  </div>
+                {% endif %}
+              </section>
+            {% elif field == "xss_analysis" %}
+              <section class="professional-report-evidence-block mb-3">
+                <h3>{{ xss_evidence.get("title", "Evidencia de hallazgos XSS") }}</h3>
+                <p>
+                  Esta tabla traslada al reporte general la evidencia XSS mostrada en la pestaña Resumen:
+                  parámetro, payload, evidencia reflejada, severidad, interpretación, riesgo, causa probable y área de revisión.
+                </p>
+
+                {% if xss_evidence.get("rows") %}
+                  <div class="table-responsive professional-report-evidence-wrapper">
+                    <table class="table table-dark table-hover align-middle mb-0 professional-report-evidence-table js-paginated-table" data-page-size="10" data-always-paginate="true">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Parámetro</th>
+                          <th>Payload</th>
+                          <th>Evidencia</th>
+                          <th>Severidad</th>
+                          <th>Ocurrencias</th>
+                          <th>Interpretación</th>
+                          <th>Riesgo</th>
+                          <th>Causa probable</th>
+                          <th>Revisar</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {% for row in xss_evidence.get("rows", []) %}
+                          <tr>
+                            <td>{{ row.row_order }}</td>
+                            <td>{{ row.parameter }}</td>
+                            <td class="break-cell">{{ row.payload }}</td>
+                            <td class="break-cell">{{ row.evidence }}</td>
+                            <td>{{ row.severity }}</td>
+                            <td>{{ row.occurrences }}</td>
+                            <td class="break-cell">{{ row.interpretation }}</td>
+                            <td class="break-cell">{{ row.risk_summary }}</td>
+                            <td class="break-cell">{{ row.likely_root_cause }}</td>
+                            <td class="break-cell">{{ row.recommended_review_area }}</td>
+                          </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                {% else %}
+                  <div class="notice">
+                    No se registró evidencia XSS mostrable para esta ejecución.
+                  </div>
+                {% endif %}
+              </section>
+            {% endif %}
           {% endfor %}
 
           <div class="form-actions professional-report-actions">
