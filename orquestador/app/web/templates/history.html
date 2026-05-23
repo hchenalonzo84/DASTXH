@@ -3,9 +3,10 @@
 {% block content %}
 <section class="card">
   <h2>Historial de ejecuciones</h2>
+
   <p>
     Aquí puedes consultar las evaluaciones registradas en PostgreSQL,
-    incluyendo estado, origen, cumplimiento de cabeceras, hallazgos XSS,
+    incluyendo estado, cumplimiento de cabeceras, hallazgos XSS,
     grupos preparados para IA, archivos generados y acceso al detalle de cada ejecución.
   </p>
 
@@ -23,7 +24,6 @@
             <th>ID</th>
             <th>Target</th>
             <th>Estado</th>
-            <th>Origen</th>
             <th>Cumplimiento cabeceras</th>
             <th>XSS</th>
             <th>Grupos IA</th>
@@ -32,6 +32,7 @@
             <th>Detalle</th>
           </tr>
         </thead>
+
         <tbody>
           {% for item in executions %}
             <tr>
@@ -43,11 +44,9 @@
 
               <td>
                 <span class="badge badge-{{ item.status }}">
-                  {{ item.status }}
+                  {{ item.status|execution_status_label }}
                 </span>
               </td>
-
-              <td>{{ item.request_source }}</td>
 
               <td>
                 {% if item.cumplimiento_pct is not none %}
@@ -99,7 +98,7 @@
 
               <td>
                 {% if item.started_at %}
-                  {{ item.started_at.strftime("%Y-%m-%d %H:%M:%S") }}
+                  {{ item.started_at|local_datetime }}
                 {% else %}
                   -
                 {% endif %}

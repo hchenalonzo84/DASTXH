@@ -3,37 +3,37 @@ webapp.py
 - Aplicación web principal de DASTXH usando FastAPI.
 
 Esta versión:
-- mantiene una GUI minimalista
-- usa una sola URL objetivo
-- elimina la selección manual de perfil desde la GUI
-- fuerza internamente un flujo profundo controlado
-- habilita hsecscan como parte del flujo estándar
-- integra el Reporte General Profesional:
-    * contexto para pestaña Reporte general
-    * generación de borrador asistido por IA
-    * guardado editable con versionamiento histórico
-    * impresión/exportación PDF trazable
-    * impresión de versiones históricas específicas
+- mantiene una GUI minimalista;
+- usa una sola URL objetivo;
+- elimina la selección manual de perfil desde la GUI;
+- fuerza internamente un flujo profundo controlado;
+- habilita hsecscan como parte del flujo estándar;
+- integra el Reporte General:
+    * contexto para pestaña Reporte general;
+    * generación de borrador asistido por IA;
+    * guardado editable con versionamiento histórico;
+    * impresión/exportación PDF trazable;
+    * impresión de versiones históricas específicas;
+- agrega filtros globales de Jinja para:
+    * mostrar fechas en hora local de Guatemala;
+    * traducir estados internos a español;
+    * traducir tipos de versión a español.
 
-Regla del reporte general:
-- professional_reports guarda la versión actual editable.
-- professional_report_versions conserva el historial de solo lectura.
-- professional_report_pdf_exports registra cada PDF generado.
-- artifacts registra el archivo físico PDF como evidencia de la ejecución.
-
-Flujo recomendado:
-1. El usuario revisa o edita el reporte actual.
-2. Presiona Guardar cambios.
-3. El sistema crea una versión histórica.
-4. El usuario puede imprimir la versión actual guardada o cualquier versión histórica.
-5. La impresión debe abrir el PDF en pestaña nueva desde la GUI.
+Regla global de fechas:
+- PostgreSQL puede conservar las fechas en UTC.
+- DASTXH debe mostrar fechas en America/Guatemala.
+- Las plantillas HTML no deben usar .strftime(...) directamente.
+  Deben usar el filtro:
+      {{ valor_fecha|local_datetime }}
 """
 
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import config
 import db as db_layer
@@ -81,10 +81,10 @@ REPORTS_DIR = WORKDIR / "reports"
 
 app = FastAPI(
     title="DASTXH Web",
-    version="0.4.2",
+    version="0.4.3",
     description=(
         "GUI web para DASTXH con flujo profundo controlado, "
-        "reporte general profesional versionado e impresión de versiones históricas"
+        "reporte general versionado, exportación PDF y fechas locales"
     ),
 )
 
@@ -113,6 +113,137 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.include_router(scans_router)
 app.include_router(history_router)
 app.include_router(reports_router)
+# ==========================================================
+# FILTROS GLOBALES PARA PLANTILLAS JINJA
+# ==========================================================
+
+def _get_display_timezone() -> ZoneInfo:
+    """
+    Devuelve la zona horaria configurada para mostrar fechas.
+
+    Por defecto:
+    - America/Guatemala
+    """
+    timezone_name = getattr(config, "DISPLAY_TIMEZONE", "America/Guatemala")
+
+    try:
+        return ZoneInfo(timezone_name)
+    except Exception:
+        return ZoneInfo("America/Guatemala")
+
+
+def _get_display_datetime_format() -> str:
+    """
+    Devuelve el formato global de fecha/hora visible.
+    """
+    return getattr(config, "DISPLAY_DATETIME_FORMAT", "%Y-%m-%d %H:%M:%S")
+
+
+def _parse_datetime_value(value: Any) -> Optional[datetime]:
+    """
+    Convierte un valor recibido desde BD o string a datetime.
+
+    Casos soportados:
+    - datetime aware
+    - datetime naive
+    - string ISO con offset
+    - string ISO con Z
+    - string simple compatible con fromisoformat
+
+    Regla:
+    - Si el datetime viene sin zona horaria, se asume UTC.
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        text = value.strip()
+
+        if not text:
+            return None
+
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+
+        try:
+            parsed = datetime.fromisoformat(text)
+        except Exception:
+            return None
+    else:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed
+
+
+def format_local_datetime(value: Any, default: str = "-") -> str:
+    """
+    Filtro global para mostrar fechas en hora local de Guatemala.
+
+    Uso en HTML:
+        {{ detail.started_at|local_datetime }}
+
+    Importante:
+    - No modifica la fecha guardada en BD.
+    - Solo cambia la presentación.
+    """
+    parsed = _parse_datetime_value(value)
+
+    if parsed is None:
+        return default
+
+    local_dt = parsed.astimezone(_get_display_timezone())
+    return local_dt.strftime(_get_display_datetime_format())
+
+
+def execution_status_label(value: Any) -> str:
+    """
+    Traduce estados internos de ejecución a español.
+    """
+    text = str(value or "").strip()
+
+    if not text:
+        return "-"
+
+    labels = getattr(config, "EXECUTION_STATUS_LABELS", {})
+    return labels.get(text, text)
+
+
+def professional_report_status_label(value: Any) -> str:
+    """
+    Traduce estados internos del reporte general a español.
+    """
+    text = str(value or "").strip()
+
+    if not text:
+        return "-"
+
+    labels = getattr(config, "PROFESSIONAL_REPORT_STATUS_LABELS", {})
+    return labels.get(text, text)
+
+
+def report_change_type_label(value: Any) -> str:
+    """
+    Traduce tipos internos de versión del reporte general a español.
+    """
+    text = str(value or "").strip()
+
+    if not text:
+        return "-"
+
+    labels = getattr(config, "PROFESSIONAL_REPORT_CHANGE_TYPE_LABELS", {})
+    return labels.get(text, text)
+
+
+# Registro de filtros disponibles en todas las plantillas.
+templates.env.filters["local_datetime"] = format_local_datetime
+templates.env.filters["execution_status_label"] = execution_status_label
+templates.env.filters["professional_report_status_label"] = professional_report_status_label
+templates.env.filters["report_change_type_label"] = report_change_type_label
 
 
 # ==========================================================
@@ -193,9 +324,6 @@ def get_standard_scan_profile() -> str:
 def get_standard_hsecscan_enabled() -> bool:
     """
     Devuelve si hsecscan debe ejecutarse en el flujo estándar.
-
-    En el flujo profundo controlado, hsecscan queda habilitado
-    como segunda capa de contraste para cabeceras HTTP.
     """
     return STANDARD_ENABLE_HSECSCAN
 
@@ -260,12 +388,6 @@ def redirect_to_execution_report_tab(execution_id: int) -> RedirectResponse:
 def redirect_to_generated_pdf(run_id: str, pdf_file_name: str) -> RedirectResponse:
     """
     Redirige al archivo PDF recién generado.
-
-    La ruta /api/reports/file/{run_id}/{file_name} sirve artifacts
-    desde la carpeta de reportes.
-
-    En la GUI, los formularios de impresión usan target="_blank",
-    por lo que esta redirección debe abrirse en una pestaña nueva.
     """
     if not run_id or not pdf_file_name:
         raise HTTPException(
@@ -285,7 +407,7 @@ def load_professional_report_version_or_404(
     """
     Carga una versión histórica del reporte general o lanza 404.
 
-    Validación importante:
+    Validación:
     - la versión debe existir;
     - la versión debe pertenecer a la ejecución indicada.
     """
@@ -319,23 +441,14 @@ def register_professional_report_pdf_from_version(
     """
     Genera y registra un PDF desde una versión histórica específica.
 
-    Esta función centraliza la lógica para:
-    - imprimir versión actual;
-    - imprimir versiones antiguas;
-    - registrar artifact;
-    - registrar la exportación PDF.
-
     Pasos:
     1. Genera el PDF físico.
-    2. Registra el PDF como artifact.
+    2. Registra el PDF como archivo técnico.
     3. Registra la exportación en professional_report_pdf_exports.
     4. Devuelve la información necesaria para abrir el PDF.
     """
     professional_report_id = int(version.get("professional_report_id") or 0)
 
-    # Fallback: algunas filas históricas pueden no traer professional_report_id
-    # si el query de BD no lo está retornando. En ese caso se usa el reporte
-    # actual asociado a la ejecución.
     if professional_report_id <= 0:
         professional_report = db_layer.get_professional_report(
             dsn=dsn,
@@ -524,7 +637,7 @@ def execution_detail(request: Request, execution_id: int):
         },
     )
 # ==========================================================
-# RUTAS WEB: REPORTE GENERAL PROFESIONAL
+# RUTAS WEB: REPORTE GENERAL
 # ==========================================================
 
 @app.post("/executions/{execution_id}/professional-report/generate")
@@ -538,10 +651,6 @@ def generate_professional_report(request: Request, execution_id: int):
     - si la IA falla, usa fallback determinístico;
     - guarda el contenido como versión actual editable;
     - crea una versión histórica.
-
-    Nota de flujo:
-    - En la GUI este botón se muestra como acción para crear una nueva
-      versión posterior, no como primer paso obligatorio.
     """
     dsn = wait_until_db_ready(timeout_s=20)
     ensure_work_paths()
@@ -610,7 +719,6 @@ async def save_professional_report(request: Request, execution_id: int):
     dsn = wait_until_db_ready(timeout_s=20)
     ensure_work_paths()
 
-    # Verifica que la ejecución exista antes de guardar.
     load_execution_detail_or_404(dsn=dsn, execution_id=execution_id)
 
     form = await request.form()
@@ -639,17 +747,9 @@ async def save_professional_report(request: Request, execution_id: int):
 @app.post("/executions/{execution_id}/professional-report/print")
 async def print_professional_report(request: Request, execution_id: int):
     """
-    Imprime/exporta el Reporte General Profesional a PDF desde el formulario actual.
+    Imprime/exporta el Reporte General a PDF desde el formulario actual.
 
     Esta ruta se conserva por compatibilidad.
-
-    Flujo:
-    1. Lee el formulario actual.
-    2. Guarda esos datos como versión histórica tipo pdf_export_snapshot.
-    3. Genera el PDF desde esa versión exacta.
-    4. Registra el PDF como artifact.
-    5. Registra la exportación en professional_report_pdf_exports.
-    6. Redirige al PDF generado.
 
     En la GUI nueva, lo recomendable es:
     - guardar primero;
@@ -672,7 +772,6 @@ async def print_professional_report(request: Request, execution_id: int):
         created_by="web",
     )
 
-    # Recarga detalle para que el PDF use datos actualizados.
     detail = load_execution_detail_or_404(dsn=dsn, execution_id=execution_id)
 
     pdf_result = register_professional_report_pdf_from_version(
@@ -698,15 +797,11 @@ def print_professional_report_version(
     """
     Imprime/exporta una versión histórica específica del Reporte General.
 
-    Esta es la ruta que faltaba y causaba:
-    POST /executions/{id}/professional-report/versions/{version_id}/print -> 404
-
     Ventajas:
     - no modifica el contenido actual editable;
     - no crea una versión nueva innecesaria;
     - permite imprimir versiones antiguas;
-    - mantiene trazabilidad: PDF -> versión histórica exacta;
-    - desde HTML se usa con target="_blank" para abrir el PDF en pestaña nueva.
+    - mantiene trazabilidad: PDF -> versión histórica exacta.
     """
     dsn = wait_until_db_ready(timeout_s=20)
     ensure_work_paths()
@@ -731,6 +826,8 @@ def print_professional_report_version(
         run_id=str(pdf_result.get("run_id") or ""),
         pdf_file_name=str(pdf_result.get("pdf_file_name") or ""),
     )
+
+
 @app.get("/executions/{execution_id}/professional-report/versions/{version_id}", response_class=HTMLResponse)
 def view_professional_report_version(
     request: Request,
@@ -805,6 +902,7 @@ def health() -> Dict[str, Any]:
         "db_ok": db_ok,
         "standard_scan_profile": STANDARD_SCAN_PROFILE,
         "standard_hsecscan_enabled": STANDARD_ENABLE_HSECSCAN,
+        "display_timezone": getattr(config, "DISPLAY_TIMEZONE", "America/Guatemala"),
         "professional_report_enabled": True,
         "professional_report_pdf_enabled": True,
         "professional_report_version_pdf_enabled": True,

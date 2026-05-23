@@ -3,27 +3,83 @@ config.py
 - Configuración central del prototipo DASTXH.
 
 Aquí se definen:
-  * User-Agent del orquestador
-  * cabeceras base a evaluar
-  * pesos de scoring HTTP
-  * nombres estándar de artifacts/reportes
-  * configuración estándar de Dalfox
-  * clasificación de cabeceras reportadas por hsecscan
-  * estructura editable del Reporte General Profesional
+  * User-Agent del orquestador.
+  * zona horaria de visualización del prototipo.
+  * etiquetas en español para estados internos.
+  * cabeceras base a evaluar.
+  * pesos de scoring HTTP.
+  * nombres estándar de archivos generados.
+  * configuración estándar de Dalfox.
+  * clasificación de cabeceras reportadas por hsecscan.
+  * mapeo interno CWE para evidencias generadas por DASTXH.
+  * estructura editable del Reporte General.
 
 Decisión actual:
 - DASTXH ya no expone modo superficial/profundo al usuario.
 - El prototipo ejecuta un flujo único: evaluación profunda controlada.
 - Dalfox usa una configuración única, estable y controlada.
 - La minería de Dalfox puede activarse de forma ligera desde .env.
-- En el Reporte General, hsecscan ya no se presenta como sección separada:
+- En el Reporte General, hsecscan no se presenta como sección separada:
   queda integrado dentro de "Análisis de cabeceras HTTP y contraste con hsecscan".
+- Las fechas deben guardarse preferiblemente en UTC y mostrarse en zona local
+  America/Guatemala desde la GUI y PDF.
 """
 
 # ----------------------------------------------------------
 # User-Agent que usarán las herramientas HTTP del proyecto
 # ----------------------------------------------------------
 UA = "DASTXH/0.3"
+
+
+# ==========================================================
+# ZONA HORARIA Y FORMATO GLOBAL DE FECHA/HORA
+# ==========================================================
+# Regla recomendada:
+# - PostgreSQL puede conservar fechas en UTC.
+# - DASTXH debe mostrar fechas en hora local de Guatemala.
+#
+# Estos valores se usarán desde:
+# - webapp.py como filtro Jinja.
+# - templates HTML.
+# - servicio PDF.
+# ==========================================================
+
+DISPLAY_TIMEZONE = "America/Guatemala"
+DISPLAY_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+# ==========================================================
+# ETIQUETAS EN ESPAÑOL PARA ESTADOS INTERNOS
+# ==========================================================
+
+EXECUTION_STATUS_LABELS = {
+    "initiated": "Iniciada",
+    "running": "En progreso",
+    "finished": "Finalizada",
+    "failed": "Fallida",
+    "cancelled": "Cancelada",
+}
+
+PROFESSIONAL_REPORT_STATUS_LABELS = {
+    "draft": "Borrador",
+    "ai_generated": "Generado con IA",
+    "edited": "Editado",
+    "pdf_exported": "PDF exportado",
+    "not_saved": "No guardado",
+}
+
+PROFESSIONAL_REPORT_CHANGE_TYPE_LABELS = {
+    "manual_save": "Guardado manual",
+    "ai_generated": "Generado con IA",
+    "pdf_export_snapshot": "Versión para impresión PDF",
+}
+
+
+# ==========================================================
+# TEXTOS VISIBLES REUTILIZABLES
+# ==========================================================
+
+TECHNICAL_FILES_LABEL = "Archivos técnicos registrados"
 
 
 # ==========================================================
@@ -115,6 +171,118 @@ COOKIE_TESTS = {
 
 
 # ==========================================================
+# MAPEO INTERNO CWE DE DASTXH
+# ==========================================================
+# Propósito:
+# - hsecscan puede traer CWE en varias observaciones.
+# - curl_custom / DASTXH genera hallazgos propios que antes quedaban con "-".
+# - Este catálogo permite asociar un CWE razonable cuando la evidencia viene
+#   del catálogo interno y hsecscan no trae CWE.
+#
+# Regla metodológica:
+# 1. Si hsecscan trae CWE, se usa ese CWE.
+# 2. Si hsecscan no trae CWE, se usa este catálogo interno.
+# 3. Si no existe mapeo específico, puede usarse CWE-693 como categoría general
+#    de mecanismo de protección ausente o insuficiente.
+# ==========================================================
+
+DASTXH_INTERNAL_CWE_MAPPINGS = {
+    # ------------------------------
+    # Cabeceras principales
+    # ------------------------------
+    "Content-Security-Policy": (
+        "CWE-693: Falla de mecanismo de protección. "
+        "También puede relacionarse con CWE-79 cuando la ausencia de una política adecuada "
+        "reduce la mitigación frente a secuencias de comandos entre sitios."
+    ),
+    "Strict-Transport-Security": (
+        "CWE-319: Transmisión de información sensible en texto claro. "
+        "También puede relacionarse con CWE-311 por ausencia o debilidad de cifrado en tránsito."
+    ),
+    "X-Content-Type-Options": (
+        "CWE-693: Falla de mecanismo de protección asociado a la validación del tipo de contenido."
+    ),
+    "X-Frame-Options": (
+        "CWE-1021: Restricción inadecuada de interfaces renderizadas dentro de marcos o elementos externos."
+    ),
+    "Referrer-Policy": (
+        "CWE-200: Exposición de información sensible a un actor no autorizado."
+    ),
+
+    # ------------------------------
+    # Cabeceras de aislamiento
+    # ------------------------------
+    "Permissions-Policy": (
+        "CWE-693: Falla de mecanismo de protección por ausencia de restricciones explícitas "
+        "sobre capacidades del navegador."
+    ),
+    "Cross-Origin-Opener-Policy": (
+        "CWE-346: Error de validación de origen. "
+        "También puede considerarse CWE-693 por ausencia de mecanismo de aislamiento."
+    ),
+    "Cross-Origin-Resource-Policy": (
+        "CWE-346: Error de validación de origen. "
+        "También puede considerarse CWE-693 por ausencia de política de aislamiento de recursos."
+    ),
+    "Cross-Origin-Embedder-Policy": (
+        "CWE-346: Error de validación de origen. "
+        "También puede considerarse CWE-693 por ausencia de aislamiento estricto de recursos embebidos."
+    ),
+
+    # ------------------------------
+    # CORS
+    # ------------------------------
+    "Cross-Origin Resource Sharing (CORS)": (
+        "CWE-942: Permisos excesivamente amplios en política de intercambio de recursos entre orígenes."
+    ),
+    "Access-Control-Allow-Origin": (
+        "CWE-942: Permisos excesivamente amplios en política de intercambio de recursos entre orígenes."
+    ),
+    "Access-Control-Allow-Credentials": (
+        "CWE-942: Permisos excesivamente amplios en política de intercambio de recursos entre orígenes."
+    ),
+
+    # ------------------------------
+    # Cookies evaluadas por DASTXH
+    # ------------------------------
+    "Cookies con atributo HttpOnly": (
+        "CWE-1004: Cookie sensible sin atributo HttpOnly."
+    ),
+    "Cookies con atributo Secure": (
+        "CWE-614: Cookie sensible en sesión HTTPS sin atributo Secure."
+    ),
+    "Cookies con atributo SameSite": (
+        "CWE-1275: Cookie sensible con atributo SameSite ausente o inadecuado."
+    ),
+    "cookie_httponly": (
+        "CWE-1004: Cookie sensible sin atributo HttpOnly."
+    ),
+    "cookie_secure": (
+        "CWE-614: Cookie sensible en sesión HTTPS sin atributo Secure."
+    ),
+    "cookie_samesite": (
+        "CWE-1275: Cookie sensible con atributo SameSite ausente o inadecuado."
+    ),
+
+    # ------------------------------
+    # Genéricos
+    # ------------------------------
+    "Server": (
+        "CWE-200: Exposición de información sensible a un actor no autorizado."
+    ),
+    "Set-Cookie": (
+        "CWE-614/CWE-1004/CWE-1275: Revisar atributos Secure, HttpOnly y SameSite según corresponda."
+    ),
+}
+
+# Alias para normalizar nombres que pueden llegar con diferencias menores.
+DASTXH_INTERNAL_CWE_ALIASES = {
+    "cookie_secure": "Cookies con atributo Secure",
+    "cookie_httponly": "Cookies con atributo HttpOnly",
+    "cookie_samesite": "Cookies con atributo SameSite",
+    "CORS": "Cross-Origin Resource Sharing (CORS)",
+}
+# ==========================================================
 # CONFIGURACIÓN ESTÁNDAR DALFOX
 # ==========================================================
 # DASTXH usa ahora un solo flujo profundo controlado.
@@ -136,37 +304,16 @@ COOKIE_TESTS = {
 # - DASTXH_DALFOX_SKIP_MINING_DICT
 # ==========================================================
 
-# Timeout por solicitud individual de Dalfox.
-# No es el límite global del proceso.
 DALFOX_REQUEST_TIMEOUT_SECONDS = 60
-
-# Timeout duro del proceso completo Dalfox.
-# Se deja amplio para pruebas de laboratorio/tesis, pero evita
-# que una ejecución quede indefinidamente en running.
 DALFOX_HARD_TIMEOUT_SECONDS = 900
-
-# Workers de Dalfox.
-# Un valor moderado suele ser más repetible que mucha concurrencia.
 DALFOX_WORKERS = 8
-
-# Minería ligera.
-# True: permite que Dalfox active minería básica, pero se controlan
-#       subtipos de minería desde las opciones siguientes.
-# False: agrega --skip-mining-all y desactiva minería.
 DALFOX_LIGHT_MINING_ENABLED = True
-
-# Control fino de minería.
-# Para una minería muy ligera, se dejan desactivadas las partes más costosas.
-# El comportamiento final depende de las opciones soportadas por Dalfox.
 DALFOX_SKIP_MINING_DOM = True
 DALFOX_SKIP_MINING_DICT = True
 
 
 # ==========================================================
 # COMPATIBILIDAD CON EL MODELO ANTERIOR
-# ==========================================================
-# Se conserva una lista global de cabeceras para no romper
-# partes existentes del backend.
 # ==========================================================
 
 REQUIRED_HEADERS = GROUP_A_HEADERS + GROUP_B_HEADERS
@@ -216,11 +363,8 @@ HSECSCAN_HEADER_CLASS_DESCRIPTIONS = {
     ),
 }
 
-# Cabeceras de hsecscan que sí son comparables con el catálogo principal.
 HSECSCAN_PRIMARY_COMPARABLE_HEADERS = REQUIRED_HEADERS
 
-# Observaciones vigentes o útiles que pueden aportar contexto, pero no forman
-# parte del porcentaje principal DASTXH.
 HSECSCAN_COMPLEMENTARY_CURRENT_HEADERS = [
     "Cross-Origin Resource Sharing (CORS)",
     "Access-Control-Allow-Origin",
@@ -229,8 +373,6 @@ HSECSCAN_COMPLEMENTARY_CURRENT_HEADERS = [
     "Set-Cookie",
 ]
 
-# Cabeceras históricas, antiguas u obsoletas. Se muestran como evidencia
-# informativa si hsecscan las reporta, pero no se tratan como requisito actual.
 HSECSCAN_LEGACY_OR_HISTORICAL_HEADERS = [
     "X-XSS-Protection",
     "Public-Key-Pins",
@@ -239,7 +381,7 @@ HSECSCAN_LEGACY_OR_HISTORICAL_HEADERS = [
 
 
 # ----------------------------------------------------------
-# Nombres estándar de artifacts generados por ejecución
+# Nombres estándar de archivos generados por ejecución
 # dentro de /work/reports/<run_id>/
 # ----------------------------------------------------------
 
@@ -256,8 +398,7 @@ RUN_META_JSON = "run_meta.json"
 
 
 # ----------------------------------------------------------
-# Tipos lógicos de artifact para registrar en la tabla
-# artifacts de PostgreSQL
+# Tipos lógicos de archivo para registrar en PostgreSQL
 # ----------------------------------------------------------
 
 ARTIFACT_TYPE_REPORT_MD = "report_md"
@@ -270,12 +411,11 @@ ARTIFACT_TYPE_DALFOX_JSON = "dalfox_json"
 ARTIFACT_TYPE_DALFOX_TXT = "dalfox_txt"
 ARTIFACT_TYPE_RUN_META_JSON = "run_meta_json"
 
-# PDF nuevo del Reporte General Profesional.
 ARTIFACT_TYPE_PROFESSIONAL_REPORT_PDF = "professional_report_pdf"
 
 
 # ----------------------------------------------------------
-# MIME types útiles para la tabla artifacts
+# MIME types útiles para la tabla de archivos técnicos
 # ----------------------------------------------------------
 
 MIME_TEXT_MARKDOWN = "text/markdown"
@@ -286,7 +426,7 @@ MIME_TEXT_PLAIN = "text/plain"
 
 
 # ==========================================================
-# REPORTE GENERAL PROFESIONAL
+# REPORTE GENERAL
 # ==========================================================
 # El reporte general tiene texto editable + evidencia objetiva.
 #
@@ -313,8 +453,6 @@ PROFESSIONAL_REPORT_CHANGE_TYPE_MANUAL_SAVE = "manual_save"
 PROFESSIONAL_REPORT_CHANGE_TYPE_AI_GENERATED = "ai_generated"
 PROFESSIONAL_REPORT_CHANGE_TYPE_PDF_EXPORT_SNAPSHOT = "pdf_export_snapshot"
 
-# Campos editables visibles en el formulario y en el PDF.
-# hsecscan_analysis NO se muestra separado para evitar duplicación.
 PROFESSIONAL_REPORT_EDITABLE_FIELDS = [
     "report_title",
     "executive_summary",
@@ -390,9 +528,6 @@ PROFESSIONAL_REPORT_SECTION_HELP_TEXTS = {
 # ==========================================================
 # CONFIGURACIÓN DE EVIDENCIA EN REPORTE GENERAL
 # ==========================================================
-# Estas constantes serán usadas por la vista y el PDF para mostrar
-# las tablas de evidencia debajo del texto editable.
-# ==========================================================
 
 PROFESSIONAL_REPORT_EVIDENCE_ENABLED = True
 
@@ -402,7 +537,6 @@ PROFESSIONAL_REPORT_COOKIES_EVIDENCE_TITLE = "Evidencia de cookies observadas"
 
 PROFESSIONAL_REPORT_XSS_EVIDENCE_TITLE = "Evidencia de hallazgos XSS"
 
-# Límite visual inicial para PDF. La GUI puede mostrar más porque tiene scroll/paginación.
 PROFESSIONAL_REPORT_PDF_MAX_HEADER_EVIDENCE_ROWS = 20
 PROFESSIONAL_REPORT_PDF_MAX_COOKIE_EVIDENCE_ROWS = 20
 PROFESSIONAL_REPORT_PDF_MAX_XSS_EVIDENCE_ROWS = 20

@@ -1,11 +1,12 @@
 """
 professional_report_service.py
-- Servicio de apoyo para el Reporte General Profesional de DASTXH.
+- Servicio de apoyo para el Reporte General de DASTXH.
 
 Objetivo:
 - Construir el contenido editable del reporte general.
 - Preparar contexto técnico compacto para IA.
 - Preparar tablas de evidencia objetiva para la pestaña Reporte general.
+- Preparar tablas de evidencia objetiva para el PDF.
 - Evitar duplicar información entre curl y hsecscan.
 - Mantener la evidencia objetiva separada del texto editable.
 
@@ -14,32 +15,10 @@ Regla principal del reporte general:
 - Las tablas debajo de cada sección evidencian.
 - La evidencia se toma de los mismos datos ya mostrados en la pestaña Resumen.
 
-Estructura recomendada:
-1. Resumen ejecutivo
-2. Alcance de la evaluación
-3. Metodología aplicada
-4. Análisis de cabeceras HTTP y contraste con hsecscan
-   - Texto editable
-   - Tabla de evidencia consolidada curl vs hsecscan
-5. Análisis de cookies observadas
-   - Texto editable
-   - Tabla de evidencia de cookies
-6. Análisis XSS
-   - Texto editable
-   - Tabla de evidencia XSS
-7. Hallazgos priorizados
-8. Recomendaciones generales
-9. Limitaciones del análisis
-10. Conclusión
-11. Notas del analista
-
-Importante:
-- Este archivo NO ejecuta herramientas externas.
-- Este archivo NO ejecuta Dalfox.
-- Este archivo NO ejecuta hsecscan.
-- Este archivo NO llama directamente al modelo de IA.
-- Este archivo NO genera PDF.
-- Solo prepara texto y estructuras de evidencia para GUI/PDF/IA.
+Regla para CWE:
+- Si hsecscan trae CWE, se usa ese valor.
+- Si hsecscan no trae CWE, se intenta usar el catálogo interno DASTXH definido en config.py.
+- Si no existe mapeo claro, se deja "-".
 """
 
 from __future__ import annotations
@@ -154,8 +133,9 @@ def _format_datetime(value: Any) -> str:
     """
     Formatea fechas de forma tolerante.
 
-    Si el valor ya es string, se conserva.
-    Si es datetime, se intenta usar strftime.
+    Nota:
+    - Esta función se conserva solo para contexto interno de IA.
+    - La GUI y el PDF ya aplican conversión global a hora local.
     """
     if value is None:
         return "-"
@@ -288,6 +268,128 @@ def _stringify_cwe_mappings(value: Any) -> str:
 
 
 # ==========================================================
+# HELPERS CWE INTERNOS DASTXH
+# ==========================================================
+
+def _normalize_lookup_key(value: Any) -> str:
+    """
+    Normaliza una llave para búsqueda tolerante en el catálogo CWE interno.
+    """
+    text = _safe_text(value).lower()
+
+    if not text:
+        return ""
+
+    replacements = {
+        "á": "a",
+        "é": "e",
+        "í": "i",
+        "ó": "o",
+        "ú": "u",
+        "ñ": "n",
+        "ü": "u",
+    }
+
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+
+    text = " ".join(text.replace("_", " ").replace("-", " ").split())
+    return text
+
+
+def _get_internal_cwe_for_name(*names: Any) -> str:
+    """
+    Busca un CWE interno DASTXH para una cabecera, prueba o nombre lógico.
+
+    Ejemplos:
+    - Cookies con atributo HttpOnly -> CWE-1004
+    - Cookies con atributo Secure   -> CWE-614
+    - X-Frame-Options               -> CWE-1021
+    - Content-Security-Policy       -> CWE-693 / CWE-79
+
+    Regla:
+    - primero busca alias;
+    - luego busca mapeo exacto;
+    - luego busca mapeo normalizado.
+    """
+    mappings = getattr(config, "DASTXH_INTERNAL_CWE_MAPPINGS", {})
+    aliases = getattr(config, "DASTXH_INTERNAL_CWE_ALIASES", {})
+
+    if not isinstance(mappings, dict):
+        return "-"
+
+    if not isinstance(aliases, dict):
+        aliases = {}
+
+    # Mapa normalizado para tolerar variaciones de escritura.
+    normalized_mappings: Dict[str, str] = {}
+
+    for key, value in mappings.items():
+        normalized_key = _normalize_lookup_key(key)
+
+        if normalized_key:
+            normalized_mappings[normalized_key] = _safe_text(value)
+
+    for raw_name in names:
+        name = _safe_text(raw_name)
+
+        if not name:
+            continue
+
+        # 1. Alias exacto.
+        alias_value = aliases.get(name)
+
+        if alias_value and alias_value in mappings:
+            return _safe_text(mappings.get(alias_value), "-")
+
+        # 2. Mapeo exacto.
+        if name in mappings:
+            return _safe_text(mappings.get(name), "-")
+
+        # 3. Alias normalizado.
+        normalized_name = _normalize_lookup_key(name)
+
+        for alias_key, alias_target in aliases.items():
+            if _normalize_lookup_key(alias_key) == normalized_name:
+                if alias_target in mappings:
+                    return _safe_text(mappings.get(alias_target), "-")
+
+        # 4. Mapeo normalizado.
+        if normalized_name in normalized_mappings:
+            return normalized_mappings[normalized_name]
+
+    return "-"
+
+
+def _resolve_cwe_for_header_evidence(item: Dict[str, Any]) -> str:
+    """
+    Resuelve el CWE para una fila de evidencia consolidada.
+
+    Prioridad:
+    1. CWE traducido o original proveniente de hsecscan.
+    2. CWE interno DASTXH por nombre de cabecera/prueba.
+    3. "-".
+    """
+    hsecscan_cwe = _first_non_empty(
+        item.get("hsecscan_cwe_es"),
+        item.get("hsecscan_cwe"),
+        item.get("cwe_es"),
+        item.get("cwe"),
+        default="",
+    )
+
+    if hsecscan_cwe:
+        return hsecscan_cwe
+
+    internal_cwe = _get_internal_cwe_for_name(
+        item.get("header_name"),
+        item.get("test_name"),
+        item.get("name"),
+        item.get("check_name"),
+    )
+
+    return internal_cwe if internal_cwe else "-"
+# ==========================================================
 # NORMALIZACIÓN DE PAYLOAD EDITABLE
 # ==========================================================
 
@@ -378,6 +480,8 @@ def merge_generated_payload_with_fallback(
         )
 
     return normalize_professional_report_payload(merged)
+
+
 # ==========================================================
 # TABLAS DE EVIDENCIA OBJETIVA
 # ==========================================================
@@ -396,6 +500,7 @@ def build_headers_evidence_rows(detail: Dict[str, Any]) -> List[Dict[str, Any]]:
     - No se separa evidencia curl y evidencia hsecscan.
     - Se muestra evidencia consolidada para evitar duplicidad.
     - Se incluyen CWE, interpretación y recomendación cuando existen.
+    - Si hsecscan no trae CWE, se usa el catálogo interno DASTXH.
     """
     comparison_rows = detail.get("header_layer_comparison") or []
     evidence_rows: List[Dict[str, Any]] = []
@@ -408,6 +513,7 @@ def build_headers_evidence_rows(detail: Dict[str, Any]) -> List[Dict[str, Any]]:
             item.get("hsecscan_description_es"),
             item.get("hsecscan_description"),
             item.get("curl_reason"),
+            item.get("reason"),
             default="-",
         )
 
@@ -415,14 +521,11 @@ def build_headers_evidence_rows(detail: Dict[str, Any]) -> List[Dict[str, Any]]:
             item.get("hsecscan_recommendation_es"),
             item.get("hsecscan_recommendation"),
             item.get("curl_recommendation"),
+            item.get("recommendation"),
             default="-",
         )
 
-        cwe = _first_non_empty(
-            item.get("hsecscan_cwe_es"),
-            item.get("hsecscan_cwe"),
-            default="-",
-        )
+        cwe = _resolve_cwe_for_header_evidence(item)
 
         evidence_rows.append(
             {
@@ -465,6 +568,30 @@ def build_cookie_evidence_rows(detail: Dict[str, Any]) -> List[Dict[str, Any]]:
         if samesite_present is None:
             samesite_present = cookie.get("samesite")
 
+        cwe_text = _stringify_cwe_mappings(cookie.get("cwe_mappings"))
+
+        # Fallback por si una cookie llega sin cwe_mappings,
+        # pero se detecta por sus atributos faltantes.
+        if cwe_text == "-":
+            fallback_cwes: List[str] = []
+
+            if not bool(cookie.get("httponly")):
+                fallback_cwes.append(_get_internal_cwe_for_name("Cookies con atributo HttpOnly"))
+
+            if not bool(cookie.get("secure")):
+                fallback_cwes.append(_get_internal_cwe_for_name("Cookies con atributo Secure"))
+
+            if not bool(samesite_present):
+                fallback_cwes.append(_get_internal_cwe_for_name("Cookies con atributo SameSite"))
+
+            clean_fallback_cwes = [
+                item for item in fallback_cwes
+                if item and item != "-"
+            ]
+
+            if clean_fallback_cwes:
+                cwe_text = "; ".join(clean_fallback_cwes)
+
         evidence_rows.append(
             {
                 "cookie": _first_non_empty(
@@ -478,7 +605,7 @@ def build_cookie_evidence_rows(detail: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "samesite": _yes_no(samesite_present),
                 "samesite_value": _safe_text(cookie.get("samesite_value"), "-"),
                 "risk_level": _safe_text(cookie.get("risk_level"), "-"),
-                "cwe": _stringify_cwe_mappings(cookie.get("cwe_mappings")),
+                "cwe": cwe_text,
                 "interpretation": _safe_text(cookie.get("interpretation_humana"), "-"),
                 "recommendation": _safe_text(cookie.get("recommended_action"), "-"),
             }
@@ -570,8 +697,6 @@ def build_professional_report_evidence_tables(detail: Dict[str, Any]) -> Dict[st
             "count": len(xss_rows),
         },
     }
-
-
 # ==========================================================
 # EXTRACCIÓN DE RESÚMENES TÉCNICOS DESDE detail
 # ==========================================================
@@ -691,7 +816,6 @@ def build_professional_report_ai_context(detail: Dict[str, Any]) -> Dict[str, An
             "id": detail.get("id"),
             "target_url": detail.get("target_url"),
             "status": detail.get("status"),
-            "request_source": detail.get("request_source"),
             "flow": "Evaluación profunda controlada",
             "started_at": _format_datetime(detail.get("started_at")),
             "finished_at": _format_datetime(detail.get("finished_at")),
@@ -711,6 +835,8 @@ def build_professional_report_ai_context(detail: Dict[str, Any]) -> Dict[str, An
             ],
         },
     }
+
+
 # ==========================================================
 # CONSTRUCCIÓN DETERMINÍSTICA DEL REPORTE GENERAL
 # ==========================================================
@@ -735,7 +861,6 @@ def build_deterministic_professional_report_payload(detail: Dict[str, Any]) -> D
     headers = context["headers"]
     cookies = context["cookies"]
     xss = context["xss"]
-    artifacts = context["artifacts"]
 
     target_url = _safe_text(execution.get("target_url"), "-")
     started_at = _safe_text(execution.get("started_at"), "-")
@@ -744,7 +869,6 @@ def build_deterministic_professional_report_payload(detail: Dict[str, Any]) -> D
     report_title = f"Reporte general DASTXH - Ejecución {execution.get('id')}"
 
     comparison_summary = headers.get("comparison_summary") or {}
-    hsecscan_class_summary = headers.get("hsecscan_class_summary") or {}
 
     confirmed_count = _safe_int(comparison_summary.get("confirmed"))
     discrepancies_count = _safe_int(comparison_summary.get("discrepancies"))
@@ -752,9 +876,6 @@ def build_deterministic_professional_report_payload(detail: Dict[str, Any]) -> D
     legacy_count = _safe_int(comparison_summary.get("legacy"))
     evidence_header_count = _safe_int(headers.get("evidence_count"))
 
-    # ------------------------------------------------------
-    # Resumen ejecutivo
-    # ------------------------------------------------------
     executive_summary_parts = [
         f"Se realizó una evaluación dinámica de seguridad web sobre la URL objetivo: {target_url}.",
         (
@@ -798,9 +919,6 @@ def build_deterministic_professional_report_payload(detail: Dict[str, Any]) -> D
 
     executive_summary = "\n\n".join(executive_summary_parts)
 
-    # ------------------------------------------------------
-    # Alcance
-    # ------------------------------------------------------
     scope_text = "\n".join(
         [
             f"URL evaluada: {target_url}",
@@ -815,9 +933,6 @@ def build_deterministic_professional_report_payload(detail: Dict[str, Any]) -> D
         ]
     )
 
-    # ------------------------------------------------------
-    # Metodología
-    # ------------------------------------------------------
     methodology_text = "\n".join(
         [
             "La metodología aplicada por DASTXH se organiza en capas complementarias.",
@@ -836,9 +951,6 @@ def build_deterministic_professional_report_payload(detail: Dict[str, Any]) -> D
         ]
     )
 
-    # ------------------------------------------------------
-    # Cabeceras HTTP + hsecscan
-    # ------------------------------------------------------
     headers_analysis = "\n".join(
         [
             (
@@ -873,10 +985,6 @@ def build_deterministic_professional_report_payload(detail: Dict[str, Any]) -> D
             ),
         ]
     )
-
-    # ------------------------------------------------------
-    # Cookies
-    # ------------------------------------------------------
     cookies_analysis = "\n".join(
         [
             (
@@ -903,9 +1011,6 @@ def build_deterministic_professional_report_payload(detail: Dict[str, Any]) -> D
         ]
     )
 
-    # ------------------------------------------------------
-    # XSS
-    # ------------------------------------------------------
     if xss.get("xss_display_count", 0) > 0:
         xss_lines = [
             (
@@ -951,15 +1056,12 @@ def build_deterministic_professional_report_payload(detail: Dict[str, Any]) -> D
                 ),
                 "",
                 (
-                    "Si existiera evidencia técnica posterior, debería revisarse en los artifacts de Dalfox "
+                    "Si existiera evidencia técnica posterior, debería revisarse en los archivos técnicos de Dalfox "
                     "y contrastarse manualmente antes de incluirla como hallazgo confirmado."
                 ),
             ]
         )
 
-    # ------------------------------------------------------
-    # Hallazgos priorizados
-    # ------------------------------------------------------
     prioritized_items: List[str] = []
 
     if headers.get("headers_faltantes", 0) > 0:
@@ -1002,23 +1104,17 @@ def build_deterministic_professional_report_payload(detail: Dict[str, Any]) -> D
 
     prioritized_findings = _bullet_lines(prioritized_items)
 
-    # ------------------------------------------------------
-    # Recomendaciones
-    # ------------------------------------------------------
     general_recommendations = "\n".join(
         [
             "- Revisar e implementar las cabeceras principales faltantes según el contexto de la aplicación.",
             "- Usar la tabla consolidada curl vs hsecscan para distinguir hallazgos confirmados, discrepancias y observaciones complementarias.",
             "- Validar que las cookies sensibles utilicen atributos Secure, HttpOnly y SameSite adecuados.",
             "- Analizar manualmente cualquier hallazgo XSS antes de clasificarlo como vulnerabilidad confirmada.",
-            "- Usar los artifacts técnicos como respaldo adicional cuando se requiera revisar la salida cruda de las herramientas.",
+            "- Usar los archivos técnicos como respaldo adicional cuando se requiera revisar la salida cruda de las herramientas.",
             "- Repetir la evaluación después de aplicar correcciones para verificar mejoras.",
         ]
     )
 
-    # ------------------------------------------------------
-    # Limitaciones
-    # ------------------------------------------------------
     limitations_text = "\n".join(
         [
             "La evaluación se realizó desde una perspectiva de caja negra y depende de la respuesta observada durante la ejecución.",
@@ -1026,13 +1122,10 @@ def build_deterministic_professional_report_payload(detail: Dict[str, Any]) -> D
             "hsecscan se utiliza como capa complementaria y puede reportar cabeceras históricas u obsoletas que no forman parte del cumplimiento principal.",
             "La ausencia de hallazgos XSS en una ejecución no garantiza ausencia absoluta de vulnerabilidades.",
             "Las interpretaciones generadas por IA deben ser revisadas por una persona antes de usarse en un informe final.",
-            "Las tablas del reporte general resumen la evidencia objetiva; la salida completa de terminal permanece disponible en los artifacts técnicos.",
+            "Las tablas del reporte general resumen la evidencia objetiva; la salida completa de terminal permanece disponible en los archivos técnicos.",
         ]
     )
 
-    # ------------------------------------------------------
-    # Conclusión
-    # ------------------------------------------------------
     conclusion_text = (
         "La evaluación proporciona una vista consolidada del estado de seguridad HTTP, cookies y posibles hallazgos XSS "
         "para la URL analizada. El reporte general combina interpretación editable con evidencia objetiva resumida, "
@@ -1055,6 +1148,8 @@ def build_deterministic_professional_report_payload(detail: Dict[str, Any]) -> D
             "analyst_notes": "",
         }
     )
+
+
 # ==========================================================
 # CONTEXTO DE FORMULARIO PARA LA GUI
 # ==========================================================

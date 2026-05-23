@@ -1,12 +1,12 @@
 """
 professional_report_pdf_service.py
-- Servicio para generar el PDF del Reporte General Profesional de DASTXH.
+- Servicio para generar el PDF del Reporte General de DASTXH.
 
 Objetivo:
 - Tomar una versión histórica exacta del reporte general.
-- Generar un PDF profesional a partir de esa versión.
+- Generar un PDF a partir de esa versión.
 - Incluir texto editable + evidencia objetiva resumida.
-- Guardar el PDF en la carpeta de artifacts de la ejecución:
+- Guardar el PDF en la carpeta de archivos técnicos de la ejecución:
     /work/reports/<run_id>/reporte_general_vX_YYYYMMDD_HHMMSS.pdf
 
 Regla del reporte:
@@ -14,10 +14,15 @@ Regla del reporte:
 - Las tablas de evidencia respaldan objetivamente el análisis.
 - La evidencia se toma de los mismos datos usados en la pestaña Resumen.
 
+Regla de fechas:
+- PostgreSQL puede conservar fechas en UTC.
+- El PDF debe mostrar fechas en la zona horaria configurada en config.py.
+- Para Guatemala se usa America/Guatemala.
+
 Importante:
 - Este archivo NO llama IA.
 - Este archivo NO modifica la base de datos.
-- Este archivo NO registra artifacts.
+- Este archivo NO registra archivos técnicos en BD.
 - Este archivo NO decide contenido técnico.
 - Solo toma texto ya guardado/versionado y lo convierte a PDF.
 """
@@ -26,9 +31,10 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import config
 from services.professional_report_service import build_professional_report_pdf_context
@@ -53,25 +59,112 @@ def _safe_text(value: Any, default: str = "") -> str:
     return text
 
 
-def _format_datetime(value: Any) -> str:
+def _get_display_timezone() -> ZoneInfo:
     """
-    Formatea fechas de forma tolerante.
+    Devuelve la zona horaria configurada para mostrar fechas.
 
-    Acepta:
-    - datetime
-    - string
-    - None
+    Por defecto:
+    - America/Guatemala
+    """
+    timezone_name = getattr(config, "DISPLAY_TIMEZONE", "America/Guatemala")
+
+    try:
+        return ZoneInfo(timezone_name)
+    except Exception:
+        return ZoneInfo("America/Guatemala")
+
+
+def _get_display_datetime_format() -> str:
+    """
+    Devuelve el formato visible de fecha/hora.
+    """
+    return getattr(config, "DISPLAY_DATETIME_FORMAT", "%Y-%m-%d %H:%M:%S")
+
+
+def _parse_datetime_value(value: Any) -> Optional[datetime]:
+    """
+    Convierte un valor recibido desde BD o string a datetime.
+
+    Casos soportados:
+    - datetime con zona horaria.
+    - datetime sin zona horaria.
+    - string ISO con offset.
+    - string ISO con Z.
+    - string simple compatible con fromisoformat.
+
+    Regla:
+    - Si el datetime viene sin zona horaria, se asume UTC.
     """
     if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        text = value.strip()
+
+        if not text:
+            return None
+
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+
+        try:
+            parsed = datetime.fromisoformat(text)
+        except Exception:
+            return None
+    else:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed
+
+
+def _format_local_datetime(value: Any) -> str:
+    """
+    Formatea fechas para el PDF usando hora local de Guatemala.
+
+    No modifica la fecha original guardada en BD.
+    Solo cambia la presentación.
+    """
+    parsed = _parse_datetime_value(value)
+
+    if parsed is None:
         return "-"
 
-    if hasattr(value, "strftime"):
-        try:
-            return value.strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            return str(value)
+    local_dt = parsed.astimezone(_get_display_timezone())
+    return local_dt.strftime(_get_display_datetime_format())
 
-    return str(value)
+
+def _execution_status_label(value: Any) -> str:
+    """
+    Traduce estados internos de ejecución a español.
+    """
+    text = _safe_text(value, "-")
+    labels = getattr(config, "EXECUTION_STATUS_LABELS", {})
+
+    if isinstance(labels, dict):
+        return labels.get(text, text)
+
+    return text
+
+
+def _report_change_type_label(value: Any) -> str:
+    """
+    Traduce tipos internos de cambio del reporte a español.
+
+    Esta función se conserva por si se necesita en el futuro,
+    aunque el PDF ya no muestra "Tipo de versión" en metadatos.
+    """
+    text = _safe_text(value, "-")
+    labels = getattr(config, "PROFESSIONAL_REPORT_CHANGE_TYPE_LABELS", {})
+
+    if isinstance(labels, dict):
+        return labels.get(text, text)
+
+    return text
 
 
 def _sanitize_filename_part(value: Any, default: str = "reporte") -> str:
@@ -168,7 +261,7 @@ def _build_pdf_file_name(version_number: int) -> str:
 
 def _build_relative_path(run_folder_name: str, file_name: str) -> str:
     """
-    Construye una ruta relativa lógica para registrar como artifact.
+    Construye una ruta relativa lógica para registrar como archivo técnico.
     """
     return f"reports/{run_folder_name}/{file_name}"
 # ==========================================================
@@ -189,7 +282,7 @@ def _get_snapshot(version: Dict[str, Any]) -> Dict[str, Any]:
 
 def _clean_report_text(value: Any) -> str:
     """
-    Limpia texto para evitar caracteres que puedan dar problemas visuales.
+    Limpia texto para evitar caracteres problemáticos en PDF.
 
     No elimina tildes ni caracteres normales en español.
     """
@@ -304,17 +397,21 @@ def _build_header_footer(canvas: Any, doc: Any, detail: Dict[str, Any], version:
 def _build_metadata_table(detail: Dict[str, Any], version: Dict[str, Any]) -> List[List[str]]:
     """
     Construye una tabla simple de metadatos del reporte.
+
+    Cambios aplicados:
+    - Estado se muestra en español.
+    - Fechas se muestran en hora local de Guatemala.
+    - Se quitó "Flujo aplicado".
+    - Se quitó "Tipo de versión".
     """
     return [
         ["Ejecución", _safe_text(detail.get("id"), "-")],
         ["URL objetivo", _safe_text(detail.get("target_url"), "-")],
-        ["Estado de ejecución", _safe_text(detail.get("status"), "-")],
-        ["Flujo aplicado", "Evaluación profunda controlada"],
-        ["Inicio", _format_datetime(detail.get("started_at"))],
-        ["Fin", _format_datetime(detail.get("finished_at"))],
+        ["Estado de ejecución", _execution_status_label(detail.get("status"))],
+        ["Inicio", _format_local_datetime(detail.get("started_at"))],
+        ["Fin", _format_local_datetime(detail.get("finished_at"))],
         ["Versión del reporte", _safe_text(version.get("version_label"), "-")],
-        ["Tipo de versión", _safe_text(version.get("change_type"), "-")],
-        ["Fecha de versión", _format_datetime(version.get("created_at"))],
+        ["Fecha de versión", _format_local_datetime(version.get("created_at"))],
     ]
 
 
@@ -341,7 +438,13 @@ def _build_technical_summary_table(detail: Dict[str, Any]) -> List[List[str]]:
         hsecscan_text = str(hsecscan_rc)
 
     cookies_count = len(detail.get("cookies_flags_json") or [])
-    artifacts_count = len(detail.get("artifacts") or [])
+    technical_files_count = len(detail.get("artifacts") or [])
+
+    technical_files_label = getattr(
+        config,
+        "TECHNICAL_FILES_LABEL",
+        "Archivos técnicos registrados",
+    )
 
     return [
         ["Cumplimiento de cabeceras", cumplimiento_text],
@@ -350,7 +453,7 @@ def _build_technical_summary_table(detail: Dict[str, Any]) -> List[List[str]]:
         ["Código retorno hsecscan", hsecscan_text],
         ["Cookies evaluables", str(cookies_count)],
         ["Hallazgos XSS mostrables", xss_count],
-        ["Artifacts registrados", str(artifacts_count)],
+        [technical_files_label, str(technical_files_count)],
     ]
 # ==========================================================
 # ESTILOS Y TABLAS
@@ -375,17 +478,7 @@ def _build_styles() -> Dict[str, Any]:
             fontSize=18,
             leading=22,
             alignment=TA_CENTER,
-            spaceAfter=10,
-        ),
-        "Subtitle": ParagraphStyle(
-            "DASTXHSubtitle",
-            parent=base["Normal"],
-            fontName="Helvetica",
-            fontSize=10,
-            leading=13,
-            alignment=TA_CENTER,
-            textColor=colors.HexColor("#334155"),
-            spaceAfter=14,
+            spaceAfter=12,
         ),
         "SectionTitle": ParagraphStyle(
             "DASTXHSectionTitle",
@@ -624,7 +717,7 @@ def _append_generic_evidence_table(
             _make_paragraph(
                 (
                     f"Nota: se muestran {max_rows} de {len(rows)} registros de evidencia. "
-                    "La evidencia completa permanece disponible en la aplicación y artifacts técnicos."
+                    "La evidencia completa permanece disponible en la aplicación y archivos técnicos."
                 ),
                 styles["NoteText"],
             )
@@ -653,12 +746,12 @@ def _append_headers_evidence_table(
         ("hsecscan_status", "hsecscan", 70),
         ("comparison_result", "Resultado", 110),
         ("priority", "Prioridad", 40),
-        ("cwe", "CWE", 120),
+        ("cwe", "CWE", 140),
         ("interpretation", "Interpretación", 260),
         ("recommendation", "Recomendación", 260),
     ]
 
-    col_widths = [65, 80, 45, 55, 80, 45, 70, 150, 150]
+    col_widths = [65, 80, 45, 55, 80, 45, 80, 145, 145]
 
     _append_generic_evidence_table(
         story=story,
@@ -690,12 +783,12 @@ def _append_cookies_evidence_table(
         ("samesite", "SameSite", 20),
         ("samesite_value", "Valor", 40),
         ("risk_level", "Riesgo", 40),
-        ("cwe", "CWE", 120),
+        ("cwe", "CWE", 140),
         ("interpretation", "Interpretación", 260),
         ("recommendation", "Recomendación", 260),
     ]
 
-    col_widths = [75, 40, 45, 45, 55, 45, 85, 170, 180]
+    col_widths = [75, 40, 45, 45, 55, 45, 90, 165, 175]
 
     _append_generic_evidence_table(
         story=story,
@@ -833,20 +926,15 @@ def _create_pdf_document(
         bottomMargin=0.35 * inch,
         title=report_title,
         author="DASTXH",
-        subject="Reporte general profesional de evaluación dinámica de seguridad web",
+        subject="Reporte general de evaluación dinámica de seguridad web",
     )
 
     story: List[Any] = []
 
-    # Portada simple.
+    # Título principal.
+    # Se quitó el segundo título/subtítulo para evitar repetición visual.
     story.append(_make_paragraph(report_title, styles["Title"]))
-    story.append(
-        _make_paragraph(
-            "Reporte general profesional generado por DASTXH",
-            styles["Subtitle"],
-        )
-    )
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 10))
 
     _append_key_value_table(
         story=story,
@@ -892,7 +980,7 @@ def _create_pdf_document(
             "Este PDF fue generado a partir de una versión histórica del reporte general. "
             "Las versiones anteriores del reporte pueden consultarse en la aplicación, "
             "pero no editarse. La evidencia técnica original permanece disponible en los "
-            "artifacts asociados a la ejecución."
+            "archivos técnicos asociados a la ejecución."
         ),
         styles=styles,
     )

@@ -49,23 +49,9 @@
         <h3>Estado</h3>
         <p>
           <span class="badge badge-{{ detail.status }}">
-            {{ detail.status }}
+            {{ detail.status|execution_status_label }}
           </span>
         </p>
-      </div>
-    </div>
-
-    <div class="col-12 col-md-6 col-xl-3">
-      <div class="detail-item h-100">
-        <h3>Origen</h3>
-        <p>{{ detail.request_source }}</p>
-      </div>
-    </div>
-
-    <div class="col-12 col-md-6 col-xl-3">
-      <div class="detail-item h-100">
-        <h3>Flujo aplicado</h3>
-        <p>Evaluación profunda controlada</p>
       </div>
     </div>
 
@@ -81,7 +67,7 @@
         <h3>Inicio</h3>
         <p>
           {% if detail.started_at %}
-            {{ detail.started_at.strftime("%Y-%m-%d %H:%M:%S") }}
+            {{ detail.started_at|local_datetime }}
           {% else %}
             -
           {% endif %}
@@ -94,7 +80,7 @@
         <h3>Fin</h3>
         <p>
           {% if detail.finished_at %}
-            {{ detail.finished_at.strftime("%Y-%m-%d %H:%M:%S") }}
+            {{ detail.finished_at|local_datetime }}
           {% else %}
             -
           {% endif %}
@@ -1226,6 +1212,7 @@
                   <th>Abrir</th>
                 </tr>
               </thead>
+
               <tbody>
                 {% for item in artifacts %}
                   <tr>
@@ -1301,7 +1288,7 @@
               <h3>Estado</h3>
               <p>
                 {% if report_view.get("exists") %}
-                  {{ report_view.get("status", "draft") }}
+                  {{ report_view.get("status", "draft")|professional_report_status_label }}
                 {% else %}
                   No guardado
                 {% endif %}
@@ -1363,7 +1350,7 @@
             Estás consultando la {{ readonly_report_version.get("version_label") }}
             creada el
             {% if readonly_report_version.get("created_at") %}
-              {{ readonly_report_version.get("created_at").strftime("%Y-%m-%d %H:%M:%S") }}
+              {{ readonly_report_version.get("created_at")|local_datetime }}
             {% else %}
               -
             {% endif %}.
@@ -1414,6 +1401,7 @@
                             <th>Recomendación</th>
                           </tr>
                         </thead>
+
                         <tbody>
                           {% for row in headers_evidence.get("rows", []) %}
                             <tr>
@@ -1455,6 +1443,7 @@
                             <th>Recomendación</th>
                           </tr>
                         </thead>
+
                         <tbody>
                           {% for row in cookies_evidence.get("rows", []) %}
                             <tr>
@@ -1497,6 +1486,7 @@
                             <th>Revisar</th>
                           </tr>
                         </thead>
+
                         <tbody>
                           {% for row in xss_evidence.get("rows", []) %}
                             <tr>
@@ -1544,7 +1534,7 @@
             {% if report_view.get("updated_at") %}
               <div class="professional-report-meta">
                 Última actualización:
-                {{ report_view.get("updated_at").strftime("%Y-%m-%d %H:%M:%S") }}
+                {{ report_view.get("updated_at")|local_datetime }}
               </div>
             {% endif %}
           </div>
@@ -1624,6 +1614,7 @@
                             <th>Recomendación</th>
                           </tr>
                         </thead>
+
                         <tbody>
                           {% for row in headers_evidence.get("rows", []) %}
                             <tr>
@@ -1671,6 +1662,7 @@
                             <th>Recomendación</th>
                           </tr>
                         </thead>
+
                         <tbody>
                           {% for row in cookies_evidence.get("rows", []) %}
                             <tr>
@@ -1719,6 +1711,7 @@
                             <th>Revisar</th>
                           </tr>
                         </thead>
+
                         <tbody>
                           {% for row in xss_evidence.get("rows", []) %}
                             <tr>
@@ -1778,11 +1771,12 @@
                   <th>Imprimir</th>
                 </tr>
               </thead>
+
               <tbody>
                 {% for version in report_versions %}
                   <tr>
                     <td>{{ version.version_label or version.version_number }}</td>
-                    <td>{{ version.change_type }}</td>
+                    <td>{{ version.change_type|report_change_type_label }}</td>
                     <td class="break-cell">
                       {% if version.change_reason %}
                         {{ version.change_reason }}
@@ -1792,7 +1786,7 @@
                     </td>
                     <td>
                       {% if version.created_at %}
-                        {{ version.created_at.strftime("%Y-%m-%d %H:%M:%S") }}
+                        {{ version.created_at|local_datetime }}
                       {% else %}
                         -
                       {% endif %}
@@ -1848,6 +1842,7 @@
                   <th>Abrir</th>
                 </tr>
               </thead>
+
               <tbody>
                 {% for pdf in report_pdf_exports %}
                   <tr>
@@ -1856,7 +1851,7 @@
                     <td class="break-cell">{{ pdf.pdf_relative_path }}</td>
                     <td>
                       {% if pdf.exported_at %}
-                        {{ pdf.exported_at.strftime("%Y-%m-%d %H:%M:%S") }}
+                        {{ pdf.exported_at|local_datetime }}
                       {% else %}
                         -
                       {% endif %}
