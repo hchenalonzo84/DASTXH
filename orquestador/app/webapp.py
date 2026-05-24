@@ -14,10 +14,14 @@ Esta versión:
     * guardado editable con versionamiento histórico;
     * impresión/exportación PDF trazable;
     * impresión de versiones históricas específicas;
-- agrega filtros globales de Jinja para:
+- registra filtros globales de Jinja para:
     * mostrar fechas en hora local de Guatemala;
     * traducir estados internos a español;
     * traducir tipos de versión a español.
+
+Cambio de refactorización:
+- La lógica de fechas y traducción de estados ya no vive aquí.
+- Ahora se centraliza en utils/datetime_utils.py y se reexporta desde utils/__init__.py.
 
 Regla global de fechas:
 - PostgreSQL puede conservar las fechas en UTC.
@@ -30,10 +34,8 @@ Regla global de fechas:
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from zoneinfo import ZoneInfo
 
 import config
 import db as db_layer
@@ -52,7 +54,14 @@ from services.professional_report_service import (
     normalize_professional_report_payload,
 )
 from services.scanner_service import start_scan_in_background
-from utils import ensure_dir, wait_for_db
+from utils import (
+    ensure_dir,
+    execution_status_label,
+    format_local_datetime,
+    professional_report_status_label,
+    report_change_type_label,
+    wait_for_db,
+)
 
 
 # ==========================================================
@@ -113,133 +122,12 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.include_router(scans_router)
 app.include_router(history_router)
 app.include_router(reports_router)
+
+
 # ==========================================================
 # FILTROS GLOBALES PARA PLANTILLAS JINJA
 # ==========================================================
 
-def _get_display_timezone() -> ZoneInfo:
-    """
-    Devuelve la zona horaria configurada para mostrar fechas.
-
-    Por defecto:
-    - America/Guatemala
-    """
-    timezone_name = getattr(config, "DISPLAY_TIMEZONE", "America/Guatemala")
-
-    try:
-        return ZoneInfo(timezone_name)
-    except Exception:
-        return ZoneInfo("America/Guatemala")
-
-
-def _get_display_datetime_format() -> str:
-    """
-    Devuelve el formato global de fecha/hora visible.
-    """
-    return getattr(config, "DISPLAY_DATETIME_FORMAT", "%Y-%m-%d %H:%M:%S")
-
-
-def _parse_datetime_value(value: Any) -> Optional[datetime]:
-    """
-    Convierte un valor recibido desde BD o string a datetime.
-
-    Casos soportados:
-    - datetime aware
-    - datetime naive
-    - string ISO con offset
-    - string ISO con Z
-    - string simple compatible con fromisoformat
-
-    Regla:
-    - Si el datetime viene sin zona horaria, se asume UTC.
-    """
-    if value is None:
-        return None
-
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, str):
-        text = value.strip()
-
-        if not text:
-            return None
-
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-
-        try:
-            parsed = datetime.fromisoformat(text)
-        except Exception:
-            return None
-    else:
-        return None
-
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-
-    return parsed
-
-
-def format_local_datetime(value: Any, default: str = "-") -> str:
-    """
-    Filtro global para mostrar fechas en hora local de Guatemala.
-
-    Uso en HTML:
-        {{ detail.started_at|local_datetime }}
-
-    Importante:
-    - No modifica la fecha guardada en BD.
-    - Solo cambia la presentación.
-    """
-    parsed = _parse_datetime_value(value)
-
-    if parsed is None:
-        return default
-
-    local_dt = parsed.astimezone(_get_display_timezone())
-    return local_dt.strftime(_get_display_datetime_format())
-
-
-def execution_status_label(value: Any) -> str:
-    """
-    Traduce estados internos de ejecución a español.
-    """
-    text = str(value or "").strip()
-
-    if not text:
-        return "-"
-
-    labels = getattr(config, "EXECUTION_STATUS_LABELS", {})
-    return labels.get(text, text)
-
-
-def professional_report_status_label(value: Any) -> str:
-    """
-    Traduce estados internos del reporte general a español.
-    """
-    text = str(value or "").strip()
-
-    if not text:
-        return "-"
-
-    labels = getattr(config, "PROFESSIONAL_REPORT_STATUS_LABELS", {})
-    return labels.get(text, text)
-
-
-def report_change_type_label(value: Any) -> str:
-    """
-    Traduce tipos internos de versión del reporte general a español.
-    """
-    text = str(value or "").strip()
-
-    if not text:
-        return "-"
-
-    labels = getattr(config, "PROFESSIONAL_REPORT_CHANGE_TYPE_LABELS", {})
-    return labels.get(text, text)
-
-
-# Registro de filtros disponibles en todas las plantillas.
 templates.env.filters["local_datetime"] = format_local_datetime
 templates.env.filters["execution_status_label"] = execution_status_label
 templates.env.filters["professional_report_status_label"] = professional_report_status_label
@@ -399,6 +287,8 @@ def redirect_to_generated_pdf(run_id: str, pdf_file_name: str) -> RedirectRespon
         url=f"/api/reports/file/{run_id}/{pdf_file_name}",
         status_code=303,
     )
+
+
 def load_professional_report_version_or_404(
     dsn: str,
     execution_id: int,
@@ -511,8 +401,6 @@ def register_professional_report_pdf_from_version(
 
     pdf_result["run_id"] = run_id
     return pdf_result
-
-
 # ==========================================================
 # RUTAS WEB
 # ==========================================================
@@ -636,6 +524,8 @@ def execution_detail(request: Request, execution_id: int):
             "professional_report_view": professional_report_view,
         },
     )
+
+
 # ==========================================================
 # RUTAS WEB: REPORTE GENERAL
 # ==========================================================
