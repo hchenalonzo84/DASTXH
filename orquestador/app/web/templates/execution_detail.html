@@ -1515,15 +1515,7 @@
         {% else %}
           <div class="professional-report-toolbar mb-3">
             {% if report_view.get("exists") %}
-              <form
-                method="post"
-                action="/executions/{{ execution_id }}/professional-report/generate"
-                class="professional-report-action-form"
-              >
-                <button type="submit" class="btn btn-primary">
-                  Generar nueva versión con IA
-                </button>
-              </form>
+              
             {% else %}
               <div class="notice">
                 La primera versión del reporte se creará al presionar <strong>Guardar cambios</strong>.

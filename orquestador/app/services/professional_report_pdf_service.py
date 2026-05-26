@@ -14,16 +14,16 @@ Regla del reporte:
 - Las tablas de evidencia respaldan objetivamente el análisis.
 - La evidencia se toma de los mismos datos usados en la pestaña Resumen.
 
-Regla de fechas:
-- PostgreSQL puede conservar fechas en UTC.
-- El PDF debe mostrar fechas en la zona horaria configurada en config.py.
-- Para Guatemala se usa America/Guatemala.
+Cambio de refactorización:
+- La conversión de fechas a hora local ya no se define aquí.
+- La traducción de estados internos ya no se define aquí.
+- Ambas responsabilidades ahora viven en utils/datetime_utils.py
+  y se reexportan desde utils/__init__.py.
 
 Importante:
 - Este archivo NO llama IA.
-- Este archivo NO modifica la base de datos.
-- Este archivo NO registra archivos técnicos en BD.
-- Este archivo NO decide contenido técnico.
+- Este archivo NO modifica directamente contenido técnico.
+- Este archivo NO decide hallazgos.
 - Solo toma texto ya guardado/versionado y lo convierte a PDF.
 """
 
@@ -31,13 +31,13 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-from zoneinfo import ZoneInfo
+from typing import Any, Dict, List, Tuple
 
 import config
 from services.professional_report_service import build_professional_report_pdf_context
+from utils import ensure_dir, execution_status_label, format_local_datetime, safe_text
 
 
 # ==========================================================
@@ -47,124 +47,12 @@ from services.professional_report_service import build_professional_report_pdf_c
 def _safe_text(value: Any, default: str = "") -> str:
     """
     Convierte cualquier valor a texto seguro.
+
+    Nota:
+    - Se mantiene este wrapper local para no cambiar todos los llamados internos.
+    - La lógica real vive en utils/text_utils.py.
     """
-    if value is None:
-        return default
-
-    text = str(value).strip()
-
-    if not text:
-        return default
-
-    return text
-
-
-def _get_display_timezone() -> ZoneInfo:
-    """
-    Devuelve la zona horaria configurada para mostrar fechas.
-
-    Por defecto:
-    - America/Guatemala
-    """
-    timezone_name = getattr(config, "DISPLAY_TIMEZONE", "America/Guatemala")
-
-    try:
-        return ZoneInfo(timezone_name)
-    except Exception:
-        return ZoneInfo("America/Guatemala")
-
-
-def _get_display_datetime_format() -> str:
-    """
-    Devuelve el formato visible de fecha/hora.
-    """
-    return getattr(config, "DISPLAY_DATETIME_FORMAT", "%Y-%m-%d %H:%M:%S")
-
-
-def _parse_datetime_value(value: Any) -> Optional[datetime]:
-    """
-    Convierte un valor recibido desde BD o string a datetime.
-
-    Casos soportados:
-    - datetime con zona horaria.
-    - datetime sin zona horaria.
-    - string ISO con offset.
-    - string ISO con Z.
-    - string simple compatible con fromisoformat.
-
-    Regla:
-    - Si el datetime viene sin zona horaria, se asume UTC.
-    """
-    if value is None:
-        return None
-
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, str):
-        text = value.strip()
-
-        if not text:
-            return None
-
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-
-        try:
-            parsed = datetime.fromisoformat(text)
-        except Exception:
-            return None
-    else:
-        return None
-
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-
-    return parsed
-
-
-def _format_local_datetime(value: Any) -> str:
-    """
-    Formatea fechas para el PDF usando hora local de Guatemala.
-
-    No modifica la fecha original guardada en BD.
-    Solo cambia la presentación.
-    """
-    parsed = _parse_datetime_value(value)
-
-    if parsed is None:
-        return "-"
-
-    local_dt = parsed.astimezone(_get_display_timezone())
-    return local_dt.strftime(_get_display_datetime_format())
-
-
-def _execution_status_label(value: Any) -> str:
-    """
-    Traduce estados internos de ejecución a español.
-    """
-    text = _safe_text(value, "-")
-    labels = getattr(config, "EXECUTION_STATUS_LABELS", {})
-
-    if isinstance(labels, dict):
-        return labels.get(text, text)
-
-    return text
-
-
-def _report_change_type_label(value: Any) -> str:
-    """
-    Traduce tipos internos de cambio del reporte a español.
-
-    Esta función se conserva por si se necesita en el futuro,
-    aunque el PDF ya no muestra "Tipo de versión" en metadatos.
-    """
-    text = _safe_text(value, "-")
-    labels = getattr(config, "PROFESSIONAL_REPORT_CHANGE_TYPE_LABELS", {})
-
-    if isinstance(labels, dict):
-        return labels.get(text, text)
-
-    return text
+    return safe_text(value, default)
 
 
 def _sanitize_filename_part(value: Any, default: str = "reporte") -> str:
@@ -193,13 +81,6 @@ def _sanitize_filename_part(value: Any, default: str = "reporte") -> str:
         return default
 
     return text[:120]
-
-
-def _ensure_directory(path: Path) -> None:
-    """
-    Crea una carpeta si no existe.
-    """
-    path.mkdir(parents=True, exist_ok=True)
 
 
 def _get_run_folder_name(detail: Dict[str, Any]) -> str:
@@ -264,6 +145,8 @@ def _build_relative_path(run_folder_name: str, file_name: str) -> str:
     Construye una ruta relativa lógica para registrar como archivo técnico.
     """
     return f"reports/{run_folder_name}/{file_name}"
+
+
 # ==========================================================
 # HELPERS DE CONTENIDO
 # ==========================================================
@@ -371,7 +254,12 @@ def _cell(value: Any, style: Any, max_chars: int = 260) -> Any:
     return _make_paragraph(_truncate_text(value, max_chars=max_chars), style)
 
 
-def _build_header_footer(canvas: Any, doc: Any, detail: Dict[str, Any], version: Dict[str, Any]) -> None:
+def _build_header_footer(
+    canvas: Any,
+    doc: Any,
+    detail: Dict[str, Any],
+    version: Dict[str, Any],
+) -> None:
     """
     Dibuja encabezado y pie de página en cada página.
     """
@@ -392,13 +280,11 @@ def _build_header_footer(canvas: Any, doc: Any, detail: Dict[str, Any], version:
     canvas.drawRightString(width - doc.rightMargin, 18, footer_text)
 
     canvas.restoreState()
-
-
 def _build_metadata_table(detail: Dict[str, Any], version: Dict[str, Any]) -> List[List[str]]:
     """
     Construye una tabla simple de metadatos del reporte.
 
-    Cambios aplicados:
+    Reglas:
     - Estado se muestra en español.
     - Fechas se muestran en hora local de Guatemala.
     - Se quitó "Flujo aplicado".
@@ -407,11 +293,11 @@ def _build_metadata_table(detail: Dict[str, Any], version: Dict[str, Any]) -> Li
     return [
         ["Ejecución", _safe_text(detail.get("id"), "-")],
         ["URL objetivo", _safe_text(detail.get("target_url"), "-")],
-        ["Estado de ejecución", _execution_status_label(detail.get("status"))],
-        ["Inicio", _format_local_datetime(detail.get("started_at"))],
-        ["Fin", _format_local_datetime(detail.get("finished_at"))],
+        ["Estado de ejecución", execution_status_label(detail.get("status"))],
+        ["Inicio", format_local_datetime(detail.get("started_at"))],
+        ["Fin", format_local_datetime(detail.get("finished_at"))],
         ["Versión del reporte", _safe_text(version.get("version_label"), "-")],
-        ["Fecha de versión", _format_local_datetime(version.get("created_at"))],
+        ["Fecha de versión", format_local_datetime(version.get("created_at"))],
     ]
 
 
@@ -455,6 +341,8 @@ def _build_technical_summary_table(detail: Dict[str, Any]) -> List[List[str]]:
         ["Hallazgos XSS mostrables", xss_count],
         [technical_files_label, str(technical_files_count)],
     ]
+
+
 # ==========================================================
 # ESTILOS Y TABLAS
 # ==========================================================
@@ -565,7 +453,11 @@ def _build_styles() -> Dict[str, Any]:
     }
 
 
-def _append_key_value_table(story: List[Any], data: List[List[str]], styles: Dict[str, Any]) -> None:
+def _append_key_value_table(
+    story: List[Any],
+    data: List[List[str]],
+    styles: Dict[str, Any],
+) -> None:
     """
     Agrega una tabla de llave/valor al documento.
     """
@@ -875,6 +767,8 @@ def _append_evidence_for_field(
             styles=styles,
         )
         return
+
+
 # ==========================================================
 # CONSTRUCCIÓN DEL PDF
 # ==========================================================
@@ -931,8 +825,6 @@ def _create_pdf_document(
 
     story: List[Any] = []
 
-    # Título principal.
-    # Se quitó el segundo título/subtítulo para evitar repetición visual.
     story.append(_make_paragraph(report_title, styles["Title"]))
     story.append(Spacer(1, 10))
 
@@ -950,7 +842,6 @@ def _create_pdf_document(
 
     story.append(PageBreak())
 
-    # Secciones editables + tablas de evidencia.
     for field in fields:
         if field == "report_title":
             continue
@@ -972,7 +863,6 @@ def _create_pdf_document(
             styles=styles,
         )
 
-    # Nota de trazabilidad.
     _append_text_section(
         story=story,
         title="Trazabilidad del reporte",
@@ -1040,7 +930,7 @@ def generate_professional_report_pdf(
         reports_root=Path(reports_root),
     )
 
-    _ensure_directory(output_dir)
+    ensure_dir(output_dir)
 
     pdf_file_name = _build_pdf_file_name(version_number)
     pdf_path = output_dir / pdf_file_name
