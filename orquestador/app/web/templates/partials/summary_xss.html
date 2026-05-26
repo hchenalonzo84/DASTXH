@@ -1,0 +1,214 @@
+{# ==========================================================
+  summary_xss.html
+  - Sección de hallazgos XSS dentro de la pestaña Resumen.
+
+  Responsabilidad:
+  - Mostrar resultados de Dalfox.
+  - Mostrar métricas principales:
+      * hallazgos XSS
+      * filas mostradas
+      * modo de vista
+  - Mostrar interpretación IA cuando exista.
+  - Mostrar alertas si la interpretación IA está ausente o incompleta.
+  - Mostrar tabla individual o agrupada según el volumen de hallazgos.
+
+  Fuente de datos:
+  - detail.dalfox_rc
+  - detail.status
+  - detail.xss_display_count
+  - detail.xss_display_rows
+  - detail.xss_display_mode
+
+  Nota:
+  - Esta sección antes vivía directamente dentro de execution_detail.html.
+========================================================== #}
+
+<section class="card mb-3 analysis-wide-card">
+  <h2 class="mb-3">XSS</h2>
+
+  {# --------------------------------------------------------
+    Métricas principales de XSS.
+  -------------------------------------------------------- #}
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-md-4">
+      <div class="stat-card h-100">
+        <h3>Hallazgos XSS</h3>
+        <p>
+          {% if detail.status in ["initiated", "running"] and detail.dalfox_rc is none %}
+            -
+          {% else %}
+            {{ detail.xss_display_count if detail.xss_display_count is defined else 0 }}
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-4">
+      <div class="stat-card h-100">
+        <h3>Filas mostradas</h3>
+        <p>{{ detail.xss_display_rows|length if detail.xss_display_rows else 0 }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-4">
+      <div class="stat-card h-100">
+        <h3>Vista</h3>
+        <p>
+          {% if detail.xss_display_mode == "grouped" %}
+            Agrupada
+          {% elif detail.xss_display_mode == "individual" %}
+            Individual
+          {% else %}
+            -
+          {% endif %}
+        </p>
+      </div>
+    </div>
+  </div>
+
+  {% if detail.dalfox_rc is none and detail.status in ["initiated", "running"] %}
+    <div class="alert alert-warning border-0 mb-0" role="alert">
+      La revisión XSS todavía no ha terminado o sus resultados aún no se han persistido.
+    </div>
+  {% elif detail.xss_display_rows %}
+    {# ------------------------------------------------------
+      Guía de lectura para hallazgos XSS.
+    ------------------------------------------------------ #}
+    <div class="detail-item info-box-compact mb-3">
+      <h3>Cómo leer esta tabla</h3>
+
+      <div class="info-two-columns">
+        <div class="info-two-columns__col">
+          <p><strong>Parámetro:</strong> nombre del parámetro o parámetro probable asociado al patrón detectado.</p>
+          <p><strong>Payload:</strong> carga útil usada por Dalfox o ejemplo representativo del grupo.</p>
+          <p><strong>Evidencia:</strong> fragmento de la respuesta donde la carga apareció reflejada.</p>
+          <p><strong>Severidad:</strong> clasificación del hallazgo o del grupo.</p>
+          <p><strong>Interpretación:</strong> explicación principal generada por IA.</p>
+        </div>
+
+        <div class="info-two-columns__col">
+          <p><strong>Riesgo:</strong> posible impacto asociado al patrón detectado.</p>
+          <p><strong>Causa probable:</strong> debilidad técnica que pudo permitir la reflexión.</p>
+          <p><strong>Revisar:</strong> área sugerida para validación manual o corrección.</p>
+
+          {% if detail.xss_display_mode == "grouped" %}
+            <p><strong>Nota:</strong> por el volumen de hallazgos, se muestra una vista agrupada con ejemplos representativos. La interpretación corresponde al patrón del grupo, no a cada payload individual.</p>
+          {% else %}
+            <p><strong>Nota:</strong> se muestra una vista individual porque el volumen de hallazgos es pequeño.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {# ------------------------------------------------------
+      Conteo de filas con interpretación IA.
+    ------------------------------------------------------ #}
+    {% set interpreted_count = namespace(value=0) %}
+    {% for item in detail.xss_display_rows %}
+      {% if item.interpretation_humana %}
+        {% set interpreted_count.value = interpreted_count.value + 1 %}
+      {% endif %}
+    {% endfor %}
+
+    {# ------------------------------------------------------
+      Alertas si la interpretación IA no existe o está incompleta.
+    ------------------------------------------------------ #}
+    {% if interpreted_count.value == 0 %}
+      <div class="alert alert-warning border-0 mb-3" role="alert">
+        <strong>Interpretación IA no disponible.</strong>
+        Dalfox registró hallazgos XSS estructurados, pero no hay interpretación guardada para estas filas.
+        Revisa <strong>run_meta.json</strong> en los archivos generados para confirmar si la IA falló por timeout,
+        error HTTP, respuesta inválida o configuración del modelo.
+      </div>
+    {% elif interpreted_count.value < (detail.xss_display_rows|length) %}
+      <div class="alert alert-warning border-0 mb-3" role="alert">
+        <strong>Interpretación IA parcial.</strong>
+        Algunas filas sí fueron interpretadas, pero otras no tienen explicación guardada.
+        Esto puede ocurrir si algún lote de IA falló o si ciertos grupos fueron omitidos por falta de evidencia útil.
+      </div>
+    {% endif %}
+
+    {# ------------------------------------------------------
+      Tabla XSS principal.
+    ------------------------------------------------------ #}
+    <div class="table-responsive xss-table-wrapper">
+      <table
+        class="table table-dark table-hover align-middle mb-0 xss-results-table js-paginated-table"
+        data-page-size="10"
+        data-always-paginate="true"
+      >
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Parámetro</th>
+            <th>Payload</th>
+            <th>Evidencia</th>
+            <th>Severidad</th>
+            {% if detail.xss_display_mode == "grouped" %}
+              <th>Ocurrencias</th>
+            {% endif %}
+            <th>Interpretación</th>
+            <th>Riesgo</th>
+            <th>Causa probable</th>
+            <th>Revisar</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in detail.xss_display_rows %}
+            <tr>
+              <td>{{ item.row_order }}</td>
+              <td>{{ item.parameter or "-" }}</td>
+              <td class="break-cell">{{ item.payload or "-" }}</td>
+              <td class="break-cell">{{ item.evidence or "-" }}</td>
+              <td>{{ item.severity or "-" }}</td>
+
+              {% if detail.xss_display_mode == "grouped" %}
+                <td>{{ item.occurrences or 1 }}</td>
+              {% endif %}
+
+              <td class="break-cell">
+                {% if item.interpretation_humana %}
+                  {{ item.interpretation_humana }}
+                {% else %}
+                  <span class="text-warning">Interpretación IA no disponible.</span>
+                {% endif %}
+              </td>
+
+              <td class="break-cell">
+                {% if item.risk_summary %}
+                  {{ item.risk_summary }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+
+              <td class="break-cell">
+                {% if item.likely_root_cause %}
+                  {{ item.likely_root_cause }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+
+              <td class="break-cell">
+                {% if item.recommended_review_area %}
+                  {{ item.recommended_review_area }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="detail-item">
+      <h3>Interpretación rápida</h3>
+      <p class="mb-0">
+        No se encontraron hallazgos XSS válidos para mostrar en formato resumido.
+        Si deseas revisar la evidencia técnica completa, consulta la pestaña <strong>Detalle técnico</strong>.
+      </p>
+    </div>
+  {% endif %}
+</section>

@@ -1,0 +1,95 @@
+{# ==========================================================
+  artifacts_table.html
+  - Pestaña Archivos generados de una ejecución DASTXH.
+
+  Responsabilidad:
+  - Mostrar los artifacts técnicos registrados para la ejecución.
+  - Permitir abrir archivos generados:
+      * JSON
+      * TXT
+      * HTML
+      * PDF
+      * otros archivos persistidos
+  - Mostrar mensajes claros si la ejecución sigue corriendo
+    o si no hay archivos registrados.
+
+  Fuente de datos:
+  - artifacts
+  - run_id
+  - detail.status
+
+  Nota:
+  - Esta sección antes estaba dentro de execution_detail.html.
+  - Se separa para reducir tamaño y mejorar mantenimiento.
+========================================================== #}
+
+<section class="card mb-0">
+  <h2 class="mb-3">Archivos generados</h2>
+
+  {% if artifacts %}
+    {# ------------------------------------------------------
+      Tabla de artifacts registrados en base de datos.
+    ------------------------------------------------------ #}
+    <div class="table-responsive">
+      <table
+        class="table table-dark table-hover align-middle mb-0 js-paginated-table"
+        data-page-size="10"
+      >
+        <thead>
+          <tr>
+            <th>Tipo</th>
+            <th>Archivo</th>
+            <th>Ruta relativa</th>
+            <th>MIME</th>
+            <th>Tamaño</th>
+            <th>Abrir</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {% for item in artifacts %}
+            <tr>
+              <td>{{ item.artifact_type }}</td>
+              <td>{{ item.file_name }}</td>
+              <td class="break-cell">{{ item.relative_path }}</td>
+              <td>{{ item.mime_type if item.mime_type else "-" }}</td>
+              <td>
+                {% if item.size_bytes is not none %}
+                  {{ item.size_bytes }} bytes
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td>
+                {% if run_id and item.file_name %}
+                  <a
+                    class="btn btn-sm btn-primary"
+                    href="/api/reports/file/{{ run_id }}/{{ item.file_name }}"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Abrir
+                  </a>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {# ------------------------------------------------------
+      Mensajes cuando no hay artifacts.
+      Se diferencia entre ejecución en curso y ejecución terminada.
+    ------------------------------------------------------ #}
+    {% if detail.status in ["initiated", "running"] %}
+      <div class="alert alert-warning border-0 mb-0" role="alert">
+        La ejecución sigue en curso. Los archivos generados aparecerán aquí conforme se creen y registren.
+      </div>
+    {% else %}
+      <p class="mb-0">No hay archivos generados registrados para esta ejecución.</p>
+    {% endif %}
+  {% endif %}
+</section>

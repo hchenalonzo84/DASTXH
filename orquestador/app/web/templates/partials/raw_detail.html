@@ -1,0 +1,228 @@
+{# ==========================================================
+  raw_detail.html
+  - Pestaña Detalle técnico de una ejecución DASTXH.
+
+  Responsabilidad:
+  - Mostrar información técnica más directa/cruda.
+  - Mostrar cabeceras faltantes y presentes.
+  - Mostrar cookies evaluadas en formato técnico.
+  - Mostrar salida técnica de hsecscan.
+  - Mostrar salida técnica de Dalfox.
+
+  Fuente de datos:
+  - detail.missing_json
+  - detail.present_json
+  - detail.cookies_flags_json
+  - detail.enable_hsecscan
+  - detail.hsecscan_summary_json
+  - detail.hsecscan_raw_output
+  - detail.summary_json
+  - detail.dalfox_raw_output
+
+  Nota:
+  - Esta pestaña no es la vista principal para usuario final.
+  - Sirve como evidencia técnica de respaldo.
+========================================================== #}
+
+<section class="card mb-3">
+  <h2 class="mb-3">Cabeceras y cookies observadas</h2>
+
+  {# --------------------------------------------------------
+    Cabeceras faltantes y presentes.
+    Esta sección resume la evidencia directa obtenida por curl.
+  -------------------------------------------------------- #}
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-lg-6">
+      <div class="detail-item h-100">
+        <h3>Cabeceras faltantes</h3>
+
+        {% if detail.missing_json %}
+          <ul class="list mb-0">
+            {% for item in detail.missing_json %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="mb-0">No hay cabeceras faltantes registradas.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <div class="detail-item h-100">
+        <h3>Cabeceras presentes</h3>
+
+        {% if detail.present_json %}
+          <ul class="list mb-0">
+            {% for item in detail.present_json %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="mb-0">No hay cabeceras presentes registradas.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# --------------------------------------------------------
+    Tabla técnica de cookies evaluadas.
+
+    Esta tabla repite la evidencia de cookies desde una vista
+    técnica dentro de Detalle técnico.
+  -------------------------------------------------------- #}
+  <div class="detail-item">
+    <h3>Cookies evaluadas</h3>
+
+    {% if detail.cookies_flags_json %}
+      <div class="table-responsive">
+        <table
+          class="table table-dark table-hover align-middle mb-0 js-paginated-table"
+          data-page-size="10"
+        >
+          <thead>
+            <tr>
+              <th>Cookie</th>
+              <th>Secure</th>
+              <th>HttpOnly</th>
+              <th>SameSite</th>
+              <th>Valor SameSite</th>
+              <th>Riesgo</th>
+              <th>CWE asociado</th>
+              <th>Interpretación</th>
+              <th>Recomendación</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {% for cookie in detail.cookies_flags_json %}
+              <tr>
+                <td class="break-cell">
+                  {% if cookie.cookie_name %}
+                    {{ cookie.cookie_name }}
+                  {% else %}
+                    {{ cookie.cookie_raw or cookie.cookie }}
+                  {% endif %}
+                </td>
+
+                <td>{{ "Sí" if cookie.secure else "No" }}</td>
+                <td>{{ "Sí" if cookie.httponly else "No" }}</td>
+
+                <td>
+                  {% if cookie.samesite_present is defined %}
+                    {{ "Sí" if cookie.samesite_present else "No" }}
+                  {% else %}
+                    {{ "Sí" if cookie.samesite else "No" }}
+                  {% endif %}
+                </td>
+
+                <td>
+                  {% if cookie.samesite_value %}
+                    {{ cookie.samesite_value }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+
+                <td>
+                  {% if cookie.risk_level == "alta" %}
+                    <span class="badge badge-failed">alta</span>
+                  {% elif cookie.risk_level == "media" %}
+                    <span class="badge badge-initiated">media</span>
+                  {% elif cookie.risk_level == "baja" %}
+                    <span class="badge badge-running">baja</span>
+                  {% elif cookie.risk_level == "informativa" %}
+                    <span class="badge badge-finished">informativa</span>
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+
+                <td class="break-cell">
+                  {% if cookie.cwe_mappings %}
+                    {% for cwe in cookie.cwe_mappings %}
+                      <div class="mb-2">
+                        <strong>{{ cwe.cwe_id }}</strong>
+                        {% if cwe.name %}
+                          <br>
+                          <small>{{ cwe.name }}</small>
+                        {% endif %}
+                      </div>
+                    {% endfor %}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+
+                <td class="break-cell">
+                  {% if cookie.interpretation_humana %}
+                    {{ cookie.interpretation_humana }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+
+                <td class="break-cell">
+                  {% if cookie.recommended_action %}
+                    {{ cookie.recommended_action }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="mb-0">No se detectaron cookies evaluables en la respuesta final.</p>
+    {% endif %}
+  </div>
+</section>
+
+{# ----------------------------------------------------------
+  Salida técnica de hsecscan.
+  Solo aparece si hsecscan fue parte del flujo aplicado.
+---------------------------------------------------------- #}
+{% if detail.enable_hsecscan %}
+<section class="card mb-3">
+  <h2 class="mb-3">hsecscan (salida técnica)</h2>
+
+  {% if detail.hsecscan_summary_json %}
+    <h3>Resumen estructurado</h3>
+    <pre>{{ detail.hsecscan_summary_json }}</pre>
+  {% endif %}
+
+  <h3 class="mt-4">Salida original</h3>
+
+  {% if detail.hsecscan_raw_output %}
+    <pre>{{ detail.hsecscan_raw_output }}</pre>
+  {% else %}
+    <p class="mb-0">No hay salida registrada para hsecscan.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+{# ----------------------------------------------------------
+  Salida técnica de Dalfox.
+  Incluye JSON estructurado y salida cruda persistida.
+---------------------------------------------------------- #}
+<section class="card mb-3">
+  <h2 class="mb-3">Dalfox (salida técnica)</h2>
+
+  <h3>Resumen estructurado</h3>
+
+  {% if detail.summary_json %}
+    <pre>{{ detail.summary_json }}</pre>
+  {% else %}
+    <p>No hay resumen JSON registrado.</p>
+  {% endif %}
+
+  <h3 class="mt-4">Salida técnica</h3>
+
+  {% if detail.dalfox_raw_output %}
+    <pre>{{ detail.dalfox_raw_output }}</pre>
+  {% else %}
+    <p>No hay salida técnica registrada para Dalfox.</p>
+  {% endif %}
+</section>

@@ -1,0 +1,169 @@
+/*
+  tables.css
+  - Tablas, wrappers y paginación local.
+
+  Responsabilidad:
+  - Mejorar legibilidad de tablas oscuras.
+  - Controlar tablas anchas.
+  - Estilizar paginación generada por pagination.js.
+*/
+
+/* ==========================================================
+   Tablas base
+========================================================== */
+
+.table {
+  margin-bottom: 0;
+  color: var(--text-soft);
+  border-color: var(--border-soft);
+}
+
+.table-dark {
+  --bs-table-bg: rgba(15, 23, 42, 0.72);
+  --bs-table-striped-bg: rgba(30, 41, 59, 0.72);
+  --bs-table-hover-bg: rgba(51, 65, 85, 0.72);
+  --bs-table-border-color: rgba(148, 163, 184, 0.18);
+  color: var(--text-soft);
+}
+
+.table thead th {
+  color: var(--text-main);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
+  background: rgba(2, 6, 23, 0.42);
+  white-space: nowrap;
+}
+
+.table tbody td {
+  vertical-align: top;
+  color: var(--text-soft);
+}
+
+.table strong {
+  color: var(--text-main);
+}
+
+/* ==========================================================
+   Wrappers de tablas
+========================================================== */
+
+.table-responsive {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  background: rgba(2, 6, 23, 0.28);
+}
+
+/* Tablas muy anchas */
+.cookie-table-wrapper,
+.hsecscan-table-wrapper,
+.header-comparison-table-wrapper,
+.xss-table-wrapper,
+.professional-report-evidence-wrapper,
+.professional-report-history-wrapper,
+.professional-report-pdf-wrapper {
+  width: 100%;
+}
+
+/* Mínimos para evitar que columnas críticas se aplasten */
+.cookie-results-table,
+.hsecscan-results-table,
+.header-comparison-results-table,
+.xss-results-table,
+.professional-report-evidence-table {
+  min-width: 1100px;
+}
+
+/* XSS suele ser más ancho por payload/evidencia */
+.xss-results-table {
+  min-width: 1350px;
+}
+
+/* ==========================================================
+   Celdas largas
+========================================================== */
+
+.table .break-cell {
+  min-width: 12rem;
+  max-width: 32rem;
+}
+
+/* Payloads y evidencia técnica pueden crecer mucho */
+.xss-results-table .break-cell {
+  max-width: 28rem;
+}
+
+/* ==========================================================
+   Paginación local de tablas
+========================================================== */
+
+.table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 42, 0.68);
+}
+
+.table-pagination-summary {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.table-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.table-pagination-page-indicator {
+  color: var(--text-soft);
+  font-size: 0.9rem;
+}
+
+.table-pagination-button {
+  min-height: 2rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: rgba(30, 41, 59, 0.88);
+  color: var(--text-main);
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.table-pagination-button:hover:not(:disabled) {
+  border-color: rgba(56, 189, 248, 0.46);
+  background: rgba(56, 189, 248, 0.12);
+  color: var(--primary);
+}
+
+.table-pagination-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ==========================================================
+   Responsive tablas
+========================================================== */
+
+@media (max-width: 768px) {
+  .table-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .table-pagination-controls {
+    justify-content: space-between;
+  }
+
+  .table .break-cell {
+    min-width: 10rem;
+  }
+}

@@ -1,0 +1,267 @@
+{# ==========================================================
+  summary_hsecscan.html
+  - Sección de resultados complementarios de hsecscan.
+
+  Responsabilidad:
+  - Mostrar el resumen de hsecscan dentro de la pestaña Resumen.
+  - Mostrar métricas de clasificación:
+      * catálogo principal
+      * complementarias
+      * históricas
+      * registros
+  - Mostrar alertas si hsecscan sigue en proceso o terminó con código no esperado.
+  - Mostrar tabla estructurada de observaciones hsecscan.
+  - Mostrar una explicación para usuario final sobre cómo leer la tabla.
+
+  Fuente de datos:
+  - detail.enable_hsecscan
+  - detail.hsecscan_rc
+  - detail.hsecscan_summary_json
+  - detail.hsecscan_checks
+  - detail.hsecscan_class_summary
+
+  Nota de arquitectura:
+  - Esta sección antes vivía directamente dentro de execution_detail.html.
+  - Se separa en este partial para reducir el tamaño del template principal.
+========================================================== #}
+
+{% if detail.enable_hsecscan %}
+{% set hsec_summary = detail.hsecscan_summary_json or {} %}
+{% set hsec_checks = detail.hsecscan_checks or [] %}
+{% set hsec_class_summary = detail.hsecscan_class_summary or {} %}
+
+<section class="card mb-3 analysis-wide-card">
+  <h2 class="mb-3">hsecscan</h2>
+
+  {# --------------------------------------------------------
+    Métricas resumen de hsecscan.
+
+    Estas tarjetas permiten conocer rápidamente:
+    - si hsecscan terminó;
+    - cuántos registros pertenecen al catálogo principal;
+    - cuántos son complementarios;
+    - cuántos son históricos u obsoletos;
+    - cuántos registros totales se generaron.
+  -------------------------------------------------------- #}
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-md-6 col-xl">
+      <div class="stat-card h-100">
+        <h3>Estado</h3>
+        <p>
+          {% if detail.hsecscan_rc is none and detail.status in ["initiated", "running"] %}
+            En proceso
+          {% elif detail.hsecscan_rc == 0 %}
+            Completado
+          {% elif detail.hsecscan_rc is not none %}
+            Revisar salida técnica
+          {% else %}
+            -
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl">
+      <div class="stat-card h-100">
+        <h3>Catálogo principal</h3>
+        <p>{{ hsec_class_summary.get("primary", 0) }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl">
+      <div class="stat-card h-100">
+        <h3>Complementarias</h3>
+        <p>{{ hsec_class_summary.get("complementary", 0) }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl">
+      <div class="stat-card h-100">
+        <h3>Históricas</h3>
+        <p>{{ hsec_class_summary.get("legacy", 0) }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl">
+      <div class="stat-card h-100">
+        <h3>Registros</h3>
+        <p>
+          {% if hsec_summary.get("total_hsecscan_records") is not none %}
+            {{ hsec_summary.get("total_hsecscan_records") }}
+          {% else %}
+            {{ hsec_checks|length }}
+          {% endif %}
+        </p>
+      </div>
+    </div>
+  </div>
+
+  {# --------------------------------------------------------
+    Alertas de estado técnico.
+
+    - Si la ejecución sigue corriendo, se indica que hsecscan
+      aún puede no tener datos persistidos.
+    - Si hsecscan terminó con código diferente a 0, se sugiere
+      revisar la salida técnica completa.
+  -------------------------------------------------------- #}
+  {% if detail.hsecscan_rc is none and detail.status in ["initiated", "running"] %}
+    <div class="alert alert-warning border-0 mb-0" role="alert">
+      La revisión complementaria todavía no termina o sus resultados aún no se han persistido.
+    </div>
+  {% elif detail.hsecscan_rc is not none and detail.hsecscan_rc != 0 %}
+    <div class="alert alert-warning border-0 mb-3" role="alert">
+      hsecscan devolvió un estado técnico diferente de finalización correcta.
+      Revisa la pestaña <strong>Detalle técnico</strong> para consultar la salida completa.
+    </div>
+  {% endif %}
+
+  {% if hsec_checks %}
+    {# ------------------------------------------------------
+      Guía de lectura de hsecscan.
+
+      Esta guía evita que el usuario confunda:
+      - cabeceras principales;
+      - observaciones complementarias;
+      - cabeceras históricas/obsoletas.
+    ------------------------------------------------------ #}
+    <div class="detail-item info-box-compact mb-3">
+      <h3>Cómo leer esta tabla</h3>
+
+      <div class="info-two-columns">
+        <div class="info-two-columns__col">
+          <p><strong>Catálogo principal:</strong> cabeceras comparables contra la verificación principal de DASTXH realizada con curl.</p>
+          <p><strong>Complementaria vigente:</strong> observación útil para contexto técnico, pero no forma parte del porcentaje principal de cumplimiento.</p>
+          <p><strong>Histórica/obsoleta:</strong> cabecera antigua, reemplazada o no recomendada como requisito actual. Se conserva como evidencia, pero no penaliza el cumplimiento.</p>
+        </div>
+
+        <div class="info-two-columns__col">
+          <p><strong>Estado:</strong> indica si hsecscan observó una cabecera con advertencia o si detectó una cabecera faltante.</p>
+          <p><strong>Riesgo:</strong> clasificación orientativa para priorizar revisión. Las cabeceras históricas se tratan como informativas.</p>
+          <p><strong>Descripción, recomendación y CWE:</strong> muestran traducción al español cuando está disponible, conservando el sentido técnico original.</p>
+        </div>
+      </div>
+    </div>
+
+    {# ------------------------------------------------------
+      Tabla estructurada de resultados hsecscan.
+    ------------------------------------------------------ #}
+    <div class="table-responsive hsecscan-table-wrapper">
+      <table
+        class="table table-dark table-hover align-middle mb-0 hsecscan-results-table js-paginated-table"
+        data-page-size="10"
+      >
+        <thead>
+          <tr>
+            <th>Estado</th>
+            <th>Cabecera</th>
+            <th>Clasificación</th>
+            <th>Riesgo</th>
+            <th>Descripción</th>
+            <th>Recomendación</th>
+            <th>CWE</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in hsec_checks %}
+            <tr>
+              <td>
+                {% if item.display_status %}
+                  {{ item.display_status }}
+                {% elif item.record_type == "missing" %}
+                  Faltante
+                {% elif item.record_type == "observed" %}
+                  Observada
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+
+              <td class="break-cell">
+                <strong>{{ item.header_name or "-" }}</strong>
+                {% if item.header_value %}
+                  <br>
+                  <small>{{ item.header_value }}</small>
+                {% endif %}
+              </td>
+
+              <td class="break-cell">
+                {% if item.header_class_label %}
+                  <strong>{{ item.header_class_label }}</strong>
+                {% else %}
+                  -
+                {% endif %}
+
+                {% if item.header_class_description %}
+                  <br>
+                  <small>{{ item.header_class_description }}</small>
+                {% endif %}
+              </td>
+
+              <td>
+                {% if item.risk_level == "alta" %}
+                  <span class="badge badge-failed">alta</span>
+                {% elif item.risk_level == "media" %}
+                  <span class="badge badge-initiated">media</span>
+                {% elif item.risk_level == "baja" %}
+                  <span class="badge badge-running">baja</span>
+                {% elif item.risk_level == "informativa" %}
+                  <span class="badge badge-finished">informativa</span>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+
+              <td class="break-cell">
+                {% if item.security_description_es %}
+                  {{ item.security_description_es }}
+                {% elif item.security_description %}
+                  {{ item.security_description }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+
+              <td class="break-cell">
+                {% if item.recommendations_es %}
+                  {{ item.recommendations_es }}
+                {% elif item.recommendations %}
+                  {{ item.recommendations }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+
+              <td class="break-cell">
+                {% if item.cwe_es %}
+                  {{ item.cwe_es }}
+                {% elif item.cwe %}
+                  {{ item.cwe }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {# ------------------------------------------------------
+      Mensaje cuando hsecscan no produjo registros estructurados.
+    ------------------------------------------------------ #}
+    <div class="detail-item">
+      <h3>Resultado complementario</h3>
+      {% if detail.hsecscan_rc == 0 %}
+        <p class="mb-0">
+          hsecscan completó la ejecución, pero no hay registros estructurados para mostrar.
+          Puedes revisar la salida completa en la pestaña <strong>Detalle técnico</strong>.
+        </p>
+      {% else %}
+        <p class="mb-0">
+          No hay información estructurada disponible para hsecscan en esta ejecución.
+        </p>
+      {% endif %}
+    </div>
+  {% endif %}
+</section>
+{% endif %}

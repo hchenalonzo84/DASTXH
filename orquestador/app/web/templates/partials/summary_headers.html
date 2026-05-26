@@ -1,0 +1,154 @@
+{# ==========================================================
+  summary_headers.html
+  - Sección de verificación principal de cabeceras HTTP.
+
+  Responsabilidad:
+  - Mostrar el resumen de cumplimiento de cabeceras.
+  - Mostrar cabeceras evaluadas, presentes y faltantes.
+  - Explicar al usuario cómo interpretar la sección.
+  - Mostrar la tabla de pruebas HTTP principales generadas por DASTXH.
+
+  Fuente de datos:
+  - detail.cumplimiento_pct
+  - detail.headers_evaluadas
+  - detail.headers_presentes
+  - detail.http_tests
+
+  Nota de arquitectura:
+  - Esta sección antes vivía directamente dentro de execution_detail.html.
+  - Se separa en este partial para reducir el tamaño del archivo principal
+    y facilitar mantenimiento futuro.
+========================================================== #}
+
+<section class="card mb-3 analysis-wide-card">
+  <h2 class="mb-3">verificación de cabeceras</h2>
+
+  {# --------------------------------------------------------
+    Tarjetas métricas principales de la capa curl.
+  -------------------------------------------------------- #}
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="stat-card h-100">
+        <h3>Cumplimiento</h3>
+        <p>
+          {% if detail.cumplimiento_pct is not none %}
+            {{ detail.cumplimiento_pct }}%
+          {% else %}
+            -
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="stat-card h-100">
+        <h3>Evaluadas</h3>
+        <p>
+          {% if detail.headers_evaluadas is not none %}
+            {{ detail.headers_evaluadas }}
+          {% else %}
+            -
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="stat-card h-100">
+        <h3>Presentes</h3>
+        <p>
+          {% if detail.headers_presentes is not none %}
+            {{ detail.headers_presentes }}
+          {% else %}
+            -
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="stat-card h-100">
+        <h3>Faltantes</h3>
+        <p>
+          {% if detail.headers_evaluadas is not none and detail.headers_presentes is not none %}
+            {{ detail.headers_evaluadas - detail.headers_presentes }}
+          {% else %}
+            -
+          {% endif %}
+        </p>
+      </div>
+    </div>
+  </div>
+
+  {# --------------------------------------------------------
+    Explicación metodológica para lectura del resultado.
+  -------------------------------------------------------- #}
+  <div class="detail-item info-box-compact mb-3">
+    <h3>Cómo leer esta sección</h3>
+
+    <div class="info-two-columns">
+      <div class="info-two-columns__col">
+        <p><strong>Cumplimiento:</strong> representa el porcentaje de cabeceras del catálogo principal DASTXH encontradas por la verificación principal con curl.</p>
+        <p><strong>Evaluadas:</strong> total de cabeceras principales consideradas por DASTXH en esta capa.</p>
+      </div>
+
+      <div class="info-two-columns__col">
+        <p><strong>Presentes:</strong> cabeceras del catálogo principal observadas en la respuesta HTTP analizada.</p>
+        <p><strong>Faltantes:</strong> cabeceras principales esperadas que no fueron observadas y requieren revisión de configuración.</p>
+      </div>
+    </div>
+
+    <div class="notice mt-3">
+      <strong>Nota metodológica:</strong>
+      hsecscan se usa como capa complementaria de contraste. Sus observaciones pueden confirmar o ampliar la evidencia,
+      pero las cabeceras históricas u obsoletas reportadas por hsecscan no penalizan este porcentaje principal.
+    </div>
+  </div>
+
+  {# --------------------------------------------------------
+    Tabla de pruebas HTTP principales.
+
+    Esta tabla representa la evidencia objetiva de la capa
+    principal de cabeceras. Cada fila indica la prueba, su
+    resultado, la razón técnica y la recomendación.
+  -------------------------------------------------------- #}
+  {% if detail.http_tests %}
+    <div class="table-responsive">
+      <table
+        class="table table-dark table-hover align-middle mb-0 js-paginated-table"
+        data-page-size="10"
+      >
+        <thead>
+          <tr>
+            <th>Prueba</th>
+            <th>Resultado</th>
+            <th>Razón</th>
+            <th>Recomendación</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for test in detail.http_tests %}
+            <tr>
+              <td>{{ test.name }}</td>
+              <td>
+                {% if test.status == "passed" %}
+                  Aprobada
+                {% elif test.status == "failed" %}
+                  Falló
+                {% elif test.status == "warning" %}
+                  Advertencia
+                {% else %}
+                  Informativo
+                {% endif %}
+              </td>
+              <td class="break-cell">{{ test.reason }}</td>
+              <td class="break-cell">{{ test.recommendation }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="mb-0">Todavía no hay pruebas HTTP detalladas registradas para esta ejecución.</p>
+  {% endif %}
+</section>

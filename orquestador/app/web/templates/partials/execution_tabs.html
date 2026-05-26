@@ -1,0 +1,97 @@
+{# ==========================================================
+  execution_tabs.html
+  - Navegación por pestañas del detalle de ejecución.
+
+  Responsabilidad:
+  - Definir las pestañas principales de la vista:
+      * Resumen
+      * Detalle técnico
+      * Archivos generados
+      * Reporte general
+
+  Nota:
+  - Este partial solo contiene la barra de tabs.
+  - El contenido de cada tab sigue dentro de execution_detail.html
+    por ahora.
+  - Más adelante cada panel también puede moverse a partials.
+========================================================== #}
+
+<ul class="nav nav-tabs custom-tabs mb-3" id="executionDetailTabs" role="tablist">
+  {# --------------------------------------------------------
+    Pestaña Resumen:
+    muestra resultados consolidados e interpretados.
+  -------------------------------------------------------- #}
+  <li class="nav-item" role="presentation">
+    <button
+      class="nav-link active"
+      id="pretty-tab"
+      data-bs-toggle="tab"
+      data-bs-target="#pretty-pane"
+      type="button"
+      role="tab"
+      aria-controls="pretty-pane"
+      aria-selected="true"
+    >
+      Resumen
+    </button>
+  </li>
+
+  {# --------------------------------------------------------
+    Pestaña Detalle técnico:
+    muestra salidas en crudo de herramientas como curl,
+    hsecscan y Dalfox.
+  -------------------------------------------------------- #}
+  <li class="nav-item" role="presentation">
+    <button
+      class="nav-link"
+      id="raw-tab"
+      data-bs-toggle="tab"
+      data-bs-target="#raw-pane"
+      type="button"
+      role="tab"
+      aria-controls="raw-pane"
+      aria-selected="false"
+    >
+      Detalle técnico
+    </button>
+  </li>
+
+  {# --------------------------------------------------------
+    Pestaña Archivos generados:
+    muestra artifacts técnicos registrados para la ejecución.
+  -------------------------------------------------------- #}
+  <li class="nav-item" role="presentation">
+    <button
+      class="nav-link"
+      id="artifacts-tab"
+      data-bs-toggle="tab"
+      data-bs-target="#artifacts-pane"
+      type="button"
+      role="tab"
+      aria-controls="artifacts-pane"
+      aria-selected="false"
+    >
+      Archivos generados
+    </button>
+  </li>
+
+  {# --------------------------------------------------------
+    Pestaña Reporte general:
+    contiene el formulario editable, versiones históricas,
+    evidencia objetiva y PDFs generados.
+  -------------------------------------------------------- #}
+  <li class="nav-item" role="presentation">
+    <button
+      class="nav-link"
+      id="general-report-tab"
+      data-bs-toggle="tab"
+      data-bs-target="#general-report-pane"
+      type="button"
+      role="tab"
+      aria-controls="general-report-pane"
+      aria-selected="false"
+    >
+      Reporte general
+    </button>
+  </li>
+</ul>

@@ -1,0 +1,161 @@
+/*
+  layout.css
+  - Estructura visual general de la GUI DASTXH.
+
+  Responsabilidad:
+  - Contenedores principales.
+  - Navbar/header general.
+  - Espaciados globales.
+  - Navegación por pestañas.
+*/
+
+/* ==========================================================
+   Contenedor general
+========================================================== */
+
+.container,
+.container-fluid {
+  width: min(100%, 1480px);
+}
+
+main,
+.main-content,
+.page-content {
+  width: 100%;
+}
+
+/* ==========================================================
+   Barra superior / navegación
+========================================================== */
+
+.navbar,
+.app-navbar {
+  border-bottom: 1px solid var(--border-soft);
+  background: rgba(15, 23, 42, 0.94) !important;
+  backdrop-filter: blur(14px);
+}
+
+.navbar-brand,
+.app-brand {
+  color: var(--text-main) !important;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.navbar-nav .nav-link,
+.app-navbar a {
+  color: var(--text-soft) !important;
+}
+
+.navbar-nav .nav-link:hover,
+.app-navbar a:hover {
+  color: var(--primary) !important;
+}
+
+/* ==========================================================
+   Secciones principales
+========================================================== */
+
+.page-title {
+  margin-bottom: 1.25rem;
+}
+
+.page-subtitle {
+  max-width: 58rem;
+  color: var(--text-muted);
+}
+
+/* ==========================================================
+   Tabs personalizados
+========================================================== */
+
+.custom-tabs {
+  border-bottom: 1px solid var(--border-soft);
+  gap: 0.35rem;
+}
+
+.custom-tabs .nav-link {
+  border: 1px solid transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.custom-tabs .nav-link:hover {
+  border-color: var(--border-soft);
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.custom-tabs .nav-link.active {
+  border-color: var(--border-soft);
+  border-bottom-color: var(--bg-panel);
+  color: var(--text-main);
+  background: var(--bg-panel);
+}
+
+/* ==========================================================
+   Contenido de tabs
+========================================================== */
+
+.tab-content {
+  width: 100%;
+}
+
+.tab-pane {
+  width: 100%;
+}
+
+/* ==========================================================
+   Cajas informativas de dos columnas
+========================================================== */
+
+.info-two-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.info-two-columns__col p:last-child {
+  margin-bottom: 0;
+}
+
+/* ==========================================================
+   Notice / avisos secundarios
+========================================================== */
+
+.notice {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--text-soft);
+}
+
+.notice-warning {
+  border-color: rgba(245, 158, 11, 0.42);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fde68a;
+}
+
+/* ==========================================================
+   Responsive layout
+========================================================== */
+
+@media (max-width: 992px) {
+  .info-two-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 576px) {
+  .custom-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 0.25rem;
+  }
+
+  .custom-tabs .nav-item {
+    flex: 0 0 auto;
+  }
+}

@@ -1,0 +1,212 @@
+{# ==========================================================
+  execution_header.html
+  - Encabezado del detalle de ejecución.
+
+  Responsabilidad:
+  - Mostrar el título principal.
+  - Guardar metadatos ocultos usados por JavaScript.
+  - Mostrar alerta según estado de ejecución.
+  - Mostrar tarjetas principales de resumen:
+      * ID
+      * Estado
+      * URL objetivo
+      * Inicio / Fin
+      * Cumplimiento
+      * Cabeceras evaluadas / presentes
+      * Hallazgos XSS
+      * Carpeta lógica
+  - Mostrar mensaje de error si la ejecución falló.
+
+  Nota:
+  - Este partial depende de las variables:
+      detail
+      execution_id
+  - También usa los filtros globales:
+      local_datetime
+      execution_status_label
+========================================================== #}
+
+<h2 class="mb-3">Detalle de ejecución</h2>
+
+{# ----------------------------------------------------------
+  Metadatos ocultos para JS:
+  - execution_id permite saber qué ejecución está abierta.
+  - status permite refrescar o reaccionar según estado.
+---------------------------------------------------------- #}
+<div
+  id="execution-status-meta"
+  data-execution-id="{{ execution_id }}"
+  data-status="{{ detail.status }}"
+  hidden
+></div>
+
+{# ----------------------------------------------------------
+  Alerta principal según estado de ejecución.
+  Esto ayuda al usuario a entender si la evaluación terminó,
+  sigue en proceso, falló o apenas fue iniciada.
+---------------------------------------------------------- #}
+{% if detail.status == "initiated" %}
+  <div class="alert alert-warning border-0 mb-4" role="alert">
+    <strong>Ejecución iniciada.</strong>
+    El escaneo fue aceptado y está pendiente de continuar su procesamiento.
+    Algunos resultados todavía pueden no estar disponibles.
+  </div>
+{% elif detail.status == "running" %}
+  <div class="alert alert-warning border-0 mb-4" role="alert">
+    <strong>Escaneo en progreso.</strong>
+    La evaluación sigue corriendo en segundo plano. Puedes cambiar de vista
+    y volver más tarde; el proceso no depende de mantener esta página abierta.
+  </div>
+{% elif detail.status == "failed" %}
+  <div class="alert alert-danger border-0 mb-4" role="alert">
+    <strong>Ejecución fallida.</strong>
+    Revisa la pestaña <strong>Detalle técnico</strong> y <strong>Archivos generados</strong>
+    para identificar la causa del problema.
+  </div>
+{% else %}
+  <div class="alert alert-primary border-0 mb-4" role="alert">
+    <strong>Ejecución finalizada.</strong>
+    Ya puedes revisar el resultado consolidado en la vista <strong>Resumen</strong>.
+  </div>
+{% endif %}
+
+{# ----------------------------------------------------------
+  Tarjetas informativas principales de la ejecución.
+  Se muestran arriba de las pestañas para dar contexto rápido.
+---------------------------------------------------------- #}
+<div class="row g-3 mb-4">
+  {# ID interno de ejecución. #}
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="detail-item h-100">
+      <h3>ID</h3>
+      <p>{{ detail.id }}</p>
+    </div>
+  </div>
+
+  {# Estado traducido a español usando filtro global. #}
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="detail-item h-100">
+      <h3>Estado</h3>
+      <p>
+        <span class="badge badge-{{ detail.status }}">
+          {{ detail.status|execution_status_label }}
+        </span>
+      </p>
+    </div>
+  </div>
+
+  {# URL objetivo evaluada. #}
+  <div class="col-12 col-md-6 col-xl-6">
+    <div class="detail-item h-100">
+      <h3>URL objetivo</h3>
+      <p class="break-cell">{{ detail.target_url }}</p>
+    </div>
+  </div>
+
+  {# Fecha/hora de inicio en hora local de Guatemala. #}
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="detail-item h-100">
+      <h3>Inicio</h3>
+      <p>
+        {% if detail.started_at %}
+          {{ detail.started_at|local_datetime }}
+        {% else %}
+          -
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  {# Fecha/hora de finalización en hora local de Guatemala. #}
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="detail-item h-100">
+      <h3>Fin</h3>
+      <p>
+        {% if detail.finished_at %}
+          {{ detail.finished_at|local_datetime }}
+        {% else %}
+          -
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  {# Porcentaje principal de cumplimiento de cabeceras. #}
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="stat-card h-100">
+      <h3>Cumplimiento de cabeceras</h3>
+      <p>
+        {% if detail.cumplimiento_pct is not none %}
+          {{ detail.cumplimiento_pct }}%
+        {% else %}
+          -
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  {# Total de cabeceras evaluadas por el catálogo principal DASTXH. #}
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="stat-card h-100">
+      <h3>Cabeceras evaluadas</h3>
+      <p>
+        {% if detail.headers_evaluadas is not none %}
+          {{ detail.headers_evaluadas }}
+        {% else %}
+          -
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  {# Cabeceras presentes detectadas por la capa principal. #}
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="stat-card h-100">
+      <h3>Cabeceras presentes</h3>
+      <p>
+        {% if detail.headers_presentes is not none %}
+          {{ detail.headers_presentes }}
+        {% else %}
+          -
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  {# Hallazgos XSS mostrables. Si Dalfox aún no termina, se muestra guion. #}
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="stat-card h-100">
+      <h3>Hallazgos XSS</h3>
+      <p>
+        {% if detail.status in ["initiated", "running"] and detail.dalfox_rc is none %}
+          -
+        {% else %}
+          {{ detail.xss_display_count if detail.xss_display_count is defined else 0 }}
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  {# Carpeta lógica donde se guardaron artifacts/reportes de esta ejecución. #}
+  <div class="col-12 col-md-6 col-xl-6">
+    <div class="detail-item h-100">
+      <h3>Carpeta lógica</h3>
+      <p class="break-cell">
+        {% if detail.report_dir %}
+          {{ detail.report_dir }}
+        {% else %}
+          -
+        {% endif %}
+      </p>
+    </div>
+  </div>
+</div>
+
+{# ----------------------------------------------------------
+  Mensaje de error persistido en BD si la ejecución falló.
+---------------------------------------------------------- #}
+{% if detail.error_message %}
+  <div class="alert alert-danger border-0 mb-4" role="alert">
+    <strong>Error:</strong> {{ detail.error_message }}
+  </div>
+{% endif %}

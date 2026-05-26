@@ -1,0 +1,162 @@
+{# ==========================================================
+  summary_header_comparison.html
+  - Comparación entre curl y hsecscan.
+
+  Responsabilidad:
+  - Comparar la capa principal de cabeceras basada en curl
+    contra la capa complementaria de hsecscan.
+  - Mostrar métricas:
+      * total comparado
+      * confirmadas
+      * discrepancias
+      * complementarias
+      * históricas
+  - Mostrar una tabla resumida de comparación.
+  - Ayudar al usuario a entender diferencias entre ambas capas.
+
+  Fuente de datos:
+  - detail.enable_hsecscan
+  - detail.header_layer_comparison
+  - detail.header_layer_comparison_summary
+
+  Nota:
+  - Esta tabla no reemplaza el cálculo principal de cumplimiento.
+  - Solo sirve como evidencia comparativa y complementaria.
+========================================================== #}
+
+{% if detail.enable_hsecscan %}
+{% set comparison_rows = detail.header_layer_comparison or [] %}
+{% set comparison_summary = detail.header_layer_comparison_summary or {} %}
+
+<section class="card mb-3 analysis-wide-card">
+  <h2 class="mb-3">Comparación curl vs hsecscan</h2>
+
+  {# --------------------------------------------------------
+    Métricas principales de comparación.
+  -------------------------------------------------------- #}
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-md-6 col-xl">
+      <div class="stat-card h-100">
+        <h3>Total comparado</h3>
+        <p>{{ comparison_summary.get("total", comparison_rows|length) }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl">
+      <div class="stat-card h-100">
+        <h3>Confirmadas</h3>
+        <p>{{ comparison_summary.get("confirmed", 0) }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl">
+      <div class="stat-card h-100">
+        <h3>Discrepancias</h3>
+        <p>{{ comparison_summary.get("discrepancies", 0) }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl">
+      <div class="stat-card h-100">
+        <h3>Complementarias</h3>
+        <p>{{ comparison_summary.get("complementary", 0) }}</p>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-xl">
+      <div class="stat-card h-100">
+        <h3>Históricas</h3>
+        <p>{{ comparison_summary.get("legacy", 0) }}</p>
+      </div>
+    </div>
+  </div>
+
+  {% if comparison_rows %}
+    {# ------------------------------------------------------
+      Guía de lectura de comparación.
+    ------------------------------------------------------ #}
+    <div class="detail-item info-box-compact mb-3">
+      <h3>Cómo leer esta tabla</h3>
+
+      <div class="info-two-columns">
+        <div class="info-two-columns__col">
+          <p><strong>curl:</strong> verificación principal del catálogo de cabeceras DASTXH. Es la base del porcentaje de cumplimiento.</p>
+          <p><strong>hsecscan:</strong> segunda capa de contraste usada para confirmar, complementar o marcar diferencias técnicas.</p>
+          <p><strong>Confirmado:</strong> ambas capas apuntan al mismo hallazgo o ausencia de cabecera principal.</p>
+        </div>
+
+        <div class="info-two-columns__col">
+          <p><strong>Complementaria:</strong> hsecscan aporta contexto adicional, pero no modifica el porcentaje principal.</p>
+          <p><strong>Histórica/obsoleta:</strong> cabecera antigua o no recomendada como requisito principal. Se conserva como referencia, sin penalizar el cumplimiento.</p>
+          <p><strong>Discrepancia:</strong> curl y hsecscan no coinciden completamente; requiere revisión manual si es relevante.</p>
+        </div>
+      </div>
+    </div>
+
+    {# ------------------------------------------------------
+      Tabla de comparación curl vs hsecscan.
+    ------------------------------------------------------ #}
+    <div class="table-responsive header-comparison-table-wrapper">
+      <table
+        class="table table-dark table-hover align-middle mb-0 header-comparison-results-table js-paginated-table"
+        data-page-size="10"
+      >
+        <thead>
+          <tr>
+            <th>Cabecera</th>
+            <th>Clasificación</th>
+            <th>curl</th>
+            <th>hsecscan</th>
+            <th>Resultado</th>
+            <th>Prioridad</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in comparison_rows %}
+            <tr>
+              <td class="break-cell">
+                <strong>{{ item.header_name }}</strong>
+              </td>
+
+              <td class="break-cell">
+                {% if item.hsecscan_header_class_label %}
+                  {{ item.hsecscan_header_class_label }}
+                {% else %}
+                  Catálogo principal DASTXH
+                {% endif %}
+              </td>
+
+              <td>{{ item.curl_status }}</td>
+              <td>{{ item.hsecscan_status }}</td>
+
+              <td class="break-cell">
+                {{ item.comparison_result }}
+              </td>
+
+              <td>
+                {% if item.priority == "alta" %}
+                  <span class="badge badge-failed">alta</span>
+                {% elif item.priority == "media" %}
+                  <span class="badge badge-initiated">media</span>
+                {% elif item.priority == "baja" %}
+                  <span class="badge badge-running">baja</span>
+                {% else %}
+                  <span class="badge badge-finished">informativa</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="detail-item">
+      <h3>Comparación no disponible</h3>
+      <p class="mb-0">
+        No hay datos suficientes para comparar la verificación curl con hsecscan.
+        Esto puede ocurrir si la ejecución todavía está en proceso o si hsecscan no generó resultados estructurados.
+      </p>
+    </div>
+  {% endif %}
+</section>
+{% endif %}
