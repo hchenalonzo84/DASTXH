@@ -1,161 +1,285 @@
 /*
   layout.css
-  - Estructura visual general de la GUI DASTXH.
-
-  Responsabilidad:
-  - Contenedores principales.
-  - Navbar/header general.
-  - Espaciados globales.
-  - Navegación por pestañas.
+  - Layout general de la GUI web de DASTXH.
+  - Migrado desde el styles.css original funcional.
+  - Incluye variables, reset base, contenedor, topbar, tabs,
+    notices, alerts, código y bloques informativos.
 */
 
-/* ==========================================================
-   Contenedor general
-========================================================== */
-
-.container,
-.container-fluid {
-  width: min(100%, 1480px);
+/* ----------------------------------------------------------
+   Reset básico y variables visuales
+   ---------------------------------------------------------- */
+:root {
+    --bg-main: #0f172a;
+    --bg-panel: #111827;
+    --bg-panel-soft: #0b1220;
+    --bg-panel-alt: #172033;
+    --border-main: #1f2937;
+    --border-soft: #334155;
+    --text-main: #e5e7eb;
+    --text-soft: #dbe4f0;
+    --text-muted: #94a3b8;
+    --text-strong: #f9fafb;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-soft: rgba(37, 99, 235, 0.15);
+    --success-bg: rgba(34, 197, 94, 0.16);
+    --success-border: rgba(34, 197, 94, 0.35);
+    --success-text: #86efac;
+    --danger-bg: rgba(239, 68, 68, 0.16);
+    --danger-border: rgba(239, 68, 68, 0.35);
+    --danger-text: #fca5a5;
+    --warning-bg: rgba(245, 158, 11, 0.16);
+    --warning-border: rgba(245, 158, 11, 0.35);
+    --warning-text: #fcd34d;
+    --info-bg: rgba(96, 165, 250, 0.10);
+    --info-border: rgba(96, 165, 250, 0.28);
+    --info-text: #dbeafe;
+    --shadow-soft: 0 6px 18px rgba(0, 0, 0, 0.18);
+    --radius-lg: 14px;
+    --radius-md: 12px;
+    --radius-sm: 10px;
 }
 
-main,
-.main-content,
-.page-content {
-  width: 100%;
+* {
+    box-sizing: border-box;
 }
 
-/* ==========================================================
+html {
+    font-size: 16px;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: var(--bg-main);
+    color: var(--text-main);
+    line-height: 1.5;
+}
+
+main.container {
+    padding: 2rem 0;
+
+    /*
+      Clave para que las tarjetas de análisis puedan desbordar
+      hacia los lados como en el CSS original.
+    */
+    overflow: visible;
+}
+
+a {
+    color: #93c5fd;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+.container {
+    width: min(1100px, 92%);
+    margin: 0 auto;
+
+    /*
+      Evita cortar tarjetas internas que usan .analysis-wide-card.
+    */
+    overflow: visible;
+}
+
+/* ----------------------------------------------------------
    Barra superior / navegación
-========================================================== */
-
-.navbar,
-.app-navbar {
-  border-bottom: 1px solid var(--border-soft);
-  background: rgba(15, 23, 42, 0.94) !important;
-  backdrop-filter: blur(14px);
+   ---------------------------------------------------------- */
+.topbar {
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border-main);
+    position: sticky;
+    top: 0;
+    z-index: 1030;
 }
 
-.navbar-brand,
-.app-brand {
-  color: var(--text-main) !important;
-  font-weight: 800;
-  letter-spacing: 0.02em;
+.topbar .container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 0;
 }
 
-.navbar-nav .nav-link,
-.app-navbar a {
-  color: var(--text-soft) !important;
+.topbar h1 {
+    margin: 0;
+    font-size: 1.35rem;
+    color: var(--text-strong);
 }
 
-.navbar-nav .nav-link:hover,
-.app-navbar a:hover {
-  color: var(--primary) !important;
+.topbar nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
 }
 
-/* ==========================================================
-   Secciones principales
-========================================================== */
-
-.page-title {
-  margin-bottom: 1.25rem;
+.topbar nav a {
+    color: #93c5fd;
+    font-weight: 600;
 }
 
-.page-subtitle {
-  max-width: 58rem;
-  color: var(--text-muted);
-}
-
-/* ==========================================================
-   Tabs personalizados
-========================================================== */
-
-.custom-tabs {
-  border-bottom: 1px solid var(--border-soft);
-  gap: 0.35rem;
-}
-
-.custom-tabs .nav-link {
-  border: 1px solid transparent;
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
-  color: var(--text-muted);
-  background: transparent;
-}
-
-.custom-tabs .nav-link:hover {
-  border-color: var(--border-soft);
-  color: var(--text-main);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.custom-tabs .nav-link.active {
-  border-color: var(--border-soft);
-  border-bottom-color: var(--bg-panel);
-  color: var(--text-main);
-  background: var(--bg-panel);
-}
-
-/* ==========================================================
-   Contenido de tabs
-========================================================== */
-
-.tab-content {
-  width: 100%;
-}
-
-.tab-pane {
-  width: 100%;
-}
-
-/* ==========================================================
-   Cajas informativas de dos columnas
-========================================================== */
-
-.info-two-columns {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-}
-
-.info-two-columns__col p:last-child {
-  margin-bottom: 0;
-}
-
-/* ==========================================================
-   Notice / avisos secundarios
-========================================================== */
-
+/* ----------------------------------------------------------
+   Notices y alerts
+   ---------------------------------------------------------- */
 .notice {
-  padding: 0.9rem 1rem;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: rgba(15, 23, 42, 0.72);
-  color: var(--text-soft);
+    border-left: 4px solid #60a5fa;
+    background: rgba(96, 165, 250, 0.08);
+    padding: 0.9rem 1rem;
+    border-radius: var(--radius-sm);
+    color: var(--text-soft);
 }
 
 .notice-warning {
-  border-color: rgba(245, 158, 11, 0.42);
-  background: rgba(245, 158, 11, 0.12);
-  color: #fde68a;
+    border-left-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.08);
 }
 
-/* ==========================================================
-   Responsive layout
-========================================================== */
-
-@media (max-width: 992px) {
-  .info-two-columns {
-    grid-template-columns: 1fr;
-  }
+.notice-error {
+    border-left-color: #ef4444;
+    background: rgba(239, 68, 68, 0.08);
 }
 
-@media (max-width: 576px) {
-  .custom-tabs {
+.alert {
+    border-radius: var(--radius-md);
+    color: var(--text-soft);
+    box-shadow: none;
+}
+
+.alert-primary {
+    background: var(--info-bg);
+    border: 1px solid var(--info-border);
+    color: var(--info-text);
+}
+
+.alert-warning {
+    background: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+    color: var(--warning-text);
+}
+
+.alert-danger {
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-border);
+    color: var(--danger-text);
+}
+
+/* ----------------------------------------------------------
+   Tabs Bootstrap personalizadas
+   ---------------------------------------------------------- */
+.custom-tabs {
+    border-bottom: 1px solid var(--border-main);
+    gap: 0.35rem;
+}
+
+.custom-tabs .nav-link {
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-top-left-radius: var(--radius-sm);
+    border-top-right-radius: var(--radius-sm);
+    font-weight: 700;
+    padding: 0.7rem 1rem;
+}
+
+.custom-tabs .nav-link:hover {
+    color: var(--text-strong);
+    background: rgba(255, 255, 255, 0.03);
+    border-color: transparent;
+    text-decoration: none;
+}
+
+.custom-tabs .nav-link.active {
+    color: var(--text-strong);
+    background: var(--bg-panel-soft);
+    border-color: var(--border-main) var(--border-main) var(--bg-panel-soft);
+}
+
+/*
+  Clave:
+  Bootstrap usa .tab-content y .tab-pane. Si alguno corta overflow,
+  las tarjetas amplias quedan encerradas dentro del ancho del padre.
+*/
+.tab-content,
+.tab-content > .tab-pane {
+    overflow: visible;
+}
+
+.tab-content > .tab-pane {
+    padding-top: 0.25rem;
+}
+
+/* ----------------------------------------------------------
+   Cajas explicativas compactas en dos columnas
+   ---------------------------------------------------------- */
+.info-box-compact {
+    padding-bottom: 0.85rem;
+}
+
+.info-two-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.85rem 2rem;
+    align-items: start;
+    margin-top: 0.75rem;
+}
+
+.info-two-columns__col {
+    min-width: 0;
+}
+
+.info-two-columns__col p {
+    margin-bottom: 0.55rem;
+    line-height: 1.45;
+}
+
+.info-two-columns__col p:last-child {
+    margin-bottom: 0;
+}
+
+/* ----------------------------------------------------------
+   Código y bloques preformateados
+   ---------------------------------------------------------- */
+code {
+    background: var(--bg-panel-soft);
+    border: 1px solid var(--border-main);
+    border-radius: 6px;
+    padding: 0.15rem 0.35rem;
+    color: #cbd5e1;
+}
+
+pre {
+    background: var(--bg-panel-soft);
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    padding: 1rem;
     overflow-x: auto;
-    flex-wrap: nowrap;
-    padding-bottom: 0.25rem;
-  }
+    color: var(--text-soft);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-bottom: 0;
+}
 
-  .custom-tabs .nav-item {
-    flex: 0 0 auto;
-  }
+/* ----------------------------------------------------------
+   Responsive layout general
+   ---------------------------------------------------------- */
+@media (max-width: 992px) {
+    .info-two-columns {
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .topbar .container {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .topbar nav {
+        gap: 0.75rem;
+    }
 }

@@ -1,169 +1,692 @@
 /*
   tables.css
-  - Tablas, wrappers y paginación local.
+  - Tablas principales, wrappers, scroll horizontal y paginación local.
+  - Migrado desde el styles.css original funcional.
 
-  Responsabilidad:
-  - Mejorar legibilidad de tablas oscuras.
-  - Controlar tablas anchas.
-  - Estilizar paginación generada por pagination.js.
+  Ajuste incluido:
+  - Se agrega soporte para tablas simples dentro de .card,
+    especialmente la tabla de "Ejecuciones recientes" en la vista principal.
 */
 
-/* ==========================================================
-   Tablas base
-========================================================== */
-
-.table {
-  margin-bottom: 0;
-  color: var(--text-soft);
-  border-color: var(--border-soft);
+/* ----------------------------------------------------------
+   Tablas simples dentro de tarjetas
+   - Corrige la tabla de "Ejecuciones recientes".
+   - Aplica a tablas que no tienen clases especializadas.
+   ---------------------------------------------------------- */
+.card > table,
+.card .table-wrapper > table:not(.xss-results-table):not(.hsecscan-results-table):not(.header-comparison-results-table):not(.cookie-results-table):not(.professional-report-evidence-table),
+.card table:not(.table):not(.xss-results-table):not(.hsecscan-results-table):not(.header-comparison-results-table):not(.cookie-results-table):not(.professional-report-evidence-table) {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: auto;
+    margin-top: 1rem;
 }
 
-.table-dark {
-  --bs-table-bg: rgba(15, 23, 42, 0.72);
-  --bs-table-striped-bg: rgba(30, 41, 59, 0.72);
-  --bs-table-hover-bg: rgba(51, 65, 85, 0.72);
-  --bs-table-border-color: rgba(148, 163, 184, 0.18);
-  color: var(--text-soft);
+.card > table thead th,
+.card .table-wrapper > table:not(.xss-results-table):not(.hsecscan-results-table):not(.header-comparison-results-table):not(.cookie-results-table):not(.professional-report-evidence-table) thead th,
+.card table:not(.table):not(.xss-results-table):not(.hsecscan-results-table):not(.header-comparison-results-table):not(.cookie-results-table):not(.professional-report-evidence-table) thead th {
+    padding: 0.7rem 0.75rem;
+    background: var(--bg-panel-alt);
+    color: var(--text-strong);
+    border-bottom: 1px solid var(--border-main);
+    text-align: left;
+    vertical-align: top;
+    white-space: nowrap;
+}
+
+.card > table tbody td,
+.card .table-wrapper > table:not(.xss-results-table):not(.hsecscan-results-table):not(.header-comparison-results-table):not(.cookie-results-table):not(.professional-report-evidence-table) tbody td,
+.card table:not(.table):not(.xss-results-table):not(.hsecscan-results-table):not(.header-comparison-results-table):not(.cookie-results-table):not(.professional-report-evidence-table) tbody td {
+    padding: 0.65rem 0.75rem;
+    color: var(--text-soft);
+    border-bottom: 1px solid var(--border-main);
+    vertical-align: top;
+}
+
+/* Evita que los encabezados se peguen visualmente. */
+.card table:not(.xss-results-table):not(.hsecscan-results-table):not(.header-comparison-results-table):not(.cookie-results-table):not(.professional-report-evidence-table) th + th,
+.card table:not(.xss-results-table):not(.hsecscan-results-table):not(.header-comparison-results-table):not(.cookie-results-table):not(.professional-report-evidence-table) td + td {
+    padding-left: 1rem;
+}
+
+/* Columna Target en la tabla principal: permite salto de línea limpio. */
+.card table:not(.xss-results-table):not(.hsecscan-results-table):not(.header-comparison-results-table):not(.cookie-results-table):not(.professional-report-evidence-table) td:nth-child(2) {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* Columna Detalle: mantiene el enlace visible y separado. */
+.card table:not(.xss-results-table):not(.hsecscan-results-table):not(.header-comparison-results-table):not(.cookie-results-table):not(.professional-report-evidence-table) td:last-child,
+.card table:not(.xss-results-table):not(.hsecscan-results-table):not(.header-comparison-results-table):not(.cookie-results-table):not(.professional-report-evidence-table) th:last-child {
+    text-align: left;
+    white-space: nowrap;
+}
+
+/* ----------------------------------------------------------
+   Tablas base Bootstrap
+   ---------------------------------------------------------- */
+.table-wrapper,
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    margin-top: 1rem;
+}
+
+.table {
+    --bs-table-bg: var(--bg-panel-soft);
+    --bs-table-color: var(--text-soft);
+    --bs-table-border-color: var(--border-main);
+    --bs-table-striped-bg: rgba(255, 255, 255, 0.02);
+    --bs-table-striped-color: var(--text-soft);
+    --bs-table-active-bg: rgba(255, 255, 255, 0.05);
+    --bs-table-active-color: var(--text-soft);
+    --bs-table-hover-bg: #111b2e;
+    --bs-table-hover-color: var(--text-strong);
+    margin-bottom: 0;
+    border-radius: var(--radius-md);
+    overflow: hidden;
 }
 
 .table thead th {
-  color: var(--text-main);
-  font-size: 0.82rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.035em;
-  background: rgba(2, 6, 23, 0.42);
-  white-space: nowrap;
+    background: var(--bg-panel-alt);
+    color: var(--text-strong);
+    border-bottom: 1px solid var(--border-main);
 }
 
-.table tbody td {
-  vertical-align: top;
-  color: var(--text-soft);
+.table td,
+.table th {
+    vertical-align: top;
 }
 
-.table strong {
-  color: var(--text-main);
-}
-
-/* ==========================================================
-   Wrappers de tablas
-========================================================== */
-
-.table-responsive {
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  overflow-x: auto;
-  background: rgba(2, 6, 23, 0.28);
-}
-
-/* Tablas muy anchas */
-.cookie-table-wrapper,
+/* ----------------------------------------------------------
+   Scrollbars para tablas especiales
+   ---------------------------------------------------------- */
+.xss-table-wrapper,
 .hsecscan-table-wrapper,
 .header-comparison-table-wrapper,
-.xss-table-wrapper,
-.professional-report-evidence-wrapper,
+.cookie-table-wrapper,
 .professional-report-history-wrapper,
-.professional-report-pdf-wrapper {
-  width: 100%;
+.professional-report-pdf-wrapper,
+.professional-report-evidence-wrapper {
+    margin-top: 1rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel-soft);
 }
 
-/* Mínimos para evitar que columnas críticas se aplasten */
-.cookie-results-table,
-.hsecscan-results-table,
-.header-comparison-results-table,
-.xss-results-table,
-.professional-report-evidence-table {
-  min-width: 1100px;
+.xss-table-wrapper::-webkit-scrollbar,
+.hsecscan-table-wrapper::-webkit-scrollbar,
+.header-comparison-table-wrapper::-webkit-scrollbar,
+.cookie-table-wrapper::-webkit-scrollbar,
+.professional-report-history-wrapper::-webkit-scrollbar,
+.professional-report-pdf-wrapper::-webkit-scrollbar,
+.professional-report-evidence-wrapper::-webkit-scrollbar {
+    height: 10px;
 }
 
-/* XSS suele ser más ancho por payload/evidencia */
-.xss-results-table {
-  min-width: 1350px;
+.xss-table-wrapper::-webkit-scrollbar-track,
+.hsecscan-table-wrapper::-webkit-scrollbar-track,
+.header-comparison-table-wrapper::-webkit-scrollbar-track,
+.cookie-table-wrapper::-webkit-scrollbar-track,
+.professional-report-history-wrapper::-webkit-scrollbar-track,
+.professional-report-pdf-wrapper::-webkit-scrollbar-track,
+.professional-report-evidence-wrapper::-webkit-scrollbar-track {
+    background: var(--bg-panel-soft);
+    border-radius: 999px;
 }
 
-/* ==========================================================
-   Celdas largas
-========================================================== */
-
-.table .break-cell {
-  min-width: 12rem;
-  max-width: 32rem;
+.xss-table-wrapper::-webkit-scrollbar-thumb,
+.hsecscan-table-wrapper::-webkit-scrollbar-thumb,
+.header-comparison-table-wrapper::-webkit-scrollbar-thumb,
+.cookie-table-wrapper::-webkit-scrollbar-thumb,
+.professional-report-history-wrapper::-webkit-scrollbar-thumb,
+.professional-report-pdf-wrapper::-webkit-scrollbar-thumb,
+.professional-report-evidence-wrapper::-webkit-scrollbar-thumb {
+    background: var(--border-soft);
+    border-radius: 999px;
 }
 
-/* Payloads y evidencia técnica pueden crecer mucho */
-.xss-results-table .break-cell {
-  max-width: 28rem;
+.xss-table-wrapper::-webkit-scrollbar-thumb:hover,
+.hsecscan-table-wrapper::-webkit-scrollbar-thumb:hover,
+.header-comparison-table-wrapper::-webkit-scrollbar-thumb:hover,
+.cookie-table-wrapper::-webkit-scrollbar-thumb:hover,
+.professional-report-history-wrapper::-webkit-scrollbar-thumb:hover,
+.professional-report-pdf-wrapper::-webkit-scrollbar-thumb:hover,
+.professional-report-evidence-wrapper::-webkit-scrollbar-thumb:hover {
+    background: #475569;
 }
 
-/* ==========================================================
+/* ----------------------------------------------------------
    Paginación local de tablas
-========================================================== */
-
+   ---------------------------------------------------------- */
 .table-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-top: 0.85rem;
-  padding: 0.75rem 0.9rem;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: rgba(15, 23, 42, 0.68);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 0.75rem;
+    margin-bottom: 0.25rem;
+    padding: 0.75rem 0.9rem;
+    background: var(--bg-panel-soft);
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
 }
 
 .table-pagination-summary {
-  color: var(--text-muted);
-  font-size: 0.9rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
 }
 
 .table-pagination-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.55rem;
+    flex-wrap: wrap;
 }
 
 .table-pagination-page-indicator {
-  color: var(--text-soft);
-  font-size: 0.9rem;
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    padding: 0 0.25rem;
+    color: var(--text-soft);
+    font-size: 0.9rem;
+    white-space: nowrap;
 }
 
-.table-pagination-button {
-  min-height: 2rem;
-  padding: 0.35rem 0.75rem;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: rgba(30, 41, 59, 0.88);
-  color: var(--text-main);
-  font-size: 0.88rem;
-  cursor: pointer;
+main.container button.table-pagination-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    padding: 0.42rem 0.75rem;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+    background: var(--bg-panel-alt);
+    color: var(--text-strong) !important;
+    font-size: 0.88rem;
+    font-weight: 700;
+    cursor: pointer;
 }
 
-.table-pagination-button:hover:not(:disabled) {
-  border-color: rgba(56, 189, 248, 0.46);
-  background: rgba(56, 189, 248, 0.12);
-  color: var(--primary);
+main.container button.table-pagination-button:hover:not(:disabled) {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff !important;
 }
 
-.table-pagination-button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+main.container button.table-pagination-button:disabled {
+    opacity: 0.48;
+    cursor: not-allowed;
+    background: var(--bg-panel-soft);
+    border-color: var(--border-main);
+    color: var(--text-muted) !important;
 }
 
-/* ==========================================================
+/* ----------------------------------------------------------
+   Tabla XSS
+   ---------------------------------------------------------- */
+.xss-results-table {
+    width: 100%;
+    min-width: 0 !important;
+    table-layout: fixed;
+    font-size: 0.80rem;
+}
+
+.xss-results-table th,
+.xss-results-table td {
+    padding: 0.6rem 0.6rem;
+    line-height: 1.42;
+    vertical-align: top;
+}
+
+.xss-results-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    white-space: normal;
+}
+
+.xss-results-table th:nth-child(1),
+.xss-results-table td:nth-child(1) {
+    width: 3%;
+    text-align: center;
+}
+
+.xss-results-table th:nth-child(2),
+.xss-results-table td:nth-child(2) {
+    width: 7%;
+}
+
+.xss-results-table th:nth-child(3),
+.xss-results-table td:nth-child(3) {
+    width: 13%;
+}
+
+.xss-results-table th:nth-child(4),
+.xss-results-table td:nth-child(4) {
+    width: 15%;
+}
+
+.xss-results-table th:nth-child(5),
+.xss-results-table td:nth-child(5) {
+    width: 7%;
+}
+
+.xss-results-table th:nth-child(6),
+.xss-results-table td:nth-child(6) {
+    width: 7%;
+    text-align: center;
+}
+
+.xss-results-table th:nth-child(7),
+.xss-results-table td:nth-child(7) {
+    width: 20%;
+}
+
+.xss-results-table th:nth-child(8),
+.xss-results-table td:nth-child(8) {
+    width: 10%;
+}
+
+.xss-results-table th:nth-child(9),
+.xss-results-table td:nth-child(9) {
+    width: 10%;
+}
+
+.xss-results-table th:nth-child(10),
+.xss-results-table td:nth-child(10) {
+    width: 8%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(1),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(1) {
+    width: 3%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(2),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(2) {
+    width: 7%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(3),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(3) {
+    width: 14%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(4),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(4) {
+    width: 16%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(5),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(5) {
+    width: 7%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(6),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(6) {
+    width: 21%;
+    text-align: left;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(7),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(7) {
+    width: 12%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(8),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(8) {
+    width: 10%;
+}
+
+.xss-results-table:not(:has(th:nth-child(10))) th:nth-child(9),
+.xss-results-table:not(:has(th:nth-child(10))) td:nth-child(9) {
+    width: 10%;
+}
+
+.xss-results-table .break-cell {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.xss-results-table td:nth-child(3),
+.xss-results-table td:nth-child(4) {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.76rem;
+}
+
+.xss-results-table th:nth-child(7),
+.xss-results-table td:nth-child(7) {
+    border-left: 1px solid var(--border-soft);
+}
+
+.xss-results-table tbody tr:hover td {
+    background: #111b2e;
+}
+
+/* ----------------------------------------------------------
+   Tabla hsecscan
+   ---------------------------------------------------------- */
+.hsecscan-results-table {
+    width: 100%;
+    min-width: 1350px;
+    table-layout: fixed;
+    font-size: 0.80rem;
+}
+
+.hsecscan-results-table th,
+.hsecscan-results-table td {
+    padding: 0.65rem 0.65rem;
+    line-height: 1.42;
+    vertical-align: top;
+}
+
+.hsecscan-results-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    white-space: normal;
+}
+
+.hsecscan-results-table th:nth-child(1),
+.hsecscan-results-table td:nth-child(1) {
+    width: 8%;
+}
+
+.hsecscan-results-table th:nth-child(2),
+.hsecscan-results-table td:nth-child(2) {
+    width: 14%;
+}
+
+.hsecscan-results-table th:nth-child(3),
+.hsecscan-results-table td:nth-child(3) {
+    width: 18%;
+}
+
+.hsecscan-results-table th:nth-child(4),
+.hsecscan-results-table td:nth-child(4) {
+    width: 8%;
+    text-align: center;
+}
+
+.hsecscan-results-table th:nth-child(5),
+.hsecscan-results-table td:nth-child(5) {
+    width: 22%;
+}
+
+.hsecscan-results-table th:nth-child(6),
+.hsecscan-results-table td:nth-child(6) {
+    width: 20%;
+}
+
+.hsecscan-results-table th:nth-child(7),
+.hsecscan-results-table td:nth-child(7) {
+    width: 10%;
+}
+
+.hsecscan-results-table .break-cell {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.hsecscan-results-table small {
+    display: block;
+    margin-top: 0.35rem;
+    color: var(--text-muted);
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.76rem;
+    line-height: 1.35;
+}
+
+.hsecscan-results-table th:nth-child(5),
+.hsecscan-results-table td:nth-child(5) {
+    border-left: 1px solid var(--border-soft);
+}
+
+.hsecscan-results-table tbody tr:hover td {
+    background: #111b2e;
+}
+
+/* ----------------------------------------------------------
+   Tabla minimalista: comparación curl vs hsecscan
+   ---------------------------------------------------------- */
+.header-comparison-results-table {
+    min-width: 1180px;
+    table-layout: fixed;
+    font-size: 0.86rem;
+}
+
+.header-comparison-results-table th,
+.header-comparison-results-table td {
+    padding: 0.75rem 0.8rem;
+    line-height: 1.45;
+    vertical-align: top;
+}
+
+.header-comparison-results-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    white-space: normal;
+}
+
+.header-comparison-results-table th:nth-child(1),
+.header-comparison-results-table td:nth-child(1) {
+    width: 210px;
+    min-width: 210px;
+}
+
+.header-comparison-results-table th:nth-child(2),
+.header-comparison-results-table td:nth-child(2) {
+    width: 230px;
+    min-width: 230px;
+}
+
+.header-comparison-results-table th:nth-child(3),
+.header-comparison-results-table td:nth-child(3) {
+    width: 120px;
+    min-width: 120px;
+    text-align: center;
+}
+
+.header-comparison-results-table th:nth-child(4),
+.header-comparison-results-table td:nth-child(4) {
+    width: 155px;
+    min-width: 155px;
+    text-align: center;
+}
+
+.header-comparison-results-table th:nth-child(5),
+.header-comparison-results-table td:nth-child(5) {
+    width: 330px;
+    min-width: 330px;
+}
+
+.header-comparison-results-table th:nth-child(6),
+.header-comparison-results-table td:nth-child(6) {
+    width: 135px;
+    min-width: 135px;
+    text-align: center;
+}
+
+.header-comparison-results-table .break-cell {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.header-comparison-results-table th:nth-child(5),
+.header-comparison-results-table td:nth-child(5) {
+    border-left: 1px solid var(--border-soft);
+}
+
+.header-comparison-results-table tbody tr:hover td {
+    background: #111b2e;
+}
+
+/* ----------------------------------------------------------
+   Tabla de cookies
+   ---------------------------------------------------------- */
+.cookie-results-table {
+    min-width: 1250px;
+    table-layout: fixed;
+    font-size: 0.82rem;
+}
+
+.cookie-results-table th,
+.cookie-results-table td {
+    padding: 0.65rem 0.65rem;
+    line-height: 1.42;
+    vertical-align: top;
+}
+
+.cookie-results-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    white-space: normal;
+}
+
+.cookie-results-table th:nth-child(1),
+.cookie-results-table td:nth-child(1) {
+    width: 13%;
+}
+
+.cookie-results-table th:nth-child(2),
+.cookie-results-table td:nth-child(2),
+.cookie-results-table th:nth-child(3),
+.cookie-results-table td:nth-child(3),
+.cookie-results-table th:nth-child(4),
+.cookie-results-table td:nth-child(4) {
+    width: 7%;
+    text-align: center;
+}
+
+.cookie-results-table th:nth-child(5),
+.cookie-results-table td:nth-child(5) {
+    width: 9%;
+    text-align: center;
+}
+
+.cookie-results-table th:nth-child(6),
+.cookie-results-table td:nth-child(6) {
+    width: 8%;
+    text-align: center;
+}
+
+.cookie-results-table th:nth-child(7),
+.cookie-results-table td:nth-child(7) {
+    width: 14%;
+}
+
+.cookie-results-table th:nth-child(8),
+.cookie-results-table td:nth-child(8) {
+    width: 20%;
+}
+
+.cookie-results-table th:nth-child(9),
+.cookie-results-table td:nth-child(9) {
+    width: 15%;
+}
+
+.cookie-results-table .break-cell {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* ----------------------------------------------------------
    Responsive tablas
-========================================================== */
+   ---------------------------------------------------------- */
+@media (max-width: 1200px) {
+    .xss-results-table {
+        font-size: 0.78rem;
+    }
+
+    .hsecscan-results-table {
+        font-size: 0.78rem;
+    }
+
+    .header-comparison-results-table {
+        min-width: 1120px;
+        font-size: 0.82rem;
+    }
+
+    .cookie-results-table {
+        min-width: 1180px;
+        font-size: 0.80rem;
+    }
+}
+
+@media (max-width: 992px) {
+    .hsecscan-table-wrapper,
+    .xss-table-wrapper,
+    .header-comparison-table-wrapper,
+    .cookie-table-wrapper,
+    .professional-report-history-wrapper,
+    .professional-report-pdf-wrapper,
+    .professional-report-evidence-wrapper {
+        overflow-x: auto;
+    }
+
+    .xss-results-table {
+        min-width: 1250px !important;
+    }
+
+    .hsecscan-results-table {
+        min-width: 1320px !important;
+    }
+
+    .header-comparison-results-table {
+        min-width: 1120px;
+    }
+
+    .cookie-results-table {
+        min-width: 1180px;
+    }
+}
 
 @media (max-width: 768px) {
-  .table-pagination {
-    align-items: stretch;
-    flex-direction: column;
-  }
+    .xss-results-table {
+        min-width: 1150px !important;
+        font-size: 0.76rem;
+    }
 
-  .table-pagination-controls {
-    justify-content: space-between;
-  }
+    .hsecscan-results-table {
+        min-width: 1280px !important;
+        font-size: 0.76rem;
+    }
 
-  .table .break-cell {
-    min-width: 10rem;
-  }
+    .header-comparison-results-table {
+        min-width: 1080px;
+        font-size: 0.78rem;
+    }
+
+    .cookie-results-table {
+        min-width: 1100px;
+        font-size: 0.76rem;
+    }
+
+    .table-pagination {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .table-pagination-summary {
+        text-align: center;
+    }
+
+    .table-pagination-controls {
+        justify-content: center;
+    }
 }

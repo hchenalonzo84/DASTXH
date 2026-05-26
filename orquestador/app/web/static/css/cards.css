@@ -1,155 +1,172 @@
 /*
   cards.css
-  - Tarjetas, badges y bloques de detalle.
+  - Tarjetas, bloques de detalle, stats, badges y utilidades visuales.
+  - Migrado desde el styles.css original funcional.
 
-  Responsabilidad:
-  - Estilo de card principal.
-  - Tarjetas estadísticas.
-  - Bloques detail-item.
-  - Badges de estado.
+  Nota importante:
+  - .analysis-wide-card debe poder desbordar el contenedor padre
+    para que las secciones de Resumen ocupen casi todo el ancho
+    disponible de la pantalla.
 */
 
-/* ==========================================================
-   Card base
-========================================================== */
-
+/* ----------------------------------------------------------
+   Tarjetas base
+   ---------------------------------------------------------- */
 .card {
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent),
-    var(--bg-panel);
-  color: var(--text-main);
-  box-shadow: var(--shadow-card);
+    background: var(--bg-panel);
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-lg);
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    box-shadow: var(--shadow-soft);
+
+    /*
+      Importante:
+      Permite que tarjetas internas como .analysis-wide-card
+      puedan extenderse fuera del ancho del contenedor padre.
+    */
+    overflow: visible;
 }
 
-section.card {
-  padding: 1.25rem;
+.card h2,
+.card h3 {
+    margin-top: 0;
+    color: var(--text-strong);
 }
 
+.card p {
+    margin-top: 0.5rem;
+    color: var(--text-soft);
+}
+
+/* ----------------------------------------------------------
+   Tarjetas amplias para secciones de análisis
+   ---------------------------------------------------------- */
 .analysis-wide-card {
-  width: 100%;
+    /*
+      Este es el comportamiento original deseado:
+      la tarjeta se centra con respecto al viewport y no al padre.
+      Así puede ocupar casi todo el ancho de pantalla aunque esté
+      dentro de execution_detail.html.
+    */
+    width: min(1500px, calc(100vw - 48px));
+    max-width: calc(100vw - 48px);
+    margin-left: 50%;
+    transform: translateX(-50%);
+
+    /*
+      Refuerzo visual para evitar que el navegador limite el ancho
+      por reglas heredadas de Bootstrap o del contenedor padre.
+    */
+    position: relative;
+    overflow: visible;
 }
 
-/* ==========================================================
-   Detail item
-========================================================== */
-
-.detail-item {
-  padding: 1rem;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: rgba(15, 23, 42, 0.72);
-}
-
-.detail-item h3 {
-  margin-bottom: 0.6rem;
-  color: var(--text-main);
-  font-size: 0.95rem;
-  font-weight: 700;
-}
-
-.detail-item p {
-  margin-bottom: 0;
-  color: var(--text-soft);
-}
-
-.info-box-compact {
-  background: rgba(2, 6, 23, 0.34);
-}
-
-/* ==========================================================
-   Stat cards
-========================================================== */
-
+/* ----------------------------------------------------------
+   Bloques reutilizables de detalle y stats
+   ---------------------------------------------------------- */
+.detail-item,
 .stat-card {
-  padding: 1rem;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background:
-    linear-gradient(135deg, rgba(56, 189, 248, 0.08), transparent),
-    rgba(15, 23, 42, 0.82);
+    background: var(--bg-panel-soft);
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    height: 100%;
 }
 
+.detail-item h3,
 .stat-card h3 {
-  margin-bottom: 0.65rem;
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.035em;
+    margin: 0 0 0.55rem 0;
+    font-size: 0.95rem;
+    color: var(--text-strong);
 }
 
+.detail-item p,
 .stat-card p {
-  margin-bottom: 0;
-  color: var(--text-main);
-  font-size: 1.35rem;
-  font-weight: 800;
+    margin: 0;
+    color: var(--text-soft);
 }
 
-/* ==========================================================
-   Badges generales
-========================================================== */
+.list {
+    padding-left: 1.25rem;
+}
 
+.list li {
+    margin-bottom: 0.45rem;
+}
+
+.break-cell {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    max-width: 320px;
+}
+
+/* ----------------------------------------------------------
+   Badges de estado
+   ---------------------------------------------------------- */
 .badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 1.5rem;
-  padding: 0.25rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.78rem;
-  font-weight: 700;
-  line-height: 1;
-  white-space: nowrap;
+    display: inline-block;
+    padding: 0.32rem 0.62rem;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    border: 1px solid transparent;
 }
 
-/* Estados de ejecución */
-.badge-initiated {
-  background: rgba(245, 158, 11, 0.18);
-  color: #fde68a;
-  border: 1px solid rgba(245, 158, 11, 0.36);
+.badge-finished {
+    background: var(--success-bg);
+    color: var(--success-text);
+    border-color: var(--success-border);
+}
+
+.badge-failed {
+    background: var(--danger-bg);
+    color: var(--danger-text);
+    border-color: var(--danger-border);
 }
 
 .badge-running {
-  background: rgba(56, 189, 248, 0.16);
-  color: #bae6fd;
-  border: 1px solid rgba(56, 189, 248, 0.34);
+    background: rgba(59, 130, 246, 0.16);
+    color: #93c5fd;
+    border-color: rgba(59, 130, 246, 0.35);
 }
 
-.badge-finished,
-.badge-completed,
-.badge-success {
-  background: rgba(34, 197, 94, 0.16);
-  color: #bbf7d0;
-  border: 1px solid rgba(34, 197, 94, 0.34);
+.badge-initiated {
+    background: var(--warning-bg);
+    color: var(--warning-text);
+    border-color: var(--warning-border);
 }
 
-.badge-failed,
-.badge-error {
-  background: rgba(239, 68, 68, 0.16);
-  color: #fecaca;
-  border: 1px solid rgba(239, 68, 68, 0.34);
+/* ----------------------------------------------------------
+   Responsive tarjetas
+   ---------------------------------------------------------- */
+@media (max-width: 1200px) {
+    .analysis-wide-card {
+        width: min(1280px, calc(100vw - 32px));
+        max-width: calc(100vw - 32px);
+    }
 }
 
-/* Fallback para estados no previstos */
-.badge-draft,
-.badge-default {
-  background: rgba(148, 163, 184, 0.16);
-  color: #e2e8f0;
-  border: 1px solid rgba(148, 163, 184, 0.34);
+@media (max-width: 992px) {
+    .analysis-wide-card {
+        width: calc(100vw - 24px);
+        max-width: calc(100vw - 24px);
+    }
+
+    .break-cell {
+        max-width: 100%;
+    }
 }
 
-/* ==========================================================
-   Tarjetas en pantallas pequeñas
-========================================================== */
+@media (max-width: 768px) {
+    .card {
+        padding: 1rem;
+    }
 
-@media (max-width: 576px) {
-  section.card {
-    padding: 1rem;
-  }
-
-  .stat-card p {
-    font-size: 1.15rem;
-  }
+    .analysis-wide-card {
+        width: 100%;
+        max-width: 100%;
+        margin-left: 0;
+        transform: none;
+    }
 }

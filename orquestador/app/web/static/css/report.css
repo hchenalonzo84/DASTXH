@@ -1,157 +1,398 @@
 /*
   report.css
-  - Estilos específicos del Reporte general.
-
-  Responsabilidad:
-  - Formulario del reporte profesional/general.
-  - Evidencia objetiva dentro del reporte.
-  - Modo solo lectura de versiones históricas.
-  - Historial de versiones y PDFs generados.
+  - Reporte General Profesional, evidencia objetiva y fix final de texto.
+  - Migrado desde el styles.css original funcional.
 */
 
-/* ==========================================================
-   Formulario del reporte general
-========================================================== */
+/* ----------------------------------------------------------
+   Reporte General Profesional
+   ---------------------------------------------------------- */
+.professional-report-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 1rem;
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel-soft);
+}
+
+.professional-report-action-form {
+    margin: 0;
+}
+
+.professional-report-meta {
+    color: var(--text-muted);
+    font-size: 0.92rem;
+}
 
 .professional-report-form {
-  width: 100%;
+    margin-top: 1rem;
 }
 
 .professional-report-field {
-  padding: 1rem;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: rgba(15, 23, 42, 0.48);
+    padding: 1rem;
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel-soft);
+    margin-bottom: 1rem;
 }
 
-.professional-report-field + .professional-report-field {
-  margin-top: 1rem;
+.professional-report-field label {
+    font-size: 1rem;
+    color: var(--text-strong);
 }
 
 .professional-report-field textarea {
-  min-height: 10rem;
-  line-height: 1.55;
+    min-height: 150px;
+    resize: vertical;
+    line-height: 1.5;
+    font-family: Arial, sans-serif;
 }
 
-/* ==========================================================
-   Modo solo lectura
-========================================================== */
+.professional-report-field input[type="text"] {
+    font-weight: 700;
+}
+
+.professional-report-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    padding: 1rem;
+    border: 1px solid var(--border-main);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel-soft);
+}
+
+.professional-report-history-wrapper table,
+.professional-report-pdf-wrapper table {
+    min-width: 980px;
+}
 
 .professional-report-readonly {
-  display: grid;
-  gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.professional-report-readonly .detail-item {
+    height: auto;
 }
 
 .professional-report-readonly-text {
-  margin: 0;
-  max-height: none;
-  border-color: var(--border-soft);
-  background: rgba(2, 6, 23, 0.55);
-  color: var(--text-soft);
+    margin-top: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    line-height: 1.55;
+    min-height: 80px;
 }
 
-/* ==========================================================
-   Bloques de evidencia objetiva
-========================================================== */
+.professional-report-history-wrapper .break-cell,
+.professional-report-pdf-wrapper .break-cell {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
 
+/* ----------------------------------------------------------
+   Evidencia objetiva dentro del Reporte General
+   ---------------------------------------------------------- */
 .professional-report-evidence-block {
-  padding: 1rem;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background:
-    linear-gradient(135deg, rgba(56, 189, 248, 0.05), transparent),
-    rgba(2, 6, 23, 0.36);
+    padding: 1rem;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    background: rgba(15, 23, 42, 0.45);
+    margin-top: -0.25rem;
+    margin-bottom: 1.25rem;
 }
 
 .professional-report-evidence-block h3 {
-  margin-bottom: 0.65rem;
-  color: var(--text-main);
-  font-size: 1rem;
+    margin-bottom: 0.45rem;
+    font-size: 1rem;
+    color: var(--text-strong);
 }
 
 .professional-report-evidence-block p {
-  color: var(--text-soft);
+    margin-bottom: 0.75rem;
+    color: var(--text-soft);
+    font-size: 0.92rem;
 }
 
-/* ==========================================================
-   Historial y PDFs
-========================================================== */
-
-.professional-report-history-wrapper,
-.professional-report-pdf-wrapper {
-  border-radius: var(--radius-md);
+.professional-report-evidence-wrapper {
+    max-width: 100%;
 }
-
-.professional-report-history-wrapper .btn,
-.professional-report-pdf-wrapper .btn {
-  min-width: 4.25rem;
-}
-
-/* ==========================================================
-   Tablas de evidencia del reporte
-========================================================== */
 
 .professional-report-evidence-table {
-  min-width: 1200px;
+    min-width: 1450px;
+    table-layout: fixed;
+    font-size: 0.78rem;
 }
 
-.professional-report-evidence-table th {
-  white-space: nowrap;
-}
-
+.professional-report-evidence-table th,
 .professional-report-evidence-table td {
-  vertical-align: top;
+    padding: 0.6rem 0.6rem;
+    line-height: 1.42;
+    vertical-align: top;
 }
 
-/* ==========================================================
-   Ajustes de impresión visual en pantalla
-========================================================== */
-
-@media print {
-  body {
-    background: #ffffff;
-    color: #111827;
-  }
-
-  .navbar,
-  .custom-tabs,
-  .professional-report-toolbar,
-  .btn,
-  .table-pagination {
-    display: none !important;
-  }
-
-  .card,
-  .detail-item,
-  .stat-card,
-  .professional-report-evidence-block {
-    border: 1px solid #d1d5db;
-    box-shadow: none;
-    background: #ffffff;
-    color: #111827;
-  }
-
-  .table {
-    color: #111827;
-  }
-
-  pre {
-    border: 1px solid #d1d5db;
-    background: #f9fafb;
-    color: #111827;
-  }
+.professional-report-evidence-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    white-space: normal;
 }
 
-/* ==========================================================
-   Responsive reporte
-========================================================== */
+.professional-report-evidence-table .break-cell {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* Tabla de evidencia de cabeceras: 9 columnas */
+.professional-report-evidence-table th:nth-child(1),
+.professional-report-evidence-table td:nth-child(1) {
+    width: 155px;
+}
+
+.professional-report-evidence-table th:nth-child(2),
+.professional-report-evidence-table td:nth-child(2) {
+    width: 180px;
+}
+
+.professional-report-evidence-table th:nth-child(3),
+.professional-report-evidence-table td:nth-child(3),
+.professional-report-evidence-table th:nth-child(4),
+.professional-report-evidence-table td:nth-child(4) {
+    width: 105px;
+    text-align: center;
+}
+
+.professional-report-evidence-table th:nth-child(5),
+.professional-report-evidence-table td:nth-child(5) {
+    width: 190px;
+}
+
+.professional-report-evidence-table th:nth-child(6),
+.professional-report-evidence-table td:nth-child(6) {
+    width: 100px;
+    text-align: center;
+}
+
+.professional-report-evidence-table th:nth-child(7),
+.professional-report-evidence-table td:nth-child(7) {
+    width: 160px;
+}
+
+.professional-report-evidence-table th:nth-child(8),
+.professional-report-evidence-table td:nth-child(8) {
+    width: 260px;
+}
+
+.professional-report-evidence-table th:nth-child(9),
+.professional-report-evidence-table td:nth-child(9) {
+    width: 240px;
+}
+
+/* Tabla de evidencia XSS: cuando tiene 10 columnas */
+.professional-report-evidence-table th:nth-child(10),
+.professional-report-evidence-table td:nth-child(10) {
+    width: 190px;
+}
+
+/* Mejora visual para columnas de payload/evidencia */
+.professional-report-evidence-table td:nth-child(3),
+.professional-report-evidence-table td:nth-child(4) {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.74rem;
+}
+
+.professional-report-evidence-table tbody tr:hover td {
+    background: #111b2e;
+}
+
+/* ----------------------------------------------------------
+   Responsive reporte general
+   ---------------------------------------------------------- */
+@media (max-width: 1200px) {
+    .professional-report-evidence-table {
+        min-width: 1380px;
+        font-size: 0.76rem;
+    }
+}
+
+@media (max-width: 992px) {
+    .professional-report-evidence-table {
+        min-width: 1320px;
+    }
+
+    .professional-report-toolbar,
+    .professional-report-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .professional-report-toolbar .btn,
+    .professional-report-actions .btn,
+    .professional-report-action-form {
+        width: 100%;
+    }
+
+    .professional-report-action-form button {
+        width: 100%;
+    }
+}
 
 @media (max-width: 768px) {
-  .professional-report-field {
-    padding: 0.85rem;
-  }
+    .professional-report-history-wrapper table,
+    .professional-report-pdf-wrapper table {
+        min-width: 900px;
+    }
 
-  .professional-report-evidence-block {
-    padding: 0.85rem;
-  }
+    .professional-report-evidence-table {
+        min-width: 1180px;
+        font-size: 0.74rem;
+    }
+
+    .professional-report-field {
+        padding: 0.85rem;
+    }
+
+    .professional-report-field textarea {
+        min-height: 180px;
+    }
+
+    .professional-report-evidence-block {
+        padding: 0.85rem;
+    }
+}
+
+/* ==========================================================
+   FIX FUERTE DE TEXTO OSCURO
+   - Este bloque debe ir al FINAL del archivo final cargado.
+   - Como report.css se importa de último, queda aquí.
+   ========================================================== */
+
+main.container,
+main.container p,
+main.container li,
+main.container ul,
+main.container ol,
+main.container span,
+main.container div,
+main.container label,
+main.container small,
+main.container strong,
+main.container td,
+main.container th {
+    color: #e5e7eb !important;
+}
+
+main.container h1,
+main.container h2,
+main.container h3,
+main.container h4,
+main.container h5,
+main.container h6 {
+    color: #f9fafb !important;
+}
+
+main.container .card,
+main.container .card p,
+main.container .card li,
+main.container .card ul,
+main.container .card ol,
+main.container .card span,
+main.container .card div,
+main.container .card label,
+main.container .card small,
+main.container .card strong {
+    color: #e5e7eb !important;
+}
+
+main.container .notice,
+main.container .notice p,
+main.container .notice li,
+main.container .notice span,
+main.container .notice div,
+main.container .notice strong {
+    color: #e5e7eb !important;
+}
+
+main.container .alert,
+main.container .alert p,
+main.container .alert li,
+main.container .alert span,
+main.container .alert div,
+main.container .alert strong {
+    color: #e5e7eb !important;
+}
+
+main.container .detail-item,
+main.container .detail-item p,
+main.container .detail-item li,
+main.container .detail-item span,
+main.container .detail-item div,
+main.container .detail-item strong,
+main.container .stat-card,
+main.container .stat-card p,
+main.container .stat-card li,
+main.container .stat-card span,
+main.container .stat-card div,
+main.container .stat-card strong {
+    color: #e5e7eb !important;
+}
+
+main.container .tab-content,
+main.container .tab-content p,
+main.container .tab-content li,
+main.container .tab-content span,
+main.container .tab-content div,
+main.container .tab-content strong {
+    color: #e5e7eb !important;
+}
+
+main.container .table,
+main.container .table td,
+main.container .table th,
+main.container .table tr,
+main.container .table thead,
+main.container .table tbody {
+    color: #e5e7eb !important;
+}
+
+main.container input,
+main.container select,
+main.container textarea {
+    color: #e5e7eb !important;
+}
+
+main.container input::placeholder,
+main.container textarea::placeholder {
+    color: #94a3b8 !important;
+}
+
+main.container .badge-finished {
+    color: #86efac !important;
+}
+
+main.container .badge-failed {
+    color: #fca5a5 !important;
+}
+
+main.container .badge-running {
+    color: #93c5fd !important;
+}
+
+main.container .badge-initiated {
+    color: #fcd34d !important;
+}
+
+main.container .btn,
+main.container button {
+    color: #ffffff !important;
 }

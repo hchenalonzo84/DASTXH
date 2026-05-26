@@ -1,188 +1,30 @@
-/*
-  styles.css
-  - Archivo principal de estilos DASTXH.
-
-  Responsabilidad:
-  - Definir variables globales.
-  - Definir estilos base del documento.
-  - Importar los archivos CSS especializados.
-
-  Nota:
-  - base.html debe cargar solamente este archivo:
-      /static/css/styles.css
-  - Los demás CSS se cargan desde aquí mediante @import.
-*/
-
 /* ==========================================================
-   Imports modulares
-========================================================== */
+   styles.css
+   - Archivo principal de estilos de la GUI web de DASTXH.
+
+   Objetivo:
+   - Mantener un único archivo CSS cargado desde base.html.
+   - Delegar estilos reales a archivos especializados.
+   - Conservar el mismo orden lógico del styles.css original funcional.
+
+   Importante:
+   - base.html debe seguir cargando únicamente:
+       /static/css/styles.css
+
+   Orden de carga:
+   1. layout.css  -> variables, reset, body, contenedor, topbar, tabs, notices
+   2. cards.css   -> cards, detail-item, stat-card, badges
+   3. forms.css   -> formularios y botones
+   4. tables.css  -> tablas, scroll horizontal, paginación, XSS, hsecscan, cookies
+   5. report.css  -> reporte general y fix fuerte final de texto
+
+   Nota:
+   - report.css debe quedar de último porque contiene el bloque final
+     de corrección fuerte de colores de texto.
+   ========================================================== */
 
 @import url("/static/css/layout.css");
 @import url("/static/css/cards.css");
-@import url("/static/css/tables.css");
 @import url("/static/css/forms.css");
+@import url("/static/css/tables.css");
 @import url("/static/css/report.css");
-
-/* ==========================================================
-   Variables globales del tema
-========================================================== */
-
-:root {
-  --bg-main: #0f172a;
-  --bg-panel: #111827;
-  --bg-panel-soft: #1f2937;
-  --bg-panel-muted: #162033;
-
-  --border-soft: rgba(148, 163, 184, 0.22);
-  --border-strong: rgba(148, 163, 184, 0.36);
-
-  --text-main: #e5e7eb;
-  --text-muted: #94a3b8;
-  --text-soft: #cbd5e1;
-
-  --primary: #38bdf8;
-  --primary-hover: #0ea5e9;
-  --primary-soft: rgba(56, 189, 248, 0.14);
-
-  --success: #22c55e;
-  --warning: #f59e0b;
-  --danger: #ef4444;
-  --info: #60a5fa;
-
-  --radius-sm: 0.5rem;
-  --radius-md: 0.75rem;
-  --radius-lg: 1rem;
-
-  --shadow-soft: 0 14px 35px rgba(0, 0, 0, 0.22);
-  --shadow-card: 0 10px 24px rgba(0, 0, 0, 0.18);
-
-  --font-main: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-
-/* ==========================================================
-   Base general
-========================================================== */
-
-* {
-  box-sizing: border-box;
-}
-
-html {
-  min-height: 100%;
-  scroll-behavior: smooth;
-}
-
-body {
-  min-height: 100%;
-  margin: 0;
-  background:
-    radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 32rem),
-    radial-gradient(circle at bottom right, rgba(37, 99, 235, 0.12), transparent 34rem),
-    var(--bg-main);
-  color: var(--text-main);
-  font-family: var(--font-main);
-}
-
-/* ==========================================================
-   Tipografía base
-========================================================== */
-
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  color: var(--text-main);
-  font-weight: 700;
-  line-height: 1.25;
-}
-
-p {
-  color: var(--text-soft);
-}
-
-small {
-  color: var(--text-muted);
-}
-
-a {
-  color: var(--primary);
-  text-decoration: none;
-}
-
-a:hover {
-  color: var(--primary-hover);
-  text-decoration: underline;
-}
-
-/* ==========================================================
-   Utilidades generales
-========================================================== */
-
-.break-cell {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.text-warning {
-  color: var(--warning) !important;
-}
-
-.list {
-  padding-left: 1.25rem;
-  color: var(--text-soft);
-}
-
-.list li {
-  margin-bottom: 0.35rem;
-}
-
-pre {
-  max-height: 36rem;
-  overflow: auto;
-  padding: 1rem;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: #020617;
-  color: #d1d5db;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* ==========================================================
-   Alertas Bootstrap ajustadas al tema oscuro
-========================================================== */
-
-.alert {
-  border-radius: var(--radius-md);
-}
-
-.alert-primary {
-  background: rgba(59, 130, 246, 0.14);
-  color: #bfdbfe;
-}
-
-.alert-warning {
-  background: rgba(245, 158, 11, 0.14);
-  color: #fde68a;
-}
-
-.alert-danger {
-  background: rgba(239, 68, 68, 0.14);
-  color: #fecaca;
-}
-
-/* ==========================================================
-   Responsive general
-========================================================== */
-
-@media (max-width: 768px) {
-  body {
-    font-size: 0.95rem;
-  }
-
-  pre {
-    max-height: 28rem;
-  }
-}

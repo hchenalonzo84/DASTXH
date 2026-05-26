@@ -1,167 +1,86 @@
 /*
   forms.css
-  - Formularios, botones e inputs.
-
-  Responsabilidad:
-  - Estilo de formularios principales.
-  - Inputs, textarea y acciones.
-  - Botones de acción general.
+  - Formularios y botones.
+  - Migrado desde el styles.css original funcional.
 */
 
-/* ==========================================================
-   Formularios base
-========================================================== */
+/* ----------------------------------------------------------
+   Formularios
+   ---------------------------------------------------------- */
+.scan-form {
+    margin-top: 1rem;
+}
 
 .form-group {
-  margin-bottom: 1rem;
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 1rem;
 }
 
 .form-group label {
-  display: block;
-  margin-bottom: 0.45rem;
-  color: var(--text-main);
-  font-weight: 700;
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+    color: var(--text-strong);
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 0.8rem 0.9rem;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-sm);
+    background: var(--bg-panel-soft);
+    color: var(--text-main);
+    font-size: 0.95rem;
+}
+
+.form-group input::placeholder,
+.form-group textarea::placeholder {
+    color: var(--text-muted);
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #60a5fa;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
 }
 
 .form-group small {
-  display: block;
-  margin-top: 0.35rem;
-  color: var(--text-muted);
+    margin-top: 0.4rem;
+    color: var(--text-muted);
+    line-height: 1.4;
 }
-
-input[type="text"],
-input[type="url"],
-input[type="number"],
-input[type="email"],
-input[type="password"],
-select,
-textarea {
-  width: 100%;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: rgba(2, 6, 23, 0.56);
-  color: var(--text-main);
-  outline: none;
-}
-
-input[type="text"],
-input[type="url"],
-input[type="number"],
-input[type="email"],
-input[type="password"],
-select {
-  min-height: 2.65rem;
-  padding: 0.6rem 0.75rem;
-}
-
-textarea {
-  min-height: 8rem;
-  padding: 0.75rem;
-  resize: vertical;
-}
-
-input:focus,
-select:focus,
-textarea:focus {
-  border-color: rgba(56, 189, 248, 0.64);
-  box-shadow: 0 0 0 0.2rem rgba(56, 189, 248, 0.14);
-}
-
-input::placeholder,
-textarea::placeholder {
-  color: rgba(148, 163, 184, 0.72);
-}
-
-/* ==========================================================
-   Botones
-========================================================== */
-
-.btn {
-  border-radius: var(--radius-sm);
-  font-weight: 700;
-}
-
-.btn-primary {
-  border-color: var(--primary-hover);
-  background: linear-gradient(135deg, var(--primary), var(--primary-hover));
-  color: #00111f;
-}
-
-.btn-primary:hover {
-  border-color: var(--primary);
-  background: linear-gradient(135deg, #7dd3fc, var(--primary));
-  color: #00111f;
-  text-decoration: none;
-}
-
-.btn-sm {
-  border-radius: var(--radius-sm);
-}
-
-/* Botones deshabilitados por forms.js */
-button:disabled,
-input[type="submit"]:disabled {
-  opacity: 0.62;
-  cursor: not-allowed;
-}
-
-/* ==========================================================
-   Acciones de formulario
-========================================================== */
 
 .form-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  margin-top: 1rem;
+    margin-top: 1rem;
 }
 
-.professional-report-actions {
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--border-soft);
+/* ----------------------------------------------------------
+   Botones
+   ---------------------------------------------------------- */
+button,
+.btn {
+    border-radius: var(--radius-sm);
+    font-weight: 700;
 }
 
-/* ==========================================================
-   Toolbar de acciones
-========================================================== */
-
-.professional-report-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.85rem;
-  flex-wrap: wrap;
+button:not(.nav-link),
+.btn-primary {
+    background: var(--accent);
+    color: #ffffff;
+    border: none;
 }
 
-.professional-report-meta {
-  color: var(--text-muted);
-  font-size: 0.92rem;
+button:not(.nav-link):hover,
+.btn-primary:hover {
+    background: var(--accent-hover);
+    text-decoration: none;
 }
 
-.professional-report-ai-form,
-.professional-report-print-form {
-  margin: 0;
-}
-
-/* ==========================================================
-   Responsive formularios
-========================================================== */
-
-@media (max-width: 576px) {
-  .professional-report-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .professional-report-toolbar .btn,
-  .professional-report-toolbar form,
-  .professional-report-toolbar a {
-    width: 100%;
-  }
-
-  .professional-report-toolbar .btn {
-    display: flex;
-    justify-content: center;
-  }
+button:active,
+.btn:active {
+    transform: translateY(1px);
 }
