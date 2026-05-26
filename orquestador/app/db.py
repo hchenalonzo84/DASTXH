@@ -1,39 +1,23 @@
 """
 db.py
-- Fachada temporal de persistencia para DASTXH.
+- Fachada limpia de persistencia para DASTXH.
 
 Objetivo:
-- Mantener compatibilidad con los imports existentes del proyecto:
+- Mantener compatibilidad con imports existentes del proyecto:
       import db as db_layer
 
-- Permitir dividir progresivamente el antiguo db.py grande en repositorios
-  más pequeños, sin romper de golpe las rutas, servicios o flujos actuales.
+- Reexportar las funciones públicas desde repositorios especializados.
 
-Cómo funciona:
-1. Primero importa todo desde db_legacy.py.
-   Eso mantiene disponibles las funciones que todavía NO se han migrado.
-
-2. Después importa funciones nuevas desde repositories/.
-   Estas funciones sobrescriben a las del legacy cuando tienen el mismo nombre.
+Estado:
+- db_legacy.py ya NO se importa aquí.
+- Si todas las pruebas pasan, db_legacy.py puede eliminarse.
 
 Importante:
-- NO borrar db_legacy.py todavía.
-- db_legacy.py sigue siendo respaldo funcional para todo lo que aún no migramos.
-- Este archivo debe quedarse pequeño y actuar como capa de compatibilidad.
+- Este archivo NO debe volver a concentrar consultas SQL grandes.
+- Nueva lógica de base de datos debe ir en repositories/.
 """
 
 from __future__ import annotations
-
-
-# ==========================================================
-# COMPATIBILIDAD TEMPORAL CON EL DB ANTERIOR
-# ==========================================================
-# Importa todas las funciones anteriores para no romper código
-# que todavía dependa de funciones no migradas.
-#
-# Las funciones migradas se importan después para sobrescribir
-# las versiones anteriores cuando tengan el mismo nombre.
-from db_legacy import *  # noqa: F401,F403
 
 
 # ==========================================================
@@ -64,18 +48,7 @@ from repositories.execution_repository import (  # noqa: F401
 # ==========================================================
 # DETALLE ENRIQUECIDO DE EJECUCIÓN
 # ==========================================================
-# Esta función arma el ViewModel completo usado por:
-#   /executions/{id}
-#
-# Incluye:
-# - cabeceras presentes/faltantes
-# - cookies
-# - hsecscan clasificado
-# - comparación curl vs hsecscan
-# - XSS display rows
-# - artifacts
-# - reporte general
-# - versiones y PDFs del reporte general
+# ViewModel completo usado por /executions/{id}.
 from repositories.execution_detail_repository import (  # noqa: F401
     get_execution_detail,
 )
@@ -136,4 +109,20 @@ from repositories.xss_repository import (  # noqa: F401
 from repositories.artifact_repository import (  # noqa: F401
     list_artifacts,
     register_artifact,
+)
+
+
+# ==========================================================
+# REPORTE GENERAL PROFESIONAL
+# ==========================================================
+# Funciones para reporte editable, versiones históricas y exportaciones PDF.
+from repositories.professional_report_repository import (  # noqa: F401
+    create_professional_report_pdf_snapshot_version,
+    get_or_create_professional_report,
+    get_professional_report,
+    get_professional_report_version,
+    list_professional_report_pdf_exports,
+    list_professional_report_versions,
+    register_professional_report_pdf_export,
+    save_professional_report,
 )
