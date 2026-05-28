@@ -1,0 +1,35 @@
+# ==========================================================
+# grafana/provisioning/datasources/datasource.yml
+# DASTXH - Datasource PostgreSQL para Grafana
+#
+# Corrección importante:
+# - PostgreSQL necesita una base de datos por defecto.
+# - En Grafana esa base debe declararse en jsonData.database.
+# - Grafana se conecta al servicio Docker interno "db:5432".
+# ==========================================================
+
+apiVersion: 1
+
+deleteDatasources:
+  - name: DASTXH PostgreSQL
+    orgId: 1
+
+datasources:
+  - name: DASTXH PostgreSQL
+    uid: dastxh-postgres
+    type: postgres
+    access: proxy
+    url: db:5432
+    user: $POSTGRES_USER
+    isDefault: true
+    editable: true
+    version: 2
+
+    secureJsonData:
+      password: $POSTGRES_PASSWORD
+
+    jsonData:
+      database: $POSTGRES_DB
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false

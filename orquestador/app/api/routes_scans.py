@@ -3,10 +3,12 @@ routes_scans.py
 - Endpoints API para iniciar y consultar escaneos DASTXH.
 
 Esta versión:
-- permite iniciar un escaneo vía POST sin bloquear la respuesta HTTP
-- devuelve un execution_id inmediatamente
-- permite elegir solo el perfil de análisis
-- resuelve internamente el uso de hsecscan según el perfil
+- permite iniciar un escaneo vía POST sin bloquear la respuesta HTTP;
+- devuelve un execution_id inmediatamente;
+- permite elegir solo el perfil de análisis;
+- resuelve internamente el uso de hsecscan según el perfil;
+- normaliza URLs locales para poder evaluar proyectos no contenerizados
+  que corren en la PC host.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import db as db_layer
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from api.target_url_utils import normalize_target_url_for_container
 from services.scanner_service import start_scan_in_background
 from utils import ensure_dir, wait_for_db
 
@@ -74,8 +77,10 @@ def get_dsn() -> str:
     Obtiene la cadena de conexión a PostgreSQL desde DATABASE_URL.
     """
     dsn = os.getenv("DATABASE_URL")
+
     if not dsn:
         raise RuntimeError("DATABASE_URL no está configurada.")
+
     return dsn
 
 
@@ -98,6 +103,7 @@ def ensure_work_paths() -> None:
     Garantiza que exista la estructura base de trabajo.
     """
     workdir = get_workdir()
+
     ensure_dir(workdir)
     ensure_dir(workdir / "reports")
 
@@ -140,7 +146,9 @@ def wait_until_db_ready(timeout_s: int = 20) -> str:
     Espera a que la base de datos esté disponible y devuelve el DSN.
     """
     dsn = get_dsn()
+
     wait_for_db(lambda: db_layer.ping_db(dsn), timeout_s=timeout_s)
+
     return dsn
 
 
@@ -178,8 +186,14 @@ def create_scan(payload: ScanCreateRequest) -> Dict[str, Any]:
     """
     Inicia un escaneo en segundo plano y devuelve inmediatamente
     el execution_id.
+
+    Normalización:
+    - Si se recibe http://localhost:PUERTO, se evalúa internamente como
+      http://host.docker.internal:PUERTO.
     """
     target_url = validate_target_url(payload.url)
+    effective_target_url = normalize_target_url_for_container(target_url)
+
     resolved_scan_profile = validate_scan_profile(payload.scan_profile)
     timeout_s = payload.timeout if payload.timeout is not None else get_default_timeout()
 
@@ -189,7 +203,7 @@ def create_scan(payload: ScanCreateRequest) -> Dict[str, Any]:
     result = start_scan_in_background(
         dsn=dsn,
         workdir=get_workdir(),
-        url=target_url,
+        url=effective_target_url,
         timeout_s=timeout_s,
         request_source="api",
         scan_profile=resolved_scan_profile,
@@ -197,6 +211,7 @@ def create_scan(payload: ScanCreateRequest) -> Dict[str, Any]:
     )
 
     execution_id = result.get("execution_id")
+
     if execution_id is None:
         raise HTTPException(
             status_code=500,

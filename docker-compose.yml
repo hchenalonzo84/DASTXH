@@ -6,13 +6,45 @@
 # - la base de datos principal de DASTXH
 # - el backend principal (orquestador)
 # - pgAdmin para revisar la BD principal
+# - Grafana para visualizar KPIs y rendimiento
 # - la base de datos del laboratorio combinado
 # - el laboratorio combinado
+# - laboratorios de escenarios controlados para pruebas académicas
 #
 # Nota importante sobre PostgreSQL 18+:
 # Los volúmenes deben montarse en /var/lib/postgresql
 # y no en /var/lib/postgresql/data
 # ==========================================================
+
+
+# ==========================================================
+# PLANTILLA REUTILIZABLE PARA LABORATORIOS DE ESCENARIOS
+# ==========================================================
+# Esta plantilla evita repetir build/restart/network en cada lab.
+# Cada laboratorio define:
+# - container_name
+# - LAB_SCENARIO
+# - LAB_NAME
+# - puerto local
+#
+# Todos usan el mismo código:
+#   labs/scenario-labs/
+# ==========================================================
+
+x-scenario-lab-common: &scenario-lab-common
+  build:
+    context: ./labs/scenario-labs
+    dockerfile: Dockerfile
+
+  restart: unless-stopped
+
+  environment:
+    PORT: 5000
+    PYTHONUNBUFFERED: "1"
+
+  networks:
+    - dastxh_net
+
 
 services:
   # --------------------------------------------------------
@@ -60,13 +92,6 @@ services:
   # - API
   # - lógica de escaneo
   # - integración opcional con IA local
-  #
-  # Cambio importante:
-  # - Se exponen al contenedor las variables nuevas de Dalfox.
-  # - Se exponen todas las variables de IA usadas por XSS,
-  #   hsecscan y cookies.
-  # - Se asignan 2 CPU al orquestador para dar más margen
-  #   a Dalfox y al backend.
   # --------------------------------------------------------
   orquestador:
     build:
@@ -93,6 +118,14 @@ services:
       # ----------------------------------------------------
       DEFAULT_TIMEOUT_SECONDS: ${DEFAULT_TIMEOUT_SECONDS:-30}
       WORKDIR: /work
+
+      # ----------------------------------------------------
+      # Control de ejecuciones huérfanas
+      # Si una ejecución queda running más de 15 minutos,
+      # el backend la marca automáticamente como failed.
+      # ----------------------------------------------------
+      DASTXH_STALE_RUNNING_MINUTES: ${DASTXH_STALE_RUNNING_MINUTES:-15}
+      DASTXH_STALE_CLEANUP_INTERVAL_SECONDS: ${DASTXH_STALE_CLEANUP_INTERVAL_SECONDS:-60}
 
       # ----------------------------------------------------
       # DASTXH - Interpretación XSS con IA local
@@ -173,7 +206,6 @@ services:
 
     networks:
       - dastxh_net
-
   # --------------------------------------------------------
   # Servicio: pgadmin
   # Interfaz web para administrar la base de datos principal
@@ -196,6 +228,61 @@ services:
 
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+
+    networks:
+      - dastxh_net
+
+  # --------------------------------------------------------
+  # Servicio: grafana
+  # Tablero central de observabilidad académica de DASTXH
+  #
+  # Objetivo:
+  # - Visualizar KPIs del prototipo.
+  # - Consultar métricas directamente desde PostgreSQL.
+  # - Mostrar rendimiento, resultados, evidencias y trazabilidad.
+  #
+  # Grafana se conecta a la BD principal usando:
+  #   host interno Docker: db
+  #   puerto interno: 5432
+  # --------------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: dastxh-grafana
+    restart: unless-stopped
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    environment:
+      # ----------------------------------------------------
+      # Usuario inicial de Grafana
+      # Puedes cambiar estos valores desde .env
+      # ----------------------------------------------------
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+
+      # ----------------------------------------------------
+      # Ajustes recomendados para laboratorio académico
+      # ----------------------------------------------------
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/dastxh-kpis-dashboard.json
+
+      # ----------------------------------------------------
+      # Variables usadas por datasource.yml
+      # ----------------------------------------------------
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
 
     networks:
       - dastxh_net
@@ -241,6 +328,7 @@ services:
   # Servicio: combo-lab
   # Laboratorio combinado para pruebas controladas
   #
+  # Se deja intacto como laboratorio base/histórico.
   # Sirve para:
   # - búsqueda parametrizada
   # - pruebas de cabeceras
@@ -269,13 +357,220 @@ services:
     networks:
       - dastxh_net
 
+  # ========================================================
+  # LABORATORIOS DE ESCENARIOS CONTROLADOS
+  # ========================================================
+  # Todos estos laboratorios usan la misma imagen local:
+  #   ./labs/scenario-labs
+  #
+  # No reemplazan al combo-lab.
+  # Sirven para tener variación controlada en las pruebas:
+  # - sitios seguros
+  # - cabeceras faltantes
+  # - CSP débil
+  # - cookies inseguras
+  # - XSS básico
+  # - filtro parcial
+  # - escenarios mixtos
+  #
+  # URLs internas recomendadas para evaluar desde DASTXH:
+  #   http://lab-01-secure-baseline:5000
+  #   http://lab-02-missing-headers:5000
+  #   ...
+  #
+  # URLs desde navegador del host:
+  #   http://localhost:5101
+  #   http://localhost:5102
+  #   ...
+  # ========================================================
+
+  # --------------------------------------------------------
+  # Lab 01: Secure baseline
+  # Sitio base con cabeceras presentes, cookies seguras
+  # y parámetros escapados.
+  # --------------------------------------------------------
+  lab-01-secure-baseline:
+    <<: *scenario-lab-common
+    container_name: dastxh-lab-01-secure-baseline
+
+    environment:
+      PORT: 5000
+      PYTHONUNBUFFERED: "1"
+      LAB_SCENARIO: secure_baseline
+      LAB_NAME: "Lab 01 - Secure Baseline"
+
+    ports:
+      - "${LAB_01_PORT:-5101}:5000"
+
+  # --------------------------------------------------------
+  # Lab 02: Missing headers
+  # Sitio sin cabeceras principales de seguridad.
+  # No incluye XSS intencional.
+  # --------------------------------------------------------
+  lab-02-missing-headers:
+    <<: *scenario-lab-common
+    container_name: dastxh-lab-02-missing-headers
+
+    environment:
+      PORT: 5000
+      PYTHONUNBUFFERED: "1"
+      LAB_SCENARIO: missing_headers
+      LAB_NAME: "Lab 02 - Missing Headers"
+
+    ports:
+      - "${LAB_02_PORT:-5102}:5000"
+
+  # --------------------------------------------------------
+  # Lab 03: Weak CSP
+  # Content-Security-Policy presente, pero permisiva.
+  # --------------------------------------------------------
+  lab-03-weak-csp:
+    <<: *scenario-lab-common
+    container_name: dastxh-lab-03-weak-csp
+
+    environment:
+      PORT: 5000
+      PYTHONUNBUFFERED: "1"
+      LAB_SCENARIO: weak_csp
+      LAB_NAME: "Lab 03 - Weak CSP"
+
+    ports:
+      - "${LAB_03_PORT:-5103}:5000"
+
+  # --------------------------------------------------------
+  # Lab 04: Insecure cookies
+  # Enfocado en cookies sin atributos adecuados.
+  # --------------------------------------------------------
+  lab-04-insecure-cookies:
+    <<: *scenario-lab-common
+    container_name: dastxh-lab-04-insecure-cookies
+
+    environment:
+      PORT: 5000
+      PYTHONUNBUFFERED: "1"
+      LAB_SCENARIO: insecure_cookies
+      LAB_NAME: "Lab 04 - Insecure Cookies"
+
+    ports:
+      - "${LAB_04_PORT:-5104}:5000"
+  # --------------------------------------------------------
+  # Lab 05: XSS básico
+  # Reflejo vulnerable simple en parámetros controlados.
+  # --------------------------------------------------------
+  lab-05-xss-basic:
+    <<: *scenario-lab-common
+    container_name: dastxh-lab-05-xss-basic
+
+    environment:
+      PORT: 5000
+      PYTHONUNBUFFERED: "1"
+      LAB_SCENARIO: xss_basic
+      LAB_NAME: "Lab 05 - XSS Basic"
+
+    ports:
+      - "${LAB_05_PORT:-5105}:5000"
+
+  # --------------------------------------------------------
+  # Lab 06: XSS con filtro parcial
+  # Filtro superficial insuficiente.
+  # Útil para demostrar variación en detección.
+  # --------------------------------------------------------
+  lab-06-xss-filtered-partial:
+    <<: *scenario-lab-common
+    container_name: dastxh-lab-06-xss-filtered-partial
+
+    environment:
+      PORT: 5000
+      PYTHONUNBUFFERED: "1"
+      LAB_SCENARIO: xss_filtered_partial
+      LAB_NAME: "Lab 06 - XSS Filtered Partial"
+
+    ports:
+      - "${LAB_06_PORT:-5106}:5000"
+
+  # --------------------------------------------------------
+  # Lab 07: Weak headers no XSS
+  # Cabeceras débiles, pero parámetros escapados.
+  # Sirve para separar debilidades HTTP de XSS.
+  # --------------------------------------------------------
+  lab-07-weak-headers-no-xss:
+    <<: *scenario-lab-common
+    container_name: dastxh-lab-07-weak-headers-no-xss
+
+    environment:
+      PORT: 5000
+      PYTHONUNBUFFERED: "1"
+      LAB_SCENARIO: weak_headers_no_xss
+      LAB_NAME: "Lab 07 - Weak Headers No XSS"
+
+    ports:
+      - "${LAB_07_PORT:-5107}:5000"
+
+  # --------------------------------------------------------
+  # Lab 08: Good headers weak cookies
+  # Cabeceras razonables, pero cookies inseguras.
+  # --------------------------------------------------------
+  lab-08-good-headers-weak-cookies:
+    <<: *scenario-lab-common
+    container_name: dastxh-lab-08-good-headers-weak-cookies
+
+    environment:
+      PORT: 5000
+      PYTHONUNBUFFERED: "1"
+      LAB_SCENARIO: good_headers_weak_cookies
+      LAB_NAME: "Lab 08 - Good Headers Weak Cookies"
+
+    ports:
+      - "${LAB_08_PORT:-5108}:5000"
+
+  # --------------------------------------------------------
+  # Lab 09: Safe parameters
+  # Parámetros reflejados con escape correcto.
+  # No incluye XSS intencional.
+  # --------------------------------------------------------
+  lab-09-safe-parameters:
+    <<: *scenario-lab-common
+    container_name: dastxh-lab-09-safe-parameters
+
+    environment:
+      PORT: 5000
+      PYTHONUNBUFFERED: "1"
+      LAB_SCENARIO: safe_parameters
+      LAB_NAME: "Lab 09 - Safe Parameters"
+
+    ports:
+      - "${LAB_09_PORT:-5109}:5000"
+
+  # --------------------------------------------------------
+  # Lab 10: Mixed controlled
+  # Escenario mixto:
+  # - cabeceras faltantes
+  # - cookies débiles
+  # - reflejo vulnerable controlado
+  # --------------------------------------------------------
+  lab-10-mixed-controlled:
+    <<: *scenario-lab-common
+    container_name: dastxh-lab-10-mixed-controlled
+
+    environment:
+      PORT: 5000
+      PYTHONUNBUFFERED: "1"
+      LAB_SCENARIO: mixed_controlled
+      LAB_NAME: "Lab 10 - Mixed Controlled"
+
+    ports:
+      - "${LAB_10_PORT:-5110}:5000"
+
+
 # ----------------------------------------------------------
 # Volúmenes nombrados del proyecto
 # ----------------------------------------------------------
 volumes:
   pgdata:
   pgadmin_data:
+  grafana_data:
   combo_lab_pgdata:
+
 
 # ----------------------------------------------------------
 # Red interna compartida del proyecto

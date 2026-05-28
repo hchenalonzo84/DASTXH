@@ -6,11 +6,11 @@ Objetivo:
 - Mantener compatibilidad con imports existentes del proyecto:
       import db as db_layer
 
-- Reexportar las funciones públicas desde repositorios especializados.
+- Reexportar funciones públicas desde repositorios especializados.
 
 Estado:
 - db_legacy.py ya NO se importa aquí.
-- Si todas las pruebas pasan, db_legacy.py puede eliminarse.
+- La persistencia se encuentra dividida en repositories/.
 
 Importante:
 - Este archivo NO debe volver a concentrar consultas SQL grandes.
@@ -33,12 +33,13 @@ from repositories.db_connection import (  # noqa: F401
 # ==========================================================
 # EJECUCIONES
 # ==========================================================
-# Funciones para crear ejecuciones, actualizar estados
-# y consultar resumen/historial.
+# Funciones para crear ejecuciones, actualizar estados,
+# consultar resumen/historial y cerrar ejecuciones huérfanas.
 from repositories.execution_repository import (  # noqa: F401
     get_execution_summary,
     insert_execution,
     list_execution_summaries,
+    mark_stale_running_executions_as_failed,
     update_execution_finished,
     update_execution_running,
     update_execution_status,

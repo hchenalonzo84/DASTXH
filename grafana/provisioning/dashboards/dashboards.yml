@@ -1,0 +1,27 @@
+# ==========================================================
+# grafana/provisioning/dashboards/dashboards.yml
+# DASTXH - Provisionamiento automático de dashboards
+#
+# Este archivo le dice a Grafana dónde buscar los dashboards
+# JSON del proyecto.
+#
+# El dashboard real debe estar en:
+# /var/lib/grafana/dashboards
+#
+# En tu proyecto local equivale a:
+# grafana/dashboards/
+# ==========================================================
+
+apiVersion: 1
+
+providers:
+  - name: DASTXH Dashboards
+    orgId: 1
+    folder: DASTXH
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 10
+
+    options:
+      path: /var/lib/grafana/dashboards

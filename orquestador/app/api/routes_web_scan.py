@@ -7,6 +7,8 @@ Objetivo:
       POST /scan
 - Mantener la misma URL pública.
 - Mantener el flujo profundo controlado desde interfaz web.
+- Normalizar URLs locales para que DASTXH pueda evaluar proyectos
+  no contenerizados que corren en la PC host.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from typing import Optional
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
+from api.target_url_utils import normalize_target_url_for_container
 from api.web_common import (
     WORKDIR,
     ensure_work_paths,
@@ -53,10 +56,14 @@ def start_scan(
     - DASTXH ejecuta internamente el flujo profundo controlado;
     - hsecscan queda habilitado como parte del flujo estándar.
 
-    Nota:
-    - request_source se conserva con valor "web" en BD por compatibilidad.
+    Normalización:
+    - Si el usuario escribe http://localhost:PUERTO,
+      DASTXH evalúa internamente http://host.docker.internal:PUERTO.
+    - Esto permite evaluar proyectos locales no contenerizados.
     """
     target_url = validate_target_url(url)
+    effective_target_url = normalize_target_url_for_container(target_url)
+
     timeout_s = timeout if timeout is not None else get_default_timeout()
 
     ensure_work_paths()
@@ -65,7 +72,7 @@ def start_scan(
     result = start_scan_in_background(
         dsn=dsn,
         workdir=WORKDIR,
-        url=target_url,
+        url=effective_target_url,
         timeout_s=timeout_s,
         request_source="web",
         scan_profile=get_standard_scan_profile(),

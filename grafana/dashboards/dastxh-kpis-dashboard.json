@@ -1,0 +1,1112 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value FROM executions;",
+          "refId": "A"
+        }
+      ],
+      "title": "Total de evaluaciones",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value FROM executions WHERE status = 'finished';",
+          "refId": "A"
+        }
+      ],
+      "title": "Finalizadas",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value FROM executions WHERE status = 'failed';",
+          "refId": "A"
+        }
+      ],
+      "title": "Fallidas",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "min": 0,
+          "max": 100,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 60
+              },
+              {
+                "color": "green",
+                "value": 85
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 0
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(ROUND((COUNT(*) FILTER (WHERE status = 'finished')::numeric / NULLIF(COUNT(*)::numeric, 0)) * 100, 2), 0) AS value FROM executions;",
+          "refId": "A"
+        }
+      ],
+      "title": "Evaluaciones exitosas",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "purple",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 0
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)))::numeric, 2), 0) AS value FROM executions WHERE status = 'finished' AND started_at IS NOT NULL AND finished_at IS NOT NULL;",
+          "refId": "A"
+        }
+      ],
+      "title": "Tiempo promedio",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 0
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(SUM(xr.findings_count), 0) AS value FROM xss_results xr INNER JOIN executions e ON e.id = xr.execution_id WHERE e.status = 'finished';",
+          "refId": "A"
+        }
+      ],
+      "title": "Hallazgos XSS",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "min": 0,
+          "max": 100,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 0
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(ROUND(AVG(hr.cumplimiento_pct)::numeric, 2), 0) AS value FROM header_results hr INNER JOIN executions e ON e.id = hr.execution_id WHERE e.status = 'finished';",
+          "refId": "A"
+        }
+      ],
+      "title": "Cabeceras presentes",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "min": 0,
+          "max": 100,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 0
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH base AS (SELECT e.id, CASE WHEN hr.execution_id IS NOT NULL AND xr.execution_id IS NOT NULL AND COALESCE(a.artifacts_count, 0) > 0 THEN 1 ELSE 0 END AS has_traceability FROM executions e LEFT JOIN header_results hr ON hr.execution_id = e.id LEFT JOIN xss_results xr ON xr.execution_id = e.id LEFT JOIN (SELECT execution_id, COUNT(*) AS artifacts_count FROM artifacts GROUP BY execution_id) a ON a.execution_id = e.id WHERE e.status = 'finished') SELECT COALESCE(ROUND((SUM(has_traceability)::numeric / NULLIF(COUNT(*)::numeric, 0)) * 100, 2), 0) AS value FROM base;",
+          "refId": "A"
+        }
+      ],
+      "title": "Trazabilidad básica",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "id": 9,
+      "panels": [],
+      "title": "Indicador 1 - Eficiencia operativa de la evaluación",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT started_at AS \"time\", EXTRACT(EPOCH FROM (finished_at - started_at)) AS \"Duración segundos\" FROM executions WHERE $__timeFilter(started_at) AND status = 'finished' AND started_at IS NOT NULL AND finished_at IS NOT NULL ORDER BY started_at;",
+          "refId": "A"
+        }
+      ],
+      "title": "Duración por evaluación finalizada",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "id": 11,
+      "options": {
+        "orientation": "auto",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT LEFT(target_url, 80) AS \"Objetivo\", ROUND(AVG(EXTRACT(EPOCH FROM (finished_at - started_at)))::numeric, 2) AS \"Promedio segundos\" FROM executions WHERE status = 'finished' AND started_at IS NOT NULL AND finished_at IS NOT NULL GROUP BY target_url ORDER BY \"Promedio segundos\" DESC LIMIT 10;",
+          "refId": "A"
+        }
+      ],
+      "title": "Tiempo promedio por objetivo",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "id": 12,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT id AS \"Evaluación\", target_url AS \"Objetivo\", scan_profile AS \"Perfil\", enable_hsecscan AS \"hsecscan\", started_at AS \"Inicio\", finished_at AS \"Fin\", ROUND(EXTRACT(EPOCH FROM (finished_at - started_at))::numeric, 2) AS \"Duración segundos\", status AS \"Estado\" FROM executions WHERE status = 'finished' AND started_at IS NOT NULL AND finished_at IS NOT NULL ORDER BY started_at DESC LIMIT 25;",
+          "refId": "A"
+        }
+      ],
+      "title": "Detalle de tiempos por evaluación",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "id": 13,
+      "panels": [],
+      "title": "Indicador 2 - Detección de vulnerabilidades de secuencias de comandos entre sitios",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "id": 14,
+      "options": {
+        "orientation": "auto",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT e.id::text AS \"Evaluación\", COALESCE(xr.findings_count, 0) AS \"Hallazgos\" FROM executions e LEFT JOIN xss_results xr ON xr.execution_id = e.id WHERE e.status = 'finished' ORDER BY e.id DESC LIMIT 20;",
+          "refId": "A"
+        }
+      ],
+      "title": "Hallazgos registrados por evaluación",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "id": 15,
+      "options": {
+        "orientation": "auto",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(NULLIF(TRIM(xf.severity), ''), 'sin_severidad') AS \"Severidad\", COUNT(*) AS \"Total\" FROM xss_findings xf INNER JOIN executions e ON e.id = xf.execution_id WHERE e.status = 'finished' GROUP BY COALESCE(NULLIF(TRIM(xf.severity), ''), 'sin_severidad') ORDER BY COUNT(*) DESC;",
+          "refId": "A"
+        }
+      ],
+      "title": "Hallazgos por severidad",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "id": 16,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT e.id AS \"Evaluación\", e.target_url AS \"Objetivo\", COALESCE(xr.findings_count, 0) AS \"Hallazgos reportados\", COUNT(DISTINCT xf.id) AS \"Hallazgos normalizados\", COUNT(DISTINCT xag.id) AS \"Grupos IA\", COUNT(DISTINCT xf.param_name) FILTER (WHERE xf.param_name IS NOT NULL AND TRIM(xf.param_name) <> '') AS \"Parámetros afectados\" FROM executions e LEFT JOIN xss_results xr ON xr.execution_id = e.id LEFT JOIN xss_findings xf ON xf.execution_id = e.id LEFT JOIN xss_ai_groups xag ON xag.execution_id = e.id WHERE e.status = 'finished' GROUP BY e.id, e.target_url, xr.findings_count ORDER BY e.id DESC LIMIT 25;",
+          "refId": "A"
+        }
+      ],
+      "title": "Detalle de hallazgos por evaluación",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "id": 17,
+      "panels": [],
+      "title": "Indicador 3 - Cumplimiento de cabeceras de seguridad",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 39
+      },
+      "id": 18,
+      "options": {
+        "orientation": "auto",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT 'Presentes' AS \"Estado\", COALESCE(SUM(hr.headers_presentes), 0) AS \"Total\" FROM header_results hr INNER JOIN executions e ON e.id = hr.execution_id WHERE e.status = 'finished' UNION ALL SELECT 'Faltantes' AS \"Estado\", COALESCE(SUM(GREATEST(hr.headers_evaluadas - hr.headers_presentes, 0)), 0) AS \"Total\" FROM header_results hr INNER JOIN executions e ON e.id = hr.execution_id WHERE e.status = 'finished';",
+          "refId": "A"
+        }
+      ],
+      "title": "Cabeceras presentes y faltantes",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 39
+      },
+      "id": 19,
+      "options": {
+        "orientation": "auto",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT e.id::text AS \"Evaluación\", COALESCE(hr.cumplimiento_pct, 0) AS \"Porcentaje\" FROM executions e LEFT JOIN header_results hr ON hr.execution_id = e.id WHERE e.status = 'finished' ORDER BY e.id DESC LIMIT 20;",
+          "refId": "A"
+        }
+      ],
+      "title": "Porcentaje de cabeceras presentes por evaluación",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 47
+      },
+      "id": 20,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT e.id AS \"Evaluación\", e.target_url AS \"Objetivo\", COALESCE(hr.headers_evaluadas, 0) AS \"Cabeceras evaluadas\", COALESCE(hr.headers_presentes, 0) AS \"Cabeceras presentes\", COALESCE(GREATEST(hr.headers_evaluadas - hr.headers_presentes, 0), 0) AS \"Cabeceras faltantes\", COALESCE(hr.cumplimiento_pct, 0) AS \"Porcentaje presentes\" FROM executions e LEFT JOIN header_results hr ON hr.execution_id = e.id WHERE e.status = 'finished' ORDER BY e.id DESC LIMIT 25;",
+          "refId": "A"
+        }
+      ],
+      "title": "Detalle de cabeceras por evaluación",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 55
+      },
+      "id": 21,
+      "panels": [],
+      "title": "Indicador 4 - Trazabilidad de resultados",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      },
+      "id": 22,
+      "options": {
+        "orientation": "auto",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH base AS (SELECT e.id, CASE WHEN hr.execution_id IS NOT NULL AND xr.execution_id IS NOT NULL AND COALESCE(a.artifacts_count, 0) > 0 THEN 'Con evidencia consultable' ELSE 'Incompleta' END AS estado FROM executions e LEFT JOIN header_results hr ON hr.execution_id = e.id LEFT JOIN xss_results xr ON xr.execution_id = e.id LEFT JOIN (SELECT execution_id, COUNT(*) AS artifacts_count FROM artifacts GROUP BY execution_id) a ON a.execution_id = e.id WHERE e.status = 'finished') SELECT estado AS \"Estado\", COUNT(*) AS \"Total\" FROM base GROUP BY estado ORDER BY COUNT(*) DESC;",
+          "refId": "A"
+        }
+      ],
+      "title": "Ejecuciones con evidencia consultable",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 56
+      },
+      "id": 23,
+      "options": {
+        "orientation": "auto",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH base AS (SELECT e.id, COALESCE(pr.reports_count, 0) AS reports_count, COALESCE(prv.versions_count, 0) AS versions_count, COALESCE(prpdf.pdfs_count, 0) AS pdfs_count FROM executions e LEFT JOIN (SELECT execution_id, COUNT(*) AS reports_count FROM professional_reports GROUP BY execution_id) pr ON pr.execution_id = e.id LEFT JOIN (SELECT pr.execution_id, COUNT(prv.id) AS versions_count FROM professional_reports pr LEFT JOIN professional_report_versions prv ON prv.professional_report_id = pr.id GROUP BY pr.execution_id) prv ON prv.execution_id = e.id LEFT JOIN (SELECT pr.execution_id, COUNT(prpdf.id) AS pdfs_count FROM professional_reports pr LEFT JOIN professional_report_pdf_exports prpdf ON prpdf.professional_report_id = pr.id GROUP BY pr.execution_id) prpdf ON prpdf.execution_id = e.id WHERE e.status = 'finished') SELECT 'Con reporte general' AS \"Elemento\", COUNT(*) FILTER (WHERE reports_count > 0) AS \"Total\" FROM base UNION ALL SELECT 'Con versión histórica', COUNT(*) FILTER (WHERE versions_count > 0) FROM base UNION ALL SELECT 'Con PDF exportado', COUNT(*) FILTER (WHERE pdfs_count > 0) FROM base;",
+          "refId": "A"
+        }
+      ],
+      "title": "Reportes, versiones y PDFs",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 64
+      },
+      "id": 24,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT e.id AS \"Evaluación\", e.target_url AS \"Objetivo\", CASE WHEN hr.execution_id IS NOT NULL THEN 'Sí' ELSE 'No' END AS \"Cabeceras\", CASE WHEN xr.execution_id IS NOT NULL THEN 'Sí' ELSE 'No' END AS \"XSS\", COALESCE(a.artifacts_count, 0) AS \"Artifacts\", COALESCE(pr.reports_count, 0) AS \"Reportes\", COALESCE(prv.versions_count, 0) AS \"Versiones\", COALESCE(prpdf.pdfs_count, 0) AS \"PDFs\" FROM executions e LEFT JOIN header_results hr ON hr.execution_id = e.id LEFT JOIN xss_results xr ON xr.execution_id = e.id LEFT JOIN (SELECT execution_id, COUNT(*) AS artifacts_count FROM artifacts GROUP BY execution_id) a ON a.execution_id = e.id LEFT JOIN (SELECT execution_id, COUNT(*) AS reports_count FROM professional_reports GROUP BY execution_id) pr ON pr.execution_id = e.id LEFT JOIN (SELECT pr.execution_id, COUNT(prv.id) AS versions_count FROM professional_reports pr LEFT JOIN professional_report_versions prv ON prv.professional_report_id = pr.id GROUP BY pr.execution_id) prv ON prv.execution_id = e.id LEFT JOIN (SELECT pr.execution_id, COUNT(prpdf.id) AS pdfs_count FROM professional_reports pr LEFT JOIN professional_report_pdf_exports prpdf ON prpdf.professional_report_id = pr.id GROUP BY pr.execution_id) prpdf ON prpdf.execution_id = e.id WHERE e.status = 'finished' ORDER BY e.id DESC LIMIT 25;",
+          "refId": "A"
+        }
+      ],
+      "title": "Trazabilidad por evaluación",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 73
+      },
+      "id": 25,
+      "panels": [],
+      "title": "Consulta general de evaluaciones recientes",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 74
+      },
+      "id": 26,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT e.id AS \"ID\", e.target_url AS \"Objetivo\", e.status AS \"Estado\", e.scan_profile AS \"Perfil\", e.enable_hsecscan AS \"hsecscan\", e.started_at AS \"Inicio\", e.finished_at AS \"Fin\", CASE WHEN e.started_at IS NOT NULL AND e.finished_at IS NOT NULL THEN ROUND(EXTRACT(EPOCH FROM (e.finished_at - e.started_at))::numeric, 2) ELSE NULL END AS \"Duración seg\", COALESCE(hr.cumplimiento_pct, 0) AS \"Cabeceras presentes %\", COALESCE(xr.findings_count, 0) AS \"Hallazgos XSS\", COALESCE(a.artifacts_count, 0) AS \"Artifacts\" FROM executions e LEFT JOIN header_results hr ON hr.execution_id = e.id LEFT JOIN xss_results xr ON xr.execution_id = e.id LEFT JOIN (SELECT execution_id, COUNT(*) AS artifacts_count FROM artifacts GROUP BY execution_id) a ON a.execution_id = e.id ORDER BY e.started_at DESC NULLS LAST, e.id DESC LIMIT 30;",
+          "refId": "A"
+        }
+      ],
+      "title": "Últimas evaluaciones registradas",
+      "type": "table"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "dastxh",
+    "kpis",
+    "rendimiento",
+    "tesis"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "DASTXH - Validación de indicadores del prototipo",
+  "uid": "dastxh-kpis",
+  "version": 3,
+  "weekStart": ""
+}

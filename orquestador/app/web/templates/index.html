@@ -1,6 +1,186 @@
 {% extends "base.html" %}
 
 {% block content %}
+<style>
+  /* ==========================================================
+     Menú superior de laboratorios
+     - Se inserta junto a Inicio / Historial / API Docs.
+     - No afecta el formulario principal.
+     ========================================================== */
+
+  .topbar-labs-menu {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .topbar-labs-button {
+    border: 0;
+    background: transparent;
+    color: #93c5fd;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+  }
+
+  .topbar-labs-button:hover {
+    text-decoration: underline;
+  }
+
+  .topbar-labs-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 12px);
+    right: 0;
+    z-index: 2000;
+    min-width: 320px;
+    max-height: 520px;
+    overflow-y: auto;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    box-shadow: 0 18px 38px rgba(0, 0, 0, 0.42);
+    padding: 0.75rem;
+  }
+
+  .topbar-labs-menu.is-open .topbar-labs-dropdown {
+    display: block;
+  }
+
+  .topbar-labs-group {
+    margin-bottom: 0.75rem;
+  }
+
+  .topbar-labs-group:last-child {
+    margin-bottom: 0;
+  }
+
+  .topbar-labs-group-title {
+    display: block;
+    margin: 0 0 0.35rem 0;
+    color: #cbd5e1;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .topbar-labs-link {
+    display: block;
+    color: #bfdbfe;
+    text-decoration: none;
+    padding: 0.55rem 0.65rem;
+    border-radius: 10px;
+    line-height: 1.25;
+  }
+
+  .topbar-labs-link:hover {
+    background: rgba(96, 165, 250, 0.14);
+    text-decoration: none;
+  }
+
+  .topbar-labs-link small {
+    display: block;
+    color: #94a3b8;
+    font-size: 0.76rem;
+    margin-top: 0.2rem;
+  }
+</style>
+
+<script>
+  /*
+    Inserta el menú de laboratorios en la barra superior.
+
+    Regla:
+    - browser_url abre el laboratorio desde el navegador del usuario.
+    - url queda disponible como referencia interna para DASTXH.
+  */
+  document.addEventListener("DOMContentLoaded", function () {
+    const labTargets = {{ lab_targets|tojson }};
+    const topbarNav = document.querySelector(".topbar nav");
+
+    if (!topbarNav || !Array.isArray(labTargets) || labTargets.length === 0) {
+      return;
+    }
+
+    if (document.getElementById("topbar-labs-menu")) {
+      return;
+    }
+
+    const menu = document.createElement("div");
+    menu.id = "topbar-labs-menu";
+    menu.className = "topbar-labs-menu";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "topbar-labs-button";
+    button.textContent = "Laboratorios";
+
+    const dropdown = document.createElement("div");
+    dropdown.className = "topbar-labs-dropdown";
+
+    const groupedTargets = {};
+
+    labTargets.forEach(function (lab) {
+      const group = lab.group || "Laboratorios";
+
+      if (!groupedTargets[group]) {
+        groupedTargets[group] = [];
+      }
+
+      groupedTargets[group].push(lab);
+    });
+
+    Object.keys(groupedTargets).forEach(function (groupName) {
+      const groupBlock = document.createElement("div");
+      groupBlock.className = "topbar-labs-group";
+
+      const groupTitle = document.createElement("span");
+      groupTitle.className = "topbar-labs-group-title";
+      groupTitle.textContent = groupName;
+
+      groupBlock.appendChild(groupTitle);
+
+      groupedTargets[groupName].forEach(function (lab) {
+        const link = document.createElement("a");
+        link.className = "topbar-labs-link";
+        link.href = lab.browser_url || lab.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.title = lab.description || "";
+        link.textContent = lab.label || lab.url;
+
+        const description = document.createElement("small");
+        description.textContent = lab.browser_url || lab.url;
+
+        link.appendChild(description);
+        groupBlock.appendChild(link);
+      });
+
+      dropdown.appendChild(groupBlock);
+    });
+
+    button.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      menu.classList.toggle("is-open");
+    });
+
+    document.addEventListener("click", function () {
+      menu.classList.remove("is-open");
+    });
+
+    dropdown.addEventListener("click", function (event) {
+      event.stopPropagation();
+    });
+
+    menu.appendChild(button);
+    menu.appendChild(dropdown);
+    topbarNav.appendChild(menu);
+  });
+</script>
+
 <section class="card">
   <h2>Iniciar evaluación</h2>
 
@@ -21,6 +201,10 @@
         placeholder="https://example.com"
         required
       >
+      <small>
+        Para proyectos locales no contenerizados puedes escribir, por ejemplo:
+        http://localhost:3000. DASTXH lo evaluará internamente usando host.docker.internal.
+      </small>
     </div>
 
     <div class="form-group">
