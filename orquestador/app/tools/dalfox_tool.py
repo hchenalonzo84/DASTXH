@@ -1,23 +1,27 @@
 """
 dalfox_tool.py
-- CAPA XSS: Dalfox.
-- Ejecuta Dalfox en modo URL y normaliza hallazgos.
+- Wrapper de ejecución de Dalfox para DASTXH.
 
-Objetivos de esta versión:
-- usar una sola configuración estándar de Dalfox;
-- mantener compatibilidad con llamadas antiguas que todavía envíen scan_profile;
-- aplicar timeout duro para evitar ejecuciones indefinidas;
-- limitar workers para mejorar estabilidad;
-- permitir minería ligera controlada desde .env;
-- evitar minería agresiva por defecto;
-- ignorar salidas vacías como [{}] para no contarlas como XSS;
-- entregar datos más limpios a BD, GUI e IA.
+Objetivo:
+- Ejecutar la capa XSS del prototipo de forma controlada.
+- Generar evidencia JSON y TXT compatible con scanner_service.py.
+- Normalizar hallazgos para persistencia en PostgreSQL.
+- Activar evaluación DOM XSS profunda cuando esté configurado.
 
-Decisión actual:
-- DASTXH ejecuta un flujo único: evaluación profunda controlada.
-- El usuario ya no elige perfil desde la GUI.
-- Dalfox puede usar minería ligera para mejorar cobertura sin convertir
-  la prueba en una exploración excesivamente variable.
+Soporte DOM XSS:
+- DASTXH puede activar:
+    --deep-domxss
+    --force-headless-verification
+
+Esto permite que Dalfox intente validar casos donde el XSS depende de ejecución
+JavaScript en navegador/headless, por ejemplo páginas que leen parámetros de la URL
+y los insertan en el DOM.
+
+Importante:
+- Chromium debe estar instalado en el contenedor del orquestador.
+- El Dockerfile debe exponer CHROME_BIN / CHROMIUM_BIN.
+- El timeout duro de Dalfox se controla desde configuración para evitar ejecuciones
+  indefinidas.
 """
 
 from __future__ import annotations
@@ -25,200 +29,283 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import parse_qs, urlsplit
 
-from config import (
-    DALFOX_HARD_TIMEOUT_SECONDS,
-    DALFOX_LIGHT_MINING_ENABLED,
-    DALFOX_REQUEST_TIMEOUT_SECONDS,
-    DALFOX_SKIP_MINING_DICT,
-    DALFOX_SKIP_MINING_DOM,
-    DALFOX_WORKERS,
-    UA,
-)
+import config
+
+
+# ==========================================================
+# CONSTANTES INTERNAS
+# ==========================================================
+
+DALFOX_TIMEOUT_EXIT_CODE = 124
+DALFOX_SOURCE_NAME = "dalfox"
 
 
 # ==========================================================
 # HELPERS DE CONFIGURACIÓN
 # ==========================================================
 
-def _env_bool(name: str, default: bool) -> bool:
+def _env_to_bool(value: Any, default: bool = False) -> bool:
     """
-    Lee un booleano desde variable de entorno.
+    Convierte valores típicos de entorno a booleano.
 
-    Valores aceptados como verdadero:
-    true, 1, yes, y, on, si, sí
-
-    Valores aceptados como falso:
-    false, 0, no, n, off
+    Acepta:
+    - true / false
+    - 1 / 0
+    - yes / no
+    - y / n
+    - on / off
     """
-    value = os.getenv(name)
-
     if value is None:
         return default
 
-    normalized = value.strip().lower()
+    normalized = str(value).strip().lower()
 
-    if normalized in ("true", "1", "yes", "y", "on", "si", "sí"):
+    if normalized in {"1", "true", "yes", "y", "on", "si", "sí"}:
         return True
 
-    if normalized in ("false", "0", "no", "n", "off"):
+    if normalized in {"0", "false", "no", "n", "off"}:
         return False
 
     return default
 
 
-def _env_int(name: str, default: int, min_value: int, max_value: int) -> int:
+def _get_config_bool(
+    env_name: str,
+    config_attr: str,
+    default: bool,
+) -> bool:
     """
-    Lee un entero desde variable de entorno y lo limita a un rango seguro.
+    Lee un booleano primero desde variable de entorno y luego desde config.py.
     """
-    value = os.getenv(name)
+    if env_name in os.environ:
+        return _env_to_bool(os.getenv(env_name), default=default)
 
-    if value is None:
-        return default
+    return bool(getattr(config, config_attr, default))
+
+
+def _get_config_int(
+    env_name: str,
+    config_attr: str,
+    default: int,
+) -> int:
+    """
+    Lee un entero primero desde variable de entorno y luego desde config.py.
+    """
+    raw_value = os.getenv(env_name)
+
+    if raw_value is None:
+        raw_value = getattr(config, config_attr, default)
 
     try:
-        parsed = int(value.strip())
+        parsed = int(raw_value)
     except Exception:
+        parsed = default
+
+    if parsed <= 0:
         return default
 
-    return max(min_value, min(max_value, parsed))
+    return parsed
 
 
-def _request_timeout(timeout_s: int) -> int:
+def _get_dalfox_request_timeout(timeout_s: Optional[int]) -> int:
     """
-    Define el timeout por request que recibirá Dalfox.
+    Calcula el timeout por solicitud que se enviará a Dalfox.
 
-    Este no es el timeout global del proceso.
-    Es el límite que Dalfox usa para solicitudes individuales.
-
-    Se toma como base:
-    - timeout_s recibido desde la GUI/backend;
-    - DALFOX_REQUEST_TIMEOUT_SECONDS definido en config.py;
-    - DASTXH_DALFOX_REQUEST_TIMEOUT_SECONDS definido en .env.
-
-    Nota:
-    El valor de .env tiene prioridad para poder afinar el comportamiento
-    sin modificar código.
+    Regla:
+    - Se toma el valor de configuración DASTXH_DALFOX_REQUEST_TIMEOUT_SECONDS.
+    - Si el flujo recibió un timeout base menor, se respeta el menor.
     """
-    default_value = int(timeout_s or DALFOX_REQUEST_TIMEOUT_SECONDS)
-
-    # Si el usuario ingresa un valor menor desde la GUI, no lo usamos para
-    # recortar agresivamente Dalfox. En esta fase buscamos estabilidad.
-    default_value = max(default_value, DALFOX_REQUEST_TIMEOUT_SECONDS)
-
-    return _env_int(
-        "DASTXH_DALFOX_REQUEST_TIMEOUT_SECONDS",
-        default=default_value,
-        min_value=5,
-        max_value=180,
+    configured_timeout = _get_config_int(
+        env_name="DASTXH_DALFOX_REQUEST_TIMEOUT_SECONDS",
+        config_attr="DALFOX_REQUEST_TIMEOUT_SECONDS",
+        default=25,
     )
 
+    if timeout_s is None or timeout_s <= 0:
+        return configured_timeout
 
-def _hard_timeout() -> int:
+    return max(1, min(configured_timeout, int(timeout_s)))
+
+
+def _get_dalfox_hard_timeout() -> int:
     """
-    Define el timeout duro del proceso Dalfox completo.
+    Obtiene el timeout duro para el proceso completo de Dalfox.
 
-    Esto evita que una URL pública o un laboratorio lento deje la ejecución
+    Este valor protege a DASTXH para que Dalfox no deje una ejecución
     indefinidamente en estado running.
     """
-    return _env_int(
-        "DASTXH_DALFOX_HARD_TIMEOUT_SECONDS",
-        default=DALFOX_HARD_TIMEOUT_SECONDS,
-        min_value=60,
-        max_value=1800,
+    return _get_config_int(
+        env_name="DASTXH_DALFOX_HARD_TIMEOUT_SECONDS",
+        config_attr="DALFOX_HARD_TIMEOUT_SECONDS",
+        default=420,
     )
 
 
-def _workers() -> int:
+def _get_dalfox_workers() -> int:
     """
-    Define la cantidad de workers de Dalfox.
-
-    Se evita depender del valor por defecto de Dalfox porque puede generar
-    demasiada concurrencia y resultados menos estables en ciertos entornos.
+    Obtiene la cantidad de workers de Dalfox.
     """
-    return _env_int(
-        "DASTXH_DALFOX_WORKERS",
-        default=DALFOX_WORKERS,
-        min_value=1,
-        max_value=100,
+    return _get_config_int(
+        env_name="DASTXH_DALFOX_WORKERS",
+        config_attr="DALFOX_WORKERS",
+        default=6,
     )
 
 
-def _light_mining_enabled() -> bool:
+def _is_light_mining_enabled() -> bool:
     """
-    Define si Dalfox usará minería ligera.
-
-    Variable nueva:
-    - DASTXH_DALFOX_LIGHT_MINING_ENABLED
-
-    Compatibilidad:
-    - Si todavía existe DASTXH_DALFOX_SKIP_MINING_ALL en .env,
-      se interpreta de forma inversa:
-        true  -> minería ligera desactivada
-        false -> minería ligera activada
+    Indica si se permite minería ligera de Dalfox.
     """
-    legacy_skip_all = os.getenv("DASTXH_DALFOX_SKIP_MINING_ALL")
-
-    if legacy_skip_all is not None:
-        skip_all = _env_bool("DASTXH_DALFOX_SKIP_MINING_ALL", default=False)
-        return not skip_all
-
-    return _env_bool(
-        "DASTXH_DALFOX_LIGHT_MINING_ENABLED",
-        default=DALFOX_LIGHT_MINING_ENABLED,
+    return _get_config_bool(
+        env_name="DASTXH_DALFOX_LIGHT_MINING_ENABLED",
+        config_attr="DALFOX_LIGHT_MINING_ENABLED",
+        default=True,
     )
 
 
-def _skip_mining_dom() -> bool:
+def _should_skip_mining_dom() -> bool:
     """
-    Define si se omite la minería DOM.
-
-    Para una minería ligera, normalmente conviene omitir DOM porque puede
-    aumentar tiempo y variabilidad.
+    Indica si se debe omitir la minería DOM de Dalfox.
     """
-    return _env_bool(
-        "DASTXH_DALFOX_SKIP_MINING_DOM",
-        default=DALFOX_SKIP_MINING_DOM,
+    return _get_config_bool(
+        env_name="DASTXH_DALFOX_SKIP_MINING_DOM",
+        config_attr="DALFOX_SKIP_MINING_DOM",
+        default=False,
     )
 
 
-def _skip_mining_dict() -> bool:
+def _should_skip_mining_dict() -> bool:
     """
-    Define si se omite la minería por diccionario.
-
-    Para una minería ligera, normalmente conviene omitir diccionario porque
-    puede ampliar demasiado el alcance del escaneo.
+    Indica si se debe omitir la minería por diccionario de Dalfox.
     """
-    return _env_bool(
-        "DASTXH_DALFOX_SKIP_MINING_DICT",
-        default=DALFOX_SKIP_MINING_DICT,
+    return _get_config_bool(
+        env_name="DASTXH_DALFOX_SKIP_MINING_DICT",
+        config_attr="DALFOX_SKIP_MINING_DICT",
+        default=False,
     )
 
 
-def _ensure_json_array_file(path: Path) -> None:
+def _is_deep_domxss_enabled() -> bool:
     """
-    Garantiza que el archivo JSON exista con una lista vacía.
+    Indica si DASTXH debe activar --deep-domxss.
+    """
+    return _get_config_bool(
+        env_name="DASTXH_DALFOX_DEEP_DOMXSS_ENABLED",
+        config_attr="DALFOX_DEEP_DOMXSS_ENABLED",
+        default=True,
+    )
 
-    Se usa cuando Dalfox falla o llega a timeout antes de cerrar el JSON.
+
+def _is_force_headless_verification_enabled() -> bool:
+    """
+    Indica si DASTXH debe activar --force-headless-verification.
+    """
+    return _get_config_bool(
+        env_name="DASTXH_DALFOX_FORCE_HEADLESS_VERIFICATION",
+        config_attr="DALFOX_FORCE_HEADLESS_VERIFICATION",
+        default=True,
+    )
+
+
+# ==========================================================
+# HELPERS DE ARCHIVOS JSON
+# ==========================================================
+
+def _write_json_file(path: Path, payload: Any) -> None:
+    """
+    Escribe un archivo JSON de forma segura.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+def _read_json_file(path: Path) -> Any:
+    """
+    Lee un archivo JSON.
+
+    Si falla, devuelve un documento estructurado de error.
     """
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists() or not path.is_file():
+            return {
+                "ok": False,
+                "error": "El archivo JSON de Dalfox no existe.",
+                "findings": [],
+            }
 
-        if not path.exists() or not path.read_text(encoding="utf-8", errors="replace").strip():
-            path.write_text("[]", encoding="utf-8")
-            return
+        raw_text = path.read_text(encoding="utf-8", errors="replace").strip()
 
-        raw = path.read_text(encoding="utf-8", errors="replace").strip()
+        if not raw_text:
+            return {
+                "ok": False,
+                "error": "El archivo JSON de Dalfox está vacío.",
+                "findings": [],
+            }
 
-        try:
-            json.loads(raw)
-        except Exception:
-            path.write_text("[]", encoding="utf-8")
+        return json.loads(raw_text)
+
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"No fue posible leer el JSON de Dalfox: {str(exc)}",
+            "findings": [],
+        }
+
+
+def _is_valid_json_file(path: Path) -> bool:
+    """
+    Verifica si un archivo existe y contiene JSON válido.
+    """
+    try:
+        if not path.exists() or not path.is_file():
+            return False
+
+        raw_text = path.read_text(encoding="utf-8", errors="replace").strip()
+
+        if not raw_text:
+            return False
+
+        json.loads(raw_text)
+        return True
+
     except Exception:
-        # Este helper no debe romper el escaneo.
-        pass
+        return False
+
+
+def _write_fallback_dalfox_json(
+    out_json: Path,
+    target_url: str,
+    tool_rc: int,
+    raw_output: str,
+    error: Optional[str] = None,
+) -> None:
+    """
+    Escribe un JSON mínimo cuando Dalfox no generó un archivo JSON válido.
+
+    Esto evita que read_summary falle y permite que DASTXH registre
+    evidencia técnica aunque la herramienta termine sin hallazgos o con error.
+    """
+    payload = {
+        "ok": False,
+        "tool": DALFOX_SOURCE_NAME,
+        "target_url": target_url,
+        "tool_rc": tool_rc,
+        "error": error,
+        "raw_output_preview": (raw_output or "")[:4000],
+        "findings": [],
+    }
+
+    _write_json_file(out_json, payload)
 # ==========================================================
 # CONSTRUCCIÓN DEL COMANDO DALFOX
 # ==========================================================
@@ -226,63 +313,82 @@ def _ensure_json_array_file(path: Path) -> None:
 def _build_dalfox_command(
     url: str,
     out_json: Path,
-    request_timeout: int,
-    workers: int,
-    light_mining_enabled: bool,
-    skip_mining_dom: bool,
-    skip_mining_dict: bool,
+    timeout_s: Optional[int],
+    scan_profile: Optional[str],
 ) -> List[str]:
     """
-    Construye el comando Dalfox con configuración estándar.
+    Construye el comando real de Dalfox.
 
-    Reglas actuales:
-    - siempre se usa modo URL;
-    - se sigue redirección con -F;
-    - se define User-Agent estable;
-    - se controla número de workers;
-    - se permite minería ligera si está habilitada;
-    - si minería ligera está deshabilitada, se usa --skip-mining-all.
+    Este es el punto donde se activan los flags DOM XSS:
+
+    - --deep-domxss
+    - --force-headless-verification
+
+    También se controla:
+    - formato JSON;
+    - archivo de salida;
+    - timeout por solicitud;
+    - workers;
+    - minería DOM/diccionario.
     """
-    cmd = [
-        "dalfox", "url", url,
-        "--no-color",
-        "--no-spinner",
-        "--format", "json",
-        "-o", str(out_json),
-        "--timeout", str(request_timeout),
-        "--worker", str(workers),
-        "--user-agent", UA,
-        "-F",
+    request_timeout = _get_dalfox_request_timeout(timeout_s)
+    workers = _get_dalfox_workers()
+
+    cmd: List[str] = [
+        "dalfox",
+        "url",
+        url,
+        "--format",
+        "json",
+        "--output",
+        str(out_json),
+        "--timeout",
+        str(request_timeout),
+        "--worker",
+        str(workers),
     ]
 
-    if not light_mining_enabled:
-        cmd.append("--skip-mining-all")
-        return cmd
-
-    # Minería ligera controlada:
-    # Permitimos que Dalfox conserve una minería básica, pero omitimos
-    # partes que tienden a aumentar demasiado el alcance.
-    if skip_mining_dom:
+    # ------------------------------------------------------
+    # Minería de Dalfox
+    # ------------------------------------------------------
+    # Si la minería ligera está deshabilitada, se omiten las
+    # dos fuentes principales de minería para reducir alcance.
+    if not _is_light_mining_enabled():
         cmd.append("--skip-mining-dom")
-
-    if skip_mining_dict:
         cmd.append("--skip-mining-dict")
+    else:
+        if _should_skip_mining_dom():
+            cmd.append("--skip-mining-dom")
+
+        if _should_skip_mining_dict():
+            cmd.append("--skip-mining-dict")
+
+    # ------------------------------------------------------
+    # DOM XSS profundo / headless
+    # ------------------------------------------------------
+    if _is_deep_domxss_enabled():
+        cmd.append("--deep-domxss")
+
+    if _is_force_headless_verification_enabled():
+        cmd.append("--force-headless-verification")
 
     return cmd
 
 
-def _command_to_text(cmd: List[str]) -> str:
+def _build_dalfox_runtime_env() -> Dict[str, str]:
     """
-    Convierte el comando a texto para dejarlo documentado en dalfox.txt.
+    Construye el entorno para ejecutar Dalfox.
 
-    No se usa para ejecutar; solo para trazabilidad.
+    Se asegura de que Chromium pueda ser localizado por herramientas
+    que dependen de navegador headless.
     """
-    return " ".join(str(part) for part in cmd)
+    env = dict(os.environ)
 
+    env.setdefault("CHROME_BIN", "/usr/bin/chromium")
+    env.setdefault("CHROMIUM_BIN", "/usr/bin/chromium")
 
-# ==========================================================
-# EJECUCIÓN DALFOX
-# ==========================================================
+    return env
+
 
 def run_dalfox(
     url: str,
@@ -291,63 +397,77 @@ def run_dalfox(
     scan_profile: str = "profundo",
 ) -> Tuple[int, str]:
     """
-    Ejecuta Dalfox contra una URL y devuelve:
-    - código de retorno;
-    - salida combinada stdout + stderr.
+    Ejecuta Dalfox contra una URL objetivo.
 
-    Parámetro scan_profile:
-    - Se conserva por compatibilidad con scanner_service.py.
-    - Ya no cambia la configuración interna.
-    - DASTXH usa ahora un flujo único de evaluación profunda controlada.
+    Parámetros:
+    - url: URL objetivo.
+    - timeout_s: timeout base recibido desde el flujo DASTXH.
+    - out_json: ruta donde Dalfox debe escribir su salida JSON.
+    - scan_profile: valor técnico conservado por compatibilidad.
+
+    Retorna:
+    - tool_rc: código de salida de Dalfox.
+    - raw_output: stdout + stderr para guardar como dalfox.txt.
+
+    Importante:
+    - El timeout duro del proceso se controla con subprocess.run(timeout=...).
+    - Si Dalfox no genera JSON válido, se crea un JSON fallback.
     """
-    request_timeout = _request_timeout(timeout_s)
-    hard_timeout = _hard_timeout()
-    workers = _workers()
-    light_mining_enabled = _light_mining_enabled()
-    skip_mining_dom = _skip_mining_dom()
-    skip_mining_dict = _skip_mining_dict()
-
+    out_json = Path(out_json)
     out_json.parent.mkdir(parents=True, exist_ok=True)
 
+    # Evita reutilizar evidencia vieja si una ejecución previa dejó archivo.
+    try:
+        if out_json.exists():
+            out_json.unlink()
+    except Exception:
+        pass
+
+    hard_timeout = _get_dalfox_hard_timeout()
     cmd = _build_dalfox_command(
         url=url,
         out_json=out_json,
-        request_timeout=request_timeout,
-        workers=workers,
-        light_mining_enabled=light_mining_enabled,
-        skip_mining_dom=skip_mining_dom,
-        skip_mining_dict=skip_mining_dict,
+        timeout_s=timeout_s,
+        scan_profile=scan_profile,
     )
 
-    config_note = (
-        "[DASTXH] Configuración Dalfox aplicada: "
-        f"request_timeout={request_timeout}s, "
-        f"hard_timeout={hard_timeout}s, "
-        f"workers={workers}, "
-        f"light_mining_enabled={light_mining_enabled}, "
-        f"skip_mining_dom={skip_mining_dom}, "
-        f"skip_mining_dict={skip_mining_dict}, "
-        "flow=evaluacion_profunda_controlada\n"
-        f"[DASTXH] Comando Dalfox: {_command_to_text(cmd)}"
-    )
+    command_for_log = " ".join(cmd)
 
     try:
         completed = subprocess.run(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=hard_timeout,
+            env=_build_dalfox_runtime_env(),
             check=False,
         )
 
-        raw = (completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")
-        raw = f"{config_note}\n{raw}"
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
 
-        # Si Dalfox termina sin escribir JSON válido, dejamos [] para que el
-        # pipeline pueda cerrar de forma limpia.
-        _ensure_json_array_file(out_json)
+        raw_output = (
+            "[DASTXH] Dalfox command\n"
+            f"{command_for_log}\n\n"
+            "[DASTXH] Dalfox stdout\n"
+            f"{stdout}\n\n"
+            "[DASTXH] Dalfox stderr\n"
+            f"{stderr}\n"
+        )
 
-        return int(completed.returncode), raw
+        if not _is_valid_json_file(out_json):
+            _write_fallback_dalfox_json(
+                out_json=out_json,
+                target_url=url,
+                tool_rc=completed.returncode,
+                raw_output=raw_output,
+                error="Dalfox no generó un JSON válido.",
+            )
+
+        return completed.returncode, raw_output
 
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout or ""
@@ -359,317 +479,444 @@ def run_dalfox(
         if isinstance(stderr, bytes):
             stderr = stderr.decode("utf-8", errors="replace")
 
-        _ensure_json_array_file(out_json)
-
-        raw = (
-            f"{config_note}\n"
-            f"{stdout}\n{stderr}\n"
-            f"[DASTXH] Dalfox superó el timeout duro de {hard_timeout} segundos. "
-            "La fase XSS se cerró sin hallazgos válidos para evitar que la ejecución "
-            "quede indefinidamente en running."
+        raw_output = (
+            "[DASTXH] Dalfox timeout\n"
+            f"Dalfox superó el límite duro de {hard_timeout} segundos.\n\n"
+            "[DASTXH] Dalfox command\n"
+            f"{command_for_log}\n\n"
+            "[DASTXH] Dalfox stdout parcial\n"
+            f"{stdout}\n\n"
+            "[DASTXH] Dalfox stderr parcial\n"
+            f"{stderr}\n"
         )
 
-        # 124 es un código convencional para timeout.
-        return 124, raw
+        if not _is_valid_json_file(out_json):
+            _write_fallback_dalfox_json(
+                out_json=out_json,
+                target_url=url,
+                tool_rc=DALFOX_TIMEOUT_EXIT_CODE,
+                raw_output=raw_output,
+                error=f"Dalfox superó el timeout duro de {hard_timeout} segundos.",
+            )
 
-    except FileNotFoundError:
-        _ensure_json_array_file(out_json)
-
-        return (
-            127,
-            f"{config_note}\n"
-            "[DASTXH] No se encontró el binario 'dalfox' dentro del contenedor. "
-            "Verifica el Dockerfile y la instalación de la herramienta.",
-        )
+        return DALFOX_TIMEOUT_EXIT_CODE, raw_output
 
     except Exception as exc:
-        _ensure_json_array_file(out_json)
-
-        return (
-            1,
-            f"{config_note}\n"
-            f"[DASTXH] Error inesperado al ejecutar Dalfox: {type(exc).__name__}: {exc}",
+        raw_output = (
+            "[DASTXH] Dalfox execution error\n"
+            f"{str(exc)}\n\n"
+            "[DASTXH] Traceback\n"
+            f"{traceback.format_exc()}\n\n"
+            "[DASTXH] Dalfox command\n"
+            f"{command_for_log}\n"
         )
 
+        if not _is_valid_json_file(out_json):
+            _write_fallback_dalfox_json(
+                out_json=out_json,
+                target_url=url,
+                tool_rc=1,
+                raw_output=raw_output,
+                error=str(exc),
+            )
+
+        return 1, raw_output
+
 
 # ==========================================================
-# LECTURA / NORMALIZACIÓN DE SALIDA
+# LECTURA DE RESUMEN
 # ==========================================================
 
-def _value_to_text(value: Any) -> Optional[str]:
+def _extract_findings_container(summary_json: Any) -> List[Any]:
     """
-    Convierte un valor de Dalfox a texto útil.
+    Extrae la lista más probable de hallazgos desde diferentes formatos
+    posibles de salida JSON de Dalfox.
 
-    Si el valor es dict/list, se serializa como JSON compacto para no perder
-    evidencia estructurada.
+    Dalfox puede variar el formato entre versiones. Por eso se contemplan:
+    - lista directa;
+    - claves findings/results/data/pocs/vulnerabilities/logs;
+    - estructuras anidadas.
     """
-    if value is None:
-        return None
+    if summary_json is None:
+        return []
 
-    if isinstance(value, (dict, list)):
-        try:
-            text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-        except Exception:
-            text = str(value)
-    else:
-        text = str(value)
+    if isinstance(summary_json, list):
+        return summary_json
 
-    text = text.strip()
-    return text if text else None
+    if not isinstance(summary_json, dict):
+        return []
+
+    candidate_keys = [
+        "findings",
+        "results",
+        "result",
+        "data",
+        "pocs",
+        "poc",
+        "vulnerabilities",
+        "issues",
+        "logs",
+    ]
+
+    for key in candidate_keys:
+        value = summary_json.get(key)
+
+        if isinstance(value, list):
+            return value
+
+        if isinstance(value, dict):
+            nested = _extract_findings_container(value)
+
+            if nested:
+                return nested
+
+    # Búsqueda defensiva en valores anidados.
+    for value in summary_json.values():
+        if isinstance(value, list) and value:
+            return value
+
+        if isinstance(value, dict):
+            nested = _extract_findings_container(value)
+
+            if nested:
+                return nested
+
+    return []
 
 
-def _pick_first_text(source: Dict[str, Any], keys: List[str]) -> Optional[str]:
+def read_summary(path: Path) -> Tuple[int, Any]:
     """
-    Busca la primera clave disponible con contenido textual útil.
+    Lee el JSON de Dalfox y devuelve:
+
+    - cantidad de hallazgos crudos;
+    - documento JSON completo.
+
+    Esta función se mantiene compatible con scanner_service.py.
+    """
+    path = Path(path)
+    summary_json = _read_json_file(path)
+    findings = _extract_findings_container(summary_json)
+
+    return len(findings), summary_json
+# ==========================================================
+# NORMALIZACIÓN DE HALLAZGOS
+# ==========================================================
+
+def _first_non_empty(item: Dict[str, Any], keys: Iterable[str]) -> Optional[Any]:
+    """
+    Devuelve el primer valor no vacío encontrado en un diccionario.
     """
     for key in keys:
-        value = source.get(key)
-        text = _value_to_text(value)
+        value = item.get(key)
 
-        if text:
-            return text
+        if value is None:
+            continue
+
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+        if not isinstance(value, str):
+            return value
 
     return None
 
 
-def _normalize_optional_text(value: Any) -> Optional[str]:
+def _stringify_value(value: Any) -> str:
     """
-    Convierte un valor a texto útil o None si queda vacío.
+    Convierte un valor a texto seguro para guardar como evidencia.
     """
-    return _value_to_text(value)
+    if value is None:
+        return ""
+
+    if isinstance(value, str):
+        return value.strip()
+
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except Exception:
+        return str(value)
 
 
-def _coerce_findings_list(summary_json: Any) -> List[Any]:
+def _infer_parameter_from_url(target_url: str) -> str:
     """
-    Intenta localizar la lista principal de hallazgos dentro
-    de la salida estructurada de Dalfox.
+    Intenta inferir el parámetro cuando la URL tiene un único parámetro query.
     """
-    if isinstance(summary_json, list):
-        return summary_json
+    try:
+        parsed = urlsplit(target_url or "")
+        query = parse_qs(parsed.query, keep_blank_values=True)
 
-    if isinstance(summary_json, dict):
-        for key in ("issues", "found", "results", "vulnerabilities", "items", "data"):
-            value = summary_json.get(key)
-            if isinstance(value, list):
-                return value
+        if len(query) == 1:
+            return next(iter(query.keys()))
 
-    return []
-def _has_meaningful_content(
-    param_name: Optional[str],
-    payload: Optional[str],
-    evidence: Optional[str],
-    severity: Optional[str],
-    source_type: Optional[str],
-) -> bool:
+    except Exception:
+        pass
+
+    return ""
+
+
+def _normalize_severity(value: Any, raw_item: Dict[str, Any]) -> str:
     """
-    Decide si un registro de Dalfox representa un hallazgo útil.
-
-    Importante:
-    - No se usa target_url para validar contenido, porque cuando fallback_target_url
-      se agregaba a un objeto vacío {}, DASTXH lo contaba como hallazgo.
-    - Para considerar un hallazgo como útil debe existir al menos payload/evidencia,
-      o una combinación mínima de parámetro + severidad/fuente.
+    Normaliza severidad de Dalfox a valores simples usados por DASTXH.
     """
-    has_payload = bool(payload and payload.strip())
-    has_evidence = bool(evidence and evidence.strip())
-    has_param = bool(param_name and param_name.strip())
-    has_severity = bool(severity and severity.strip())
-    has_source_type = bool(source_type and source_type.strip())
+    raw = _stringify_value(value).lower()
 
-    if has_payload or has_evidence:
-        return True
+    if raw in {"critical", "crítica", "critica"}:
+        return "Critical"
 
-    if has_param and (has_severity or has_source_type):
-        return True
+    if raw in {"high", "alta"}:
+        return "High"
 
-    return False
+    if raw in {"medium", "media"}:
+        return "Medium"
+
+    if raw in {"low", "baja"}:
+        return "Low"
+
+    if raw in {"info", "informational", "informativa"}:
+        return "Informational"
+
+    # Si Dalfox marca como verified/vuln, se considera alta.
+    raw_blob = json.dumps(raw_item, ensure_ascii=False).lower()
+
+    if "verified" in raw_blob or "vulnerable" in raw_blob or "vuln" in raw_blob:
+        return "High"
+
+    if "xss" in raw_blob:
+        return "Medium"
+
+    return "Medium"
 
 
-def _raw_item_has_meaningful_signal(item: Any) -> bool:
+def _normalize_single_finding(
+    raw_finding: Any,
+    fallback_target_url: str,
+    index: int,
+) -> Optional[Dict[str, Any]]:
     """
-    Evalúa una entrada cruda de Dalfox antes de contarla.
+    Convierte un hallazgo crudo de Dalfox a una estructura estable.
 
-    Evita que [{}] se cuente como 1 hallazgo.
+    Se incluyen alias de campos para mantener compatibilidad con repositorios,
+    vistas e interpretación IA.
     """
-    if isinstance(item, dict):
-        if not item:
-            return False
+    if raw_finding is None:
+        return None
 
-        source_type = _pick_first_text(item, ["type", "source", "kind", "category"])
-        param_name = _pick_first_text(item, ["param", "parameter", "param_name", "key"])
-        payload = _pick_first_text(item, ["payload", "poc", "proof", "vector", "inject"])
-        evidence = _pick_first_text(item, ["evidence", "message", "detail", "trigger", "reflected"])
-        severity = _pick_first_text(item, ["severity", "risk", "priority", "level"])
+    if isinstance(raw_finding, str):
+        evidence = raw_finding.strip()
 
-        return _has_meaningful_content(
-            param_name=param_name,
-            payload=payload,
-            evidence=evidence,
-            severity=severity,
-            source_type=source_type,
+        if not evidence:
+            return None
+
+        parameter = _infer_parameter_from_url(fallback_target_url)
+
+        return {
+            "source": DALFOX_SOURCE_NAME,
+            "index": index,
+            "target_url": fallback_target_url,
+            "url": fallback_target_url,
+            "parameter": parameter,
+            "param": parameter,
+            "payload": evidence,
+            "evidence": evidence,
+            "evidence_text": evidence,
+            "severity": "Medium",
+            "risk": "Medium",
+            "type": "xss",
+            "poc_type": None,
+            "method": "GET",
+            "raw": raw_finding,
+        }
+
+    if not isinstance(raw_finding, dict):
+        return None
+
+    target_url = _stringify_value(
+        _first_non_empty(
+            raw_finding,
+            [
+                "url",
+                "target",
+                "target_url",
+                "request_url",
+                "data",
+            ],
         )
+    ) or fallback_target_url
 
-    text = _normalize_optional_text(item)
-    return bool(text)
-
-
-def _finding_signature(finding: Dict[str, Any]) -> str:
-    """
-    Construye una firma estable para deduplicar hallazgos.
-
-    Esto evita que payloads idénticos se muestren varias veces si Dalfox
-    devuelve registros repetidos.
-    """
-    param_name = _normalize_optional_text(finding.get("param_name")) or ""
-    payload = _normalize_optional_text(finding.get("payload")) or ""
-    evidence = _normalize_optional_text(finding.get("evidence")) or ""
-    severity = _normalize_optional_text(finding.get("severity")) or ""
-    source_type = _normalize_optional_text(finding.get("source_type")) or ""
-
-    return "|".join(
-        [
-            param_name.lower(),
-            payload,
-            evidence,
-            severity.lower(),
-            source_type.lower(),
-        ]
+    parameter = _stringify_value(
+        _first_non_empty(
+            raw_finding,
+            [
+                "param",
+                "parameter",
+                "query",
+                "name",
+                "variable",
+                "injection_point",
+                "inject_param",
+            ],
+        )
     )
+
+    if not parameter:
+        parameter = _infer_parameter_from_url(target_url or fallback_target_url)
+
+    payload = _stringify_value(
+        _first_non_empty(
+            raw_finding,
+            [
+                "payload",
+                "poc",
+                "poc_code",
+                "vector",
+                "injected",
+                "attack",
+                "value",
+            ],
+        )
+    )
+
+    evidence = _stringify_value(
+        _first_non_empty(
+            raw_finding,
+            [
+                "evidence",
+                "evidence_text",
+                "message",
+                "data",
+                "description",
+                "detail",
+                "output",
+                "proof",
+            ],
+        )
+    )
+
+    finding_type = _stringify_value(
+        _first_non_empty(
+            raw_finding,
+            [
+                "type",
+                "issue_type",
+                "vuln_type",
+                "category",
+            ],
+        )
+    ) or "xss"
+
+    poc_type = _stringify_value(
+        _first_non_empty(
+            raw_finding,
+            [
+                "poc_type",
+                "proof_type",
+                "inject_type",
+            ],
+        )
+    )
+
+    method = _stringify_value(
+        _first_non_empty(
+            raw_finding,
+            [
+                "method",
+                "http_method",
+            ],
+        )
+    ) or "GET"
+
+    severity = _normalize_severity(
+        _first_non_empty(raw_finding, ["severity", "risk", "level"]),
+        raw_finding,
+    )
+
+    # Si no hay payload ni evidencia, el registro no aporta como hallazgo.
+    # Se descarta para no llenar la GUI con filas vacías.
+    if not payload and not evidence:
+        return None
+
+    normalized = {
+        "source": DALFOX_SOURCE_NAME,
+        "index": index,
+        "target_url": target_url or fallback_target_url,
+        "url": target_url or fallback_target_url,
+        "parameter": parameter,
+        "param": parameter,
+        "payload": payload or evidence,
+        "evidence": evidence or payload,
+        "evidence_text": evidence or payload,
+        "severity": severity,
+        "risk": severity,
+        "type": finding_type,
+        "poc_type": poc_type,
+        "method": method,
+        "raw": raw_finding,
+    }
+
+    # Campos opcionales útiles si vienen en el JSON de Dalfox.
+    optional_mappings = {
+        "line": ["line", "line_number"],
+        "cwe": ["cwe", "cwe_id"],
+        "context": ["context", "sink", "dom_sink"],
+        "verification": ["verification", "verified", "headless_verified"],
+    }
+
+    for target_key, source_keys in optional_mappings.items():
+        optional_value = _first_non_empty(raw_finding, source_keys)
+
+        if optional_value is not None:
+            normalized[target_key] = optional_value
+
+    return normalized
 
 
 def _deduplicate_findings(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Elimina hallazgos duplicados conservando el primer registro observado.
-
-    Luego reasigna finding_order para que la tabla no tenga saltos.
+    Elimina duplicados simples para no inflar resultados.
     """
-    seen: set[str] = set()
-    deduplicated: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    unique: List[Dict[str, Any]] = []
 
     for finding in findings:
-        signature = _finding_signature(finding)
+        key = (
+            _stringify_value(finding.get("target_url")),
+            _stringify_value(finding.get("parameter")),
+            _stringify_value(finding.get("payload"))[:300],
+            _stringify_value(finding.get("evidence"))[:300],
+        )
 
-        if signature in seen:
+        if key in seen:
             continue
 
-        seen.add(signature)
-        deduplicated.append(dict(finding))
+        seen.add(key)
+        unique.append(finding)
 
-    for index, finding in enumerate(deduplicated, start=1):
-        finding["finding_order"] = index
-
-    return deduplicated
-
-
-def read_summary(out_json: Path) -> tuple[int, Any]:
-    """
-    Lee el archivo JSON de Dalfox y devuelve:
-    - findings_count útil;
-    - summary_json original.
-
-    Se mantiene flexible porque Dalfox puede cambiar la forma exacta del JSON
-    entre versiones. Además, filtra objetos vacíos como [{}].
-    """
-    if not out_json.exists():
-        return 0, {"_no_json": True}
-
-    try:
-        raw_text = out_json.read_text(encoding="utf-8", errors="replace").strip()
-    except Exception:
-        return 0, {"_read_error": True}
-
-    if not raw_text:
-        return 0, []
-
-    try:
-        data = json.loads(raw_text)
-    except Exception:
-        return 0, {
-            "_parse_error": True,
-            "_raw_preview": raw_text[:500],
-        }
-
-    raw_findings = _coerce_findings_list(data)
-    findings = sum(1 for item in raw_findings if _raw_item_has_meaningful_signal(item))
-
-    return findings, data
+    return unique
 
 
 def extract_structured_findings(
     summary_json: Any,
-    fallback_target_url: str | None = None,
+    fallback_target_url: str,
 ) -> List[Dict[str, Any]]:
     """
-    Convierte la salida estructurada de Dalfox en una lista de hallazgos
-    normalizados para persistencia en la tabla xss_findings.
+    Extrae y normaliza hallazgos XSS desde la salida JSON de Dalfox.
 
-    Campos que intentamos extraer:
-    - finding_order;
-    - source_type;
-    - target_url;
-    - param_name;
-    - payload;
-    - evidence;
-    - severity;
-    - raw_finding_json.
+    Esta función se mantiene compatible con scanner_service.py.
 
-    Si Dalfox devuelve [{}], [], o registros sin payload/evidencia/parámetro útil,
-    no se persisten como hallazgos XSS.
+    Retorna:
+    - lista de hallazgos estructurados.
     """
-    raw_findings = _coerce_findings_list(summary_json)
-    normalized: List[Dict[str, Any]] = []
-    finding_order = 0
+    raw_findings = _extract_findings_container(summary_json)
+    structured: List[Dict[str, Any]] = []
 
-    for item in raw_findings:
-        if isinstance(item, dict):
-            if not item:
-                continue
-
-            source_type = _pick_first_text(item, ["type", "source", "kind", "category"])
-            target_url = _pick_first_text(item, ["url", "target", "target_url"]) or fallback_target_url
-            param_name = _pick_first_text(item, ["param", "parameter", "param_name", "key"])
-            payload = _pick_first_text(item, ["payload", "poc", "proof", "vector", "inject"])
-            evidence = _pick_first_text(item, ["evidence", "message", "detail", "trigger", "reflected"])
-            severity = _pick_first_text(item, ["severity", "risk", "priority", "level"])
-            raw_finding_json = item
-        else:
-            source_type = None
-            target_url = fallback_target_url
-            param_name = None
-            payload = _normalize_optional_text(item)
-            evidence = _normalize_optional_text(item)
-            severity = None
-            raw_finding_json = {"value": item}
-
-        source_type = _normalize_optional_text(source_type)
-        target_url = _normalize_optional_text(target_url)
-        param_name = _normalize_optional_text(param_name)
-        payload = _normalize_optional_text(payload)
-        evidence = _normalize_optional_text(evidence)
-        severity = _normalize_optional_text(severity)
-
-        if not _has_meaningful_content(
-            param_name=param_name,
-            payload=payload,
-            evidence=evidence,
-            severity=severity,
-            source_type=source_type,
-        ):
-            continue
-
-        finding_order += 1
-
-        normalized.append(
-            {
-                "finding_order": finding_order,
-                "source_type": source_type,
-                "target_url": target_url,
-                "param_name": param_name,
-                "payload": payload,
-                "evidence": evidence,
-                "severity": severity,
-                "raw_finding_json": raw_finding_json,
-            }
+    for index, raw_finding in enumerate(raw_findings or [], start=1):
+        normalized = _normalize_single_finding(
+            raw_finding=raw_finding,
+            fallback_target_url=fallback_target_url,
+            index=index,
         )
 
-    return _deduplicate_findings(normalized)
+        if normalized:
+            structured.append(normalized)
+
+    return _deduplicate_findings(structured)

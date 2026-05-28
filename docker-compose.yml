@@ -20,16 +20,6 @@
 # ==========================================================
 # PLANTILLA REUTILIZABLE PARA LABORATORIOS DE ESCENARIOS
 # ==========================================================
-# Esta plantilla evita repetir build/restart/network en cada lab.
-# Cada laboratorio define:
-# - container_name
-# - LAB_SCENARIO
-# - LAB_NAME
-# - puerto local
-#
-# Todos usan el mismo código:
-#   labs/scenario-labs/
-# ==========================================================
 
 x-scenario-lab-common: &scenario-lab-common
   build:
@@ -50,12 +40,6 @@ services:
   # --------------------------------------------------------
   # Servicio: db
   # Base de datos principal de DASTXH
-  # Aquí se guarda:
-  # - historial de ejecuciones
-  # - resultados HTTP
-  # - resultados XSS
-  # - agrupaciones IA
-  # - artifacts y reportes
   # --------------------------------------------------------
   db:
     image: postgres:18.3-alpine3.23
@@ -86,12 +70,6 @@ services:
   # --------------------------------------------------------
   # Servicio: orquestador
   # Backend principal de DASTXH
-  #
-  # Aloja:
-  # - GUI web
-  # - API
-  # - lógica de escaneo
-  # - integración opcional con IA local
   # --------------------------------------------------------
   orquestador:
     build:
@@ -121,8 +99,6 @@ services:
 
       # ----------------------------------------------------
       # Control de ejecuciones huérfanas
-      # Si una ejecución queda running más de 15 minutos,
-      # el backend la marca automáticamente como failed.
       # ----------------------------------------------------
       DASTXH_STALE_RUNNING_MINUTES: ${DASTXH_STALE_RUNNING_MINUTES:-15}
       DASTXH_STALE_CLEANUP_INTERVAL_SECONDS: ${DASTXH_STALE_CLEANUP_INTERVAL_SECONDS:-60}
@@ -171,17 +147,29 @@ services:
       DASTXH_COOKIE_AI_MAX_OUTPUT_TOKENS: ${DASTXH_COOKIE_AI_MAX_OUTPUT_TOKENS:-1800}
       DASTXH_COOKIE_AI_BATCH_SIZE: ${DASTXH_COOKIE_AI_BATCH_SIZE:-2}
       DASTXH_COOKIE_AI_MAX_ITEMS: ${DASTXH_COOKIE_AI_MAX_ITEMS:-80}
-
       # ----------------------------------------------------
       # DASTXH - Dalfox / XSS
       # Flujo único: evaluación profunda controlada
+      #
+      # DOM XSS:
+      # - Se habilita minería DOM.
+      # - Se habilita minería por diccionario.
+      # - Se permite evaluación profunda DOM XSS.
+      # - Se fuerza verificación headless usando Chromium.
+      #
+      # Control de tiempo:
+      # - Dalfox queda limitado a 420 segundos.
+      # - Esto evita acercarse al límite global de ejecuciones
+      #   huérfanas/running.
       # ----------------------------------------------------
-      DASTXH_DALFOX_REQUEST_TIMEOUT_SECONDS: ${DASTXH_DALFOX_REQUEST_TIMEOUT_SECONDS:-60}
-      DASTXH_DALFOX_HARD_TIMEOUT_SECONDS: ${DASTXH_DALFOX_HARD_TIMEOUT_SECONDS:-900}
-      DASTXH_DALFOX_WORKERS: ${DASTXH_DALFOX_WORKERS:-8}
+      DASTXH_DALFOX_REQUEST_TIMEOUT_SECONDS: ${DASTXH_DALFOX_REQUEST_TIMEOUT_SECONDS:-25}
+      DASTXH_DALFOX_HARD_TIMEOUT_SECONDS: ${DASTXH_DALFOX_HARD_TIMEOUT_SECONDS:-420}
+      DASTXH_DALFOX_WORKERS: ${DASTXH_DALFOX_WORKERS:-6}
       DASTXH_DALFOX_LIGHT_MINING_ENABLED: ${DASTXH_DALFOX_LIGHT_MINING_ENABLED:-true}
-      DASTXH_DALFOX_SKIP_MINING_DOM: ${DASTXH_DALFOX_SKIP_MINING_DOM:-true}
-      DASTXH_DALFOX_SKIP_MINING_DICT: ${DASTXH_DALFOX_SKIP_MINING_DICT:-true}
+      DASTXH_DALFOX_SKIP_MINING_DOM: ${DASTXH_DALFOX_SKIP_MINING_DOM:-false}
+      DASTXH_DALFOX_SKIP_MINING_DICT: ${DASTXH_DALFOX_SKIP_MINING_DICT:-false}
+      DASTXH_DALFOX_DEEP_DOMXSS_ENABLED: ${DASTXH_DALFOX_DEEP_DOMXSS_ENABLED:-true}
+      DASTXH_DALFOX_FORCE_HEADLESS_VERIFICATION: ${DASTXH_DALFOX_FORCE_HEADLESS_VERIFICATION:-true}
 
     ports:
       - "${WEB_PORT:-8000}:8000"
@@ -206,6 +194,7 @@ services:
 
     networks:
       - dastxh_net
+
   # --------------------------------------------------------
   # Servicio: pgadmin
   # Interfaz web para administrar la base de datos principal
@@ -235,15 +224,6 @@ services:
   # --------------------------------------------------------
   # Servicio: grafana
   # Tablero central de observabilidad académica de DASTXH
-  #
-  # Objetivo:
-  # - Visualizar KPIs del prototipo.
-  # - Consultar métricas directamente desde PostgreSQL.
-  # - Mostrar rendimiento, resultados, evidencias y trazabilidad.
-  #
-  # Grafana se conecta a la BD principal usando:
-  #   host interno Docker: db
-  #   puerto interno: 5432
   # --------------------------------------------------------
   grafana:
     image: grafana/grafana:latest
@@ -255,23 +235,13 @@ services:
         condition: service_healthy
 
     environment:
-      # ----------------------------------------------------
-      # Usuario inicial de Grafana
-      # Puedes cambiar estos valores desde .env
-      # ----------------------------------------------------
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
 
-      # ----------------------------------------------------
-      # Ajustes recomendados para laboratorio académico
-      # ----------------------------------------------------
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/dastxh-kpis-dashboard.json
 
-      # ----------------------------------------------------
-      # Variables usadas por datasource.yml
-      # ----------------------------------------------------
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -290,9 +260,6 @@ services:
   # --------------------------------------------------------
   # Servicio: combo-lab-db
   # Base de datos propia del laboratorio combinado
-  #
-  # Esta BD NO es la misma de DASTXH.
-  # Se usa solo para el laboratorio.
   # --------------------------------------------------------
   combo-lab-db:
     image: postgres:18.3-alpine3.23
@@ -327,12 +294,6 @@ services:
   # --------------------------------------------------------
   # Servicio: combo-lab
   # Laboratorio combinado para pruebas controladas
-  #
-  # Se deja intacto como laboratorio base/histórico.
-  # Sirve para:
-  # - búsqueda parametrizada
-  # - pruebas de cabeceras
-  # - pruebas de XSS reflejado con Dalfox
   # --------------------------------------------------------
   combo-lab:
     build:
@@ -356,38 +317,12 @@ services:
 
     networks:
       - dastxh_net
-
   # ========================================================
   # LABORATORIOS DE ESCENARIOS CONTROLADOS
-  # ========================================================
-  # Todos estos laboratorios usan la misma imagen local:
-  #   ./labs/scenario-labs
-  #
-  # No reemplazan al combo-lab.
-  # Sirven para tener variación controlada en las pruebas:
-  # - sitios seguros
-  # - cabeceras faltantes
-  # - CSP débil
-  # - cookies inseguras
-  # - XSS básico
-  # - filtro parcial
-  # - escenarios mixtos
-  #
-  # URLs internas recomendadas para evaluar desde DASTXH:
-  #   http://lab-01-secure-baseline:5000
-  #   http://lab-02-missing-headers:5000
-  #   ...
-  #
-  # URLs desde navegador del host:
-  #   http://localhost:5101
-  #   http://localhost:5102
-  #   ...
   # ========================================================
 
   # --------------------------------------------------------
   # Lab 01: Secure baseline
-  # Sitio base con cabeceras presentes, cookies seguras
-  # y parámetros escapados.
   # --------------------------------------------------------
   lab-01-secure-baseline:
     <<: *scenario-lab-common
@@ -404,8 +339,6 @@ services:
 
   # --------------------------------------------------------
   # Lab 02: Missing headers
-  # Sitio sin cabeceras principales de seguridad.
-  # No incluye XSS intencional.
   # --------------------------------------------------------
   lab-02-missing-headers:
     <<: *scenario-lab-common
@@ -422,7 +355,6 @@ services:
 
   # --------------------------------------------------------
   # Lab 03: Weak CSP
-  # Content-Security-Policy presente, pero permisiva.
   # --------------------------------------------------------
   lab-03-weak-csp:
     <<: *scenario-lab-common
@@ -439,7 +371,6 @@ services:
 
   # --------------------------------------------------------
   # Lab 04: Insecure cookies
-  # Enfocado en cookies sin atributos adecuados.
   # --------------------------------------------------------
   lab-04-insecure-cookies:
     <<: *scenario-lab-common
@@ -453,9 +384,9 @@ services:
 
     ports:
       - "${LAB_04_PORT:-5104}:5000"
+
   # --------------------------------------------------------
   # Lab 05: XSS básico
-  # Reflejo vulnerable simple en parámetros controlados.
   # --------------------------------------------------------
   lab-05-xss-basic:
     <<: *scenario-lab-common
@@ -472,8 +403,6 @@ services:
 
   # --------------------------------------------------------
   # Lab 06: XSS con filtro parcial
-  # Filtro superficial insuficiente.
-  # Útil para demostrar variación en detección.
   # --------------------------------------------------------
   lab-06-xss-filtered-partial:
     <<: *scenario-lab-common
@@ -490,8 +419,6 @@ services:
 
   # --------------------------------------------------------
   # Lab 07: Weak headers no XSS
-  # Cabeceras débiles, pero parámetros escapados.
-  # Sirve para separar debilidades HTTP de XSS.
   # --------------------------------------------------------
   lab-07-weak-headers-no-xss:
     <<: *scenario-lab-common
@@ -508,7 +435,6 @@ services:
 
   # --------------------------------------------------------
   # Lab 08: Good headers weak cookies
-  # Cabeceras razonables, pero cookies inseguras.
   # --------------------------------------------------------
   lab-08-good-headers-weak-cookies:
     <<: *scenario-lab-common
@@ -525,8 +451,6 @@ services:
 
   # --------------------------------------------------------
   # Lab 09: Safe parameters
-  # Parámetros reflejados con escape correcto.
-  # No incluye XSS intencional.
   # --------------------------------------------------------
   lab-09-safe-parameters:
     <<: *scenario-lab-common
@@ -543,10 +467,6 @@ services:
 
   # --------------------------------------------------------
   # Lab 10: Mixed controlled
-  # Escenario mixto:
-  # - cabeceras faltantes
-  # - cookies débiles
-  # - reflejo vulnerable controlado
   # --------------------------------------------------------
   lab-10-mixed-controlled:
     <<: *scenario-lab-common
@@ -560,8 +480,6 @@ services:
 
     ports:
       - "${LAB_10_PORT:-5110}:5000"
-
-
 # ----------------------------------------------------------
 # Volúmenes nombrados del proyecto
 # ----------------------------------------------------------

@@ -187,9 +187,6 @@ COOKIE_TESTS = {
 # ==========================================================
 
 DASTXH_INTERNAL_CWE_MAPPINGS = {
-    # ------------------------------
-    # Cabeceras principales
-    # ------------------------------
     "Content-Security-Policy": (
         "CWE-693: Falla de mecanismo de protección. "
         "También puede relacionarse con CWE-79 cuando la ausencia de una política adecuada "
@@ -208,10 +205,6 @@ DASTXH_INTERNAL_CWE_MAPPINGS = {
     "Referrer-Policy": (
         "CWE-200: Exposición de información sensible a un actor no autorizado."
     ),
-
-    # ------------------------------
-    # Cabeceras de aislamiento
-    # ------------------------------
     "Permissions-Policy": (
         "CWE-693: Falla de mecanismo de protección por ausencia de restricciones explícitas "
         "sobre capacidades del navegador."
@@ -228,10 +221,6 @@ DASTXH_INTERNAL_CWE_MAPPINGS = {
         "CWE-346: Error de validación de origen. "
         "También puede considerarse CWE-693 por ausencia de aislamiento estricto de recursos embebidos."
     ),
-
-    # ------------------------------
-    # CORS
-    # ------------------------------
     "Cross-Origin Resource Sharing (CORS)": (
         "CWE-942: Permisos excesivamente amplios en política de intercambio de recursos entre orígenes."
     ),
@@ -241,10 +230,6 @@ DASTXH_INTERNAL_CWE_MAPPINGS = {
     "Access-Control-Allow-Credentials": (
         "CWE-942: Permisos excesivamente amplios en política de intercambio de recursos entre orígenes."
     ),
-
-    # ------------------------------
-    # Cookies evaluadas por DASTXH
-    # ------------------------------
     "Cookies con atributo HttpOnly": (
         "CWE-1004: Cookie sensible sin atributo HttpOnly."
     ),
@@ -263,10 +248,6 @@ DASTXH_INTERNAL_CWE_MAPPINGS = {
     "cookie_samesite": (
         "CWE-1275: Cookie sensible con atributo SameSite ausente o inadecuado."
     ),
-
-    # ------------------------------
-    # Genéricos
-    # ------------------------------
     "Server": (
         "CWE-200: Exposición de información sensible a un actor no autorizado."
     ),
@@ -275,13 +256,14 @@ DASTXH_INTERNAL_CWE_MAPPINGS = {
     ),
 }
 
-# Alias para normalizar nombres que pueden llegar con diferencias menores.
 DASTXH_INTERNAL_CWE_ALIASES = {
     "cookie_secure": "Cookies con atributo Secure",
     "cookie_httponly": "Cookies con atributo HttpOnly",
     "cookie_samesite": "Cookies con atributo SameSite",
     "CORS": "Cross-Origin Resource Sharing (CORS)",
 }
+
+
 # ==========================================================
 # CONFIGURACIÓN ESTÁNDAR DALFOX
 # ==========================================================
@@ -289,11 +271,13 @@ DASTXH_INTERNAL_CWE_ALIASES = {
 #
 # Objetivo de estos valores:
 # - reducir variabilidad entre ejecuciones;
-# - dar más tiempo a Dalfox para completar pruebas;
-# - evitar que URLs públicas dejen la ejecución en running;
-# - usar concurrencia moderada;
-# - permitir una minería ligera controlada, sin convertir el escaneo
-#   en una exploración agresiva.
+# - permitir evaluación DOM XSS con Dalfox de forma controlada;
+# - evitar que Dalfox consuma todo el tiempo global de la ejecución;
+# - usar concurrencia moderada porque headless consume más recursos;
+# - mantener minería DOM y diccionario activas para mejorar cobertura;
+# - habilitar flags:
+#       --deep-domxss
+#       --force-headless-verification
 #
 # Todos estos valores pueden sobrescribirse desde .env con:
 # - DASTXH_DALFOX_REQUEST_TIMEOUT_SECONDS
@@ -302,14 +286,22 @@ DASTXH_INTERNAL_CWE_ALIASES = {
 # - DASTXH_DALFOX_LIGHT_MINING_ENABLED
 # - DASTXH_DALFOX_SKIP_MINING_DOM
 # - DASTXH_DALFOX_SKIP_MINING_DICT
+# - DASTXH_DALFOX_DEEP_DOMXSS_ENABLED
+# - DASTXH_DALFOX_FORCE_HEADLESS_VERIFICATION
+#
+# Nota metodológica:
+# - El timeout duro de Dalfox queda en 420 segundos, es decir 7 minutos.
+# - Esto deja margen para curl, hsecscan, cookies, IA, reportes y persistencia.
 # ==========================================================
 
-DALFOX_REQUEST_TIMEOUT_SECONDS = 60
-DALFOX_HARD_TIMEOUT_SECONDS = 900
-DALFOX_WORKERS = 8
+DALFOX_REQUEST_TIMEOUT_SECONDS = 25
+DALFOX_HARD_TIMEOUT_SECONDS = 420
+DALFOX_WORKERS = 6
 DALFOX_LIGHT_MINING_ENABLED = True
-DALFOX_SKIP_MINING_DOM = True
-DALFOX_SKIP_MINING_DICT = True
+DALFOX_SKIP_MINING_DOM = False
+DALFOX_SKIP_MINING_DICT = False
+DALFOX_DEEP_DOMXSS_ENABLED = True
+DALFOX_FORCE_HEADLESS_VERIFICATION = True
 
 
 # ==========================================================
@@ -317,8 +309,6 @@ DALFOX_SKIP_MINING_DICT = True
 # ==========================================================
 
 REQUIRED_HEADERS = GROUP_A_HEADERS + GROUP_B_HEADERS
-
-
 # ==========================================================
 # CLASIFICACIÓN DE CABECERAS HSECSCAN
 # ==========================================================
