@@ -1,0 +1,226 @@
+{# ==========================================================
+  topbar_extra_links.html
+  - Inserta enlaces adicionales en la barra superior.
+
+  Enlaces:
+  - Laboratorios: menú desplegable.
+  - Grafana: enlace directo en nueva pestaña.
+
+  Uso correcto:
+  - Este partial debe incluirse UNA sola vez desde base.html.
+  - No debe incluirse en index.html, history.html ni execution_detail.html.
+========================================================== #}
+
+<style>
+  .topbar-labs-menu {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .topbar-labs-button {
+    border: 0;
+    background: transparent;
+    color: #93c5fd;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+  }
+
+  .topbar-labs-button:hover {
+    text-decoration: underline;
+  }
+
+  .topbar-labs-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 12px);
+    right: 0;
+    z-index: 2000;
+    min-width: 320px;
+    max-height: 520px;
+    overflow-y: auto;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    box-shadow: 0 18px 38px rgba(0, 0, 0, 0.42);
+    padding: 0.75rem;
+  }
+
+  .topbar-labs-menu.is-open .topbar-labs-dropdown {
+    display: block;
+  }
+
+  .topbar-labs-group {
+    margin-bottom: 0.75rem;
+  }
+
+  .topbar-labs-group:last-child {
+    margin-bottom: 0;
+  }
+
+  .topbar-labs-group-title {
+    display: block;
+    margin: 0 0 0.35rem 0;
+    color: #cbd5e1;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .topbar-labs-link {
+    display: block;
+    color: #bfdbfe;
+    text-decoration: none;
+    padding: 0.55rem 0.65rem;
+    border-radius: 10px;
+    line-height: 1.25;
+  }
+
+  .topbar-labs-link:hover {
+    background: rgba(96, 165, 250, 0.14);
+    text-decoration: none;
+  }
+
+  .topbar-labs-link small {
+    display: block;
+    color: #94a3b8;
+    font-size: 0.76rem;
+    margin-top: 0.2rem;
+  }
+
+  .topbar-grafana-link {
+    color: #93c5fd;
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  .topbar-grafana-link:hover {
+    text-decoration: underline;
+  }
+</style>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const topbarNav = document.querySelector(".topbar nav");
+
+    if (!topbarNav) {
+      return;
+    }
+
+    const labTargets = {{ lab_targets|default([])|tojson }};
+
+    /*
+      URL de Grafana:
+      - Se calcula desde el navegador.
+      - En el entorno local del prototipo Grafana está publicado en localhost:3000.
+      - Esto evita depender de un helper Python adicional.
+    */
+    const grafanaUrl =
+      window.location.protocol +
+      "//" +
+      window.location.hostname +
+      ":3000/?orgId=1&from=now-30d&to=now&timezone=browser&refresh=10s";
+
+    /*
+      Laboratorios:
+      - Se agrega solo si la ruta envía lab_targets.
+      - Evita duplicación si por alguna razón ya existe.
+    */
+    if (
+      Array.isArray(labTargets) &&
+      labTargets.length > 0 &&
+      !document.getElementById("topbar-labs-menu")
+    ) {
+      const menu = document.createElement("div");
+      menu.id = "topbar-labs-menu";
+      menu.className = "topbar-labs-menu";
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "topbar-labs-button";
+      button.textContent = "Laboratorios";
+
+      const dropdown = document.createElement("div");
+      dropdown.className = "topbar-labs-dropdown";
+
+      const groupedTargets = {};
+
+      labTargets.forEach(function (lab) {
+        const group = lab.group || "Laboratorios";
+
+        if (!groupedTargets[group]) {
+          groupedTargets[group] = [];
+        }
+
+        groupedTargets[group].push(lab);
+      });
+
+      Object.keys(groupedTargets).forEach(function (groupName) {
+        const groupBlock = document.createElement("div");
+        groupBlock.className = "topbar-labs-group";
+
+        const groupTitle = document.createElement("span");
+        groupTitle.className = "topbar-labs-group-title";
+        groupTitle.textContent = groupName;
+
+        groupBlock.appendChild(groupTitle);
+
+        groupedTargets[groupName].forEach(function (lab) {
+          const link = document.createElement("a");
+          link.className = "topbar-labs-link";
+          link.href = lab.browser_url || lab.url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.title = lab.description || "";
+          link.textContent = lab.label || lab.url;
+
+          const description = document.createElement("small");
+          description.textContent = lab.browser_url || lab.url;
+
+          link.appendChild(description);
+          groupBlock.appendChild(link);
+        });
+
+        dropdown.appendChild(groupBlock);
+      });
+
+      button.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        menu.classList.toggle("is-open");
+      });
+
+      document.addEventListener("click", function () {
+        menu.classList.remove("is-open");
+      });
+
+      dropdown.addEventListener("click", function (event) {
+        event.stopPropagation();
+      });
+
+      menu.appendChild(button);
+      menu.appendChild(dropdown);
+      topbarNav.appendChild(menu);
+    }
+
+    /*
+      Grafana:
+      - Se agrega siempre.
+      - Abre en nueva pestaña.
+    */
+    if (!document.getElementById("topbar-grafana-link")) {
+      const grafanaLink = document.createElement("a");
+      grafanaLink.id = "topbar-grafana-link";
+      grafanaLink.className = "topbar-grafana-link";
+      grafanaLink.href = grafanaUrl;
+      grafanaLink.target = "_blank";
+      grafanaLink.rel = "noopener noreferrer";
+      grafanaLink.textContent = "Grafana";
+
+      topbarNav.appendChild(grafanaLink);
+    }
+  });
+</script>

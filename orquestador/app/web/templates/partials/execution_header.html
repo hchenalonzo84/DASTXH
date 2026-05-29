@@ -9,13 +9,24 @@
   - Mostrar tarjetas principales de resumen:
       * ID
       * Estado
-      * URL objetivo
+      * URL objetivo amigable
+      * Tipo de objetivo
+      * URL técnica usada internamente, si aplica
       * Inicio / Fin
       * Cumplimiento
       * Cabeceras evaluadas / presentes
       * Hallazgos XSS
       * Carpeta lógica
   - Mostrar mensaje de error si la ejecución falló.
+
+  Mejora aplicada:
+  - La URL visible ya no muestra únicamente host.docker.internal.
+  - Si el objetivo fue un servicio local del equipo host, se muestra
+    localhost como URL amigable y host.docker.internal como URL técnica.
+  - Esto evita confusión entre:
+      * Laboratorio Docker DASTXH
+      * Servicio local del equipo host
+      * Objetivo externo/autorizado
 
   Nota:
   - Este partial depende de las variables:
@@ -95,11 +106,39 @@
     </div>
   </div>
 
-  {# URL objetivo evaluada. #}
+  {# URL objetivo amigable para el usuario. #}
   <div class="col-12 col-md-6 col-xl-6">
     <div class="detail-item h-100">
       <h3>URL objetivo</h3>
-      <p class="break-cell">{{ detail.target_url }}</p>
+
+      <p class="break-cell mb-2">
+        {{ detail.target_url_display or detail.target_url }}
+      </p>
+
+      {% if detail.target_url_kind_label %}
+        <p class="mb-2">
+          <span class="badge badge-info">
+            {{ detail.target_url_kind_label }}
+          </span>
+        </p>
+      {% endif %}
+
+      {% if detail.target_url_help %}
+        <small class="text-muted d-block">
+          {{ detail.target_url_help }}
+        </small>
+      {% endif %}
+
+      {% if detail.target_url_is_rewritten %}
+        <div class="mt-3">
+          <small class="text-muted d-block">
+            URL técnica usada por DASTXH dentro del contenedor:
+          </small>
+          <code class="break-cell d-block mt-1">
+            {{ detail.target_url_internal }}
+          </code>
+        </div>
+      {% endif %}
     </div>
   </div>
 

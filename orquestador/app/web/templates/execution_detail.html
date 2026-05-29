@@ -34,6 +34,8 @@
     de cada sección.
   - Los botones de guardar, imprimir, generar IA y versionado
     viven dentro de professional_report_panel.html.
+  - La explicación visual de URL queda integrada en:
+      partials/execution_header.html
 ========================================================== #}
 
 {% extends "base.html" %}
@@ -42,6 +44,7 @@
 <section class="card">
   {# --------------------------------------------------------
     Encabezado superior de la ejecución.
+    Incluye URL amigable, tipo de objetivo y URL técnica si aplica.
   -------------------------------------------------------- #}
   {% include "partials/execution_header.html" %}
 

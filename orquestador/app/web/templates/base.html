@@ -24,6 +24,7 @@
   <header class="topbar">
     <div class="container">
       <h1>DASTXH</h1>
+
       <nav>
         <a href="/">Inicio</a>
         <a href="/history">Historial</a>
@@ -31,6 +32,18 @@
       </nav>
     </div>
   </header>
+
+  {# ========================================================
+     Enlaces extra de navegación superior:
+     - Laboratorios
+     - Grafana
+
+     Importante:
+     - Este partial se incluye aquí una sola vez.
+     - No debe incluirse de nuevo en index.html, history.html
+       ni execution_detail.html.
+     ======================================================== #}
+  {% include "partials/topbar_extra_links.html" %}
 
   <main class="container">
     {% block content %}{% endblock %}

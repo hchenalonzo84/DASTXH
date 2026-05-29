@@ -1,0 +1,143 @@
+{# ==========================================================
+  target_url_context.html
+  - Panel visual para aclarar la URL objetivo de una ejecución.
+
+  Objetivo:
+  - Mostrar una URL amigable para el usuario.
+  - Explicar si el objetivo es:
+      * Laboratorio Docker DASTXH.
+      * Servicio local del equipo host.
+      * Objetivo externo/autorizado.
+  - Mostrar la URL técnica interna solo cuando aporta claridad.
+
+  Nota:
+  - No cambia la URL real usada por las herramientas.
+========================================================== #}
+
+<style>
+  .target-url-context {
+    margin: 1rem 0 1.25rem 0;
+    padding: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 14px;
+    background: rgba(15, 23, 42, 0.72);
+  }
+
+  .target-url-context-title {
+    margin: 0 0 0.85rem 0;
+    font-size: 1rem;
+    font-weight: 800;
+  }
+
+  .target-url-context-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(220px, 0.7fr);
+    gap: 0.85rem;
+  }
+
+  .target-url-context-item {
+    padding: 0.85rem;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 12px;
+    background: rgba(2, 6, 23, 0.45);
+    min-width: 0;
+  }
+
+  .target-url-context-label {
+    display: block;
+    margin-bottom: 0.4rem;
+    color: #bfdbfe;
+    font-size: 0.75rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .target-url-context-value {
+    margin: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    font-weight: 700;
+  }
+
+  .target-url-kind-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.35rem 0.65rem;
+    border-radius: 999px;
+    background: rgba(37, 99, 235, 0.16);
+    border: 1px solid rgba(96, 165, 250, 0.35);
+    color: #dbeafe;
+    font-weight: 800;
+    font-size: 0.82rem;
+  }
+
+  .target-url-context-help {
+    margin: 0.75rem 0 0 0;
+    color: #cbd5e1;
+    font-size: 0.9rem;
+  }
+
+  .target-url-context-technical {
+    margin-top: 0.85rem;
+    padding: 0.85rem;
+    border-left: 4px solid #38bdf8;
+    border-radius: 10px;
+    background: rgba(30, 41, 59, 0.55);
+  }
+
+  .target-url-context-technical small {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: #93c5fd;
+    font-weight: 800;
+  }
+
+  .target-url-context-technical code {
+    display: block;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    color: #e5e7eb;
+  }
+
+  @media (max-width: 800px) {
+    .target-url-context-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+{% if detail %}
+  <div class="target-url-context">
+    <h3 class="target-url-context-title">Contexto del objetivo evaluado</h3>
+
+    <div class="target-url-context-grid">
+      <div class="target-url-context-item">
+        <span class="target-url-context-label">URL visible</span>
+        <p class="target-url-context-value">
+          {{ detail.target_url_display or detail.target_url }}
+        </p>
+      </div>
+
+      <div class="target-url-context-item">
+        <span class="target-url-context-label">Tipo de objetivo</span>
+        <span class="target-url-kind-badge">
+          {{ detail.target_url_kind_label or "Objetivo evaluado" }}
+        </span>
+      </div>
+    </div>
+
+    {% if detail.target_url_help %}
+      <p class="target-url-context-help">
+        {{ detail.target_url_help }}
+      </p>
+    {% endif %}
+
+    {% if detail.target_url_is_rewritten %}
+      <div class="target-url-context-technical">
+        <small>URL técnica usada por DASTXH dentro del contenedor</small>
+        <code>{{ detail.target_url_internal }}</code>
+      </div>
+    {% endif %}
+  </div>
+{% endif %}

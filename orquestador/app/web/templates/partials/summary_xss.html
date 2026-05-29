@@ -19,8 +19,12 @@
   - detail.xss_display_rows
   - detail.xss_display_mode
 
-  Nota:
-  - Esta sección antes vivía directamente dentro de execution_detail.html.
+  Mejora visual aplicada:
+  - La columna "Evidencia" pasa a llamarse "Confirmación".
+  - La confirmación ya no se interpreta como fragmento HTML, sino como
+    validación técnica de Dalfox.
+  - Se agrega columna "Tipo" para diferenciar hallazgos normales, DOM XSS
+    o verificación headless cuando el dato esté disponible.
 ========================================================== #}
 
 <section class="card mb-3 analysis-wide-card">
@@ -79,16 +83,17 @@
 
       <div class="info-two-columns">
         <div class="info-two-columns__col">
-          <p><strong>Parámetro:</strong> nombre del parámetro o parámetro probable asociado al patrón detectado.</p>
+          <p><strong>Parámetro:</strong> nombre del parámetro o parámetro probable asociado al hallazgo.</p>
           <p><strong>Payload:</strong> carga útil usada por Dalfox o ejemplo representativo del grupo.</p>
-          <p><strong>Evidencia:</strong> fragmento de la respuesta donde la carga apareció reflejada.</p>
+          <p><strong>Confirmación:</strong> validación técnica registrada por Dalfox, por ejemplo reflexión en respuesta, objeto DOM o diálogo detectado en navegador headless.</p>
+          <p><strong>Tipo:</strong> forma en que se detectó o verificó el hallazgo, por ejemplo XSS reflejado, DOM XSS o headless.</p>
           <p><strong>Severidad:</strong> clasificación del hallazgo o del grupo.</p>
-          <p><strong>Interpretación:</strong> explicación principal generada por IA.</p>
         </div>
 
         <div class="info-two-columns__col">
+          <p><strong>Interpretación:</strong> explicación principal generada por IA.</p>
           <p><strong>Riesgo:</strong> posible impacto asociado al patrón detectado.</p>
-          <p><strong>Causa probable:</strong> debilidad técnica que pudo permitir la reflexión.</p>
+          <p><strong>Causa probable:</strong> debilidad técnica que pudo permitir la reflexión o ejecución.</p>
           <p><strong>Revisar:</strong> área sugerida para validación manual o corrección.</p>
 
           {% if detail.xss_display_mode == "grouped" %}
@@ -142,7 +147,8 @@
             <th>#</th>
             <th>Parámetro</th>
             <th>Payload</th>
-            <th>Evidencia</th>
+            <th>Confirmación</th>
+            <th>Tipo</th>
             <th>Severidad</th>
             {% if detail.xss_display_mode == "grouped" %}
               <th>Ocurrencias</th>
@@ -157,9 +163,35 @@
           {% for item in detail.xss_display_rows %}
             <tr>
               <td>{{ item.row_order }}</td>
+
               <td>{{ item.parameter or "-" }}</td>
-              <td class="break-cell">{{ item.payload or "-" }}</td>
-              <td class="break-cell">{{ item.evidence or "-" }}</td>
+
+              <td class="break-cell">
+                {{ item.payload or "-" }}
+              </td>
+
+              <td class="break-cell">
+                {% if item.evidence %}
+                  {{ item.evidence }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+
+              <td>
+                {% if item.xss_type_display is defined and item.xss_type_display %}
+                  {{ item.xss_type_display }}
+                {% elif item.inject_type is defined and item.inject_type %}
+                  {{ item.inject_type }}
+                {% elif item.evidence and ("headless" in item.evidence|lower or "chromium" in item.evidence|lower) %}
+                  headless / DOM XSS
+                {% elif item.evidence and "dom" in item.evidence|lower %}
+                  DOM XSS
+                {% else %}
+                  XSS
+                {% endif %}
+              </td>
+
               <td>{{ item.severity or "-" }}</td>
 
               {% if detail.xss_display_mode == "grouped" %}

@@ -8,6 +8,11 @@ Objetivo:
 - Mantener la misma URL pública.
 - Mantener el mismo template:
       history.html
+
+Mejora actual:
+- Enriquece las ejecuciones con campos visuales de URL.
+- Envía lab_targets para que base.html agregue el menú superior de Laboratorios.
+- El enlace de Grafana se calcula en el navegador desde topbar_extra_links.html.
 """
 
 from __future__ import annotations
@@ -18,6 +23,8 @@ import db as db_layer
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
+from api.lab_targets import get_lab_targets
+from api.target_display_utils import enrich_execution_rows_with_target_url_display
 from api.web_common import (
     ensure_work_paths,
     templates,
@@ -53,6 +60,8 @@ def history_page(request: Request):
         offset=0,
     )
 
+    executions = enrich_execution_rows_with_target_url_display(executions)
+
     runs = [str(item["id"]) for item in executions]
 
     return templates.TemplateResponse(
@@ -62,5 +71,6 @@ def history_page(request: Request):
             "title": "DASTXH - Historial",
             "runs": runs,
             "executions": executions,
+            "lab_targets": get_lab_targets(),
         },
     )
