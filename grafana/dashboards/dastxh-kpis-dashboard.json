@@ -659,11 +659,11 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT e.id::text AS \"Evaluación\", ROUND((EXTRACT(EPOCH FROM (finished_at - started_at)) / 60)::numeric, 2) AS \"Duración minutos\" FROM executions e WHERE e.status = 'finished' AND e.started_at IS NOT NULL AND e.finished_at IS NOT NULL ORDER BY e.id DESC LIMIT 15;",
+          "rawSql": "SELECT CONCAT('ID ', e.id::text) AS \"Evaluación\", ROUND((EXTRACT(EPOCH FROM (finished_at - started_at)) / 60)::numeric, 2) AS \"Duración minutos\" FROM executions e WHERE e.status = 'finished' AND e.started_at IS NOT NULL AND e.finished_at IS NOT NULL ORDER BY e.id DESC LIMIT 15;",
           "refId": "A"
         }
       ],
-      "title": "Duración por evaluación",
+      "title": "Duración por ID de evaluación",
       "type": "barchart"
     },
     {
@@ -845,7 +845,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT e.id::text AS \"Evaluación\", COALESCE(hr.cumplimiento_pct, 0) AS \"Porcentaje\" FROM executions e LEFT JOIN header_results hr ON hr.execution_id = e.id WHERE e.status = 'finished' ORDER BY e.id DESC LIMIT 15;",
+          "rawSql": "SELECT CONCAT('ID ', e.id::text) AS \"Evaluación\", COALESCE(hr.cumplimiento_pct, 0) AS \"Porcentaje\" FROM executions e LEFT JOIN header_results hr ON hr.execution_id = e.id WHERE e.status = 'finished' ORDER BY e.id DESC LIMIT 15;",
           "refId": "A"
         }
       ],
@@ -998,12 +998,60 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT e.id::text AS \"Evaluación\", COALESCE(ROUND((COUNT(*) FILTER (WHERE COALESCE(NULLIF(TRIM(xag.interpretation_humana), ''), NULLIF(TRIM(xag.risk_summary), ''), NULLIF(TRIM(xag.likely_root_cause), ''), NULLIF(TRIM(xag.recommended_review_area), '')) IS NOT NULL)::numeric / NULLIF(COUNT(*)::numeric, 0)) * 100, 2), 0) AS \"Porcentaje\" FROM executions e INNER JOIN xss_ai_groups xag ON xag.execution_id = e.id WHERE e.status = 'finished' GROUP BY e.id ORDER BY e.id DESC LIMIT 15;",
+          "rawSql": "SELECT CONCAT('ID ', e.id::text) AS \"Evaluación\", COALESCE(ROUND((COUNT(*) FILTER (WHERE COALESCE(NULLIF(TRIM(xag.interpretation_humana), ''), NULLIF(TRIM(xag.risk_summary), ''), NULLIF(TRIM(xag.likely_root_cause), ''), NULLIF(TRIM(xag.recommended_review_area), '')) IS NOT NULL)::numeric / NULLIF(COUNT(*)::numeric, 0)) * 100, 2), 0) AS \"Porcentaje\" FROM executions e INNER JOIN xss_ai_groups xag ON xag.execution_id = e.id WHERE e.status = 'finished' GROUP BY e.id ORDER BY e.id DESC LIMIT 15;",
           "refId": "A"
         }
       ],
       "title": "Tasa de interpretación IA por evaluación",
       "type": "barchart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "id": 26,
+      "panels": [],
+      "title": "Evidencia complementaria de concurrencia",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "dastxh-postgres"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "id": 27,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "dastxh-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH ordered AS (SELECT e.id, e.target_url, e.status, e.started_at, e.finished_at, CASE WHEN e.started_at IS NOT NULL AND e.finished_at IS NOT NULL THEN ROUND((EXTRACT(EPOCH FROM (e.finished_at - e.started_at)) / 60)::numeric, 2) ELSE NULL END AS duracion_minutos, ROUND(EXTRACT(EPOCH FROM (e.started_at - LAG(e.started_at) OVER (ORDER BY e.started_at)))::numeric, 2) AS diferencia_inicio_anterior_seg FROM executions e WHERE e.started_at IS NOT NULL) SELECT id AS \"ID\", target_url AS \"Objetivo\", status AS \"Estado\", started_at AS \"Inicio\", finished_at AS \"Fin\", duracion_minutos AS \"Duración minutos\", diferencia_inicio_anterior_seg AS \"Diferencia inicio anterior seg\" FROM ordered ORDER BY started_at DESC LIMIT 30;",
+          "refId": "A"
+        }
+      ],
+      "title": "Evaluaciones recientes con diferencia entre inicios",
+      "type": "table"
     }
   ],
   "refresh": "10s",
@@ -1026,6 +1074,6 @@
   "timezone": "",
   "title": "DASTXH - Indicadores del prototipo",
   "uid": "dastxh-kpis",
-  "version": 6,
+  "version": 8,
   "weekStart": ""
 }
